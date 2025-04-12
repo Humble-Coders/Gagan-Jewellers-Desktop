@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.lightColors
@@ -49,6 +50,7 @@ import kotlinx.coroutines.launch
 import org.example.project.JewelryAppInitializer
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.ui.AddEditProductScreen
+import org.example.project.ui.BillingScreen
 import org.example.project.ui.DashboardScreen
 import org.example.project.ui.ProductDetailScreen
 import org.example.project.ui.SettingsScreen
@@ -132,6 +134,14 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                         viewModel.createNewProduct()
                         currentScreen = Screen.ADD_PRODUCT
                     }
+                )
+
+
+                NavigationItem(
+                    icon = Icons.Default.MailOutline,  // Use an appropriate icon
+                    title = "Billing",
+                    selected = currentScreen == Screen.BILLING,
+                    onClick = { currentScreen = Screen.BILLING }
                 )
 
                 NavigationItem(
@@ -228,6 +238,8 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                         )
 
                         Screen.SETTINGS -> SettingsScreen()
+
+                        Screen.BILLING -> BillingScreen()
                     }
 
                     // Error message display
@@ -303,5 +315,6 @@ enum class Screen {
     ADD_PRODUCT,
     EDIT_PRODUCT,
     PRODUCT_DETAIL,
-    SETTINGS
+    SETTINGS,
+    BILLING  // Add this new entry
 }

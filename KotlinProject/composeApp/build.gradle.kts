@@ -29,6 +29,9 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.7.3")
             implementation("com.google.cloud:google-cloud-storage:2.29.1")
+
+            // extended icons
+            implementation("androidx.compose.material:material-icons-extended:1.5.4")
         }
     }
 }

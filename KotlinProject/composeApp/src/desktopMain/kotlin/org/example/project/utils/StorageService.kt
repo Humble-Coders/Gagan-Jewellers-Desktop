@@ -72,10 +72,10 @@ class StorageService(private val storage: Storage, val bucketName: String) {
                 // Update progress to 100%
                 progressFlow?.emit(1.0f)
 
-                // Construct and return the gs:// URL
-                val gsUrl = "gs://$bucketName/$storageFilePath"
-                println("Upload successful. URL: $gsUrl")
-                return@withContext gsUrl
+                // Construct and return the HTTPS URL instead of gs:// URL
+                val httpsUrl = getHttpsUrl(bucketName, storageFilePath)
+                println("Upload successful. URL: $httpsUrl")
+                return@withContext httpsUrl
             } catch (e: Exception) {
                 println("Error during upload: ${e.javaClass.name}: ${e.message}")
                 e.printStackTrace()
@@ -91,19 +91,36 @@ class StorageService(private val storage: Storage, val bucketName: String) {
     /**
      * Deletes a file from Firebase Storage.
      */
-    suspend fun deleteFile(gsUrl: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun deleteFile(url: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            if (!gsUrl.startsWith("gs://")) {
-                return@withContext false
+            // Check if it's a gs:// or https:// URL and extract the path
+            val path = when {
+                url.startsWith("gs://") -> {
+                    val gsPrefix = "gs://$bucketName/"
+                    if (!url.startsWith(gsPrefix)) {
+                        println("URL not from this bucket: $url")
+                        return@withContext false
+                    }
+                    url.substring(gsPrefix.length)
+                }
+                url.startsWith("https://") -> {
+                    val httpsPrefix = "https://firebasestorage.googleapis.com/v0/b/$bucketName/o/"
+                    if (!url.startsWith(httpsPrefix)) {
+                        println("URL not from this bucket: $url")
+                        return@withContext false
+                    }
+
+                    // Extract the path and decode it from the URL format
+                    url.substring(httpsPrefix.length)
+                        .substringBefore("?")
+                        .replace("%2F", "/")
+                }
+                else -> {
+                    println("Invalid URL format: $url")
+                    return@withContext false
+                }
             }
 
-            val gsPrefix = "gs://$bucketName/"
-            if (!gsUrl.startsWith(gsPrefix)) {
-                println("URL not from this bucket: $gsUrl")
-                return@withContext false
-            }
-
-            val path = gsUrl.substring(gsPrefix.length)
             println("Deleting file at path: $path")
 
             val blobId = BlobId.of(bucketName, path)
@@ -127,5 +144,18 @@ class StorageService(private val storage: Storage, val bucketName: String) {
             "svg" -> "image/svg+xml"
             else -> "application/octet-stream"
         }
+    }
+
+    /**
+     * Converts a storage path to an HTTPS URL for Firebase Storage.
+     */
+    private fun getHttpsUrl(bucketName: String, path: String): String {
+        // Firebase Storage HTTPS URL format
+        // https://firebasestorage.googleapis.com/v0/b/BUCKET_NAME/o/PATH?alt=media
+
+        // Encode the path for URL (replace / with %2F)
+        val encodedPath = path.replace("/", "%2F")
+
+        return "https://firebasestorage.googleapis.com/v0/b/$bucketName/o/$encodedPath?alt=media"
     }
 }

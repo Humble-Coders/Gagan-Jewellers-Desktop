@@ -5,6 +5,8 @@ import com.google.cloud.firestore.Firestore
 import com.google.cloud.storage.Storage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 interface ProductRepository {
     suspend fun getAllProducts(): List<Product>
@@ -206,18 +208,33 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
 
     override suspend fun getProductImage(url: String): ByteArray? = withContext(Dispatchers.IO) {
         try {
-            if (url.startsWith("gs://")) {
-                val bucketAndPath = url.removePrefix("gs://")
-                val pathParts = bucketAndPath.split("/", limit = 2)
+            when {
+                url.startsWith("gs://") -> {
+                    // Handle GS storage path
+                    val bucketAndPath = url.removePrefix("gs://")
+                    val pathParts = bucketAndPath.split("/", limit = 2)
 
-                if (pathParts.size == 2) {
-                    val bucket = pathParts[0]
-                    val path = pathParts[1]
-
-                    val blob = storage.get(bucket, path)
-                    blob?.getContent()
-                } else null
-            } else null
+                    if (pathParts.size == 2) {
+                        val bucket = pathParts[0]
+                        val path = pathParts[1]
+                        val blob = storage.get(bucket, path)
+                        blob?.getContent()
+                    } else null
+                }
+                url.startsWith("http") -> {
+                    // Handle direct HTTPS URL (much faster)
+                    val connection = URL(url).openConnection() as HttpURLConnection
+                    try {
+                        connection.connect()
+                        if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                            connection.inputStream.readBytes()
+                        } else null
+                    } finally {
+                        connection.disconnect()
+                    }
+                }
+                else -> null // Unsupported URL format
+            }
         } catch (e: Exception) {
             null
         }

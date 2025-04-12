@@ -29,6 +29,7 @@ import org.jetbrains.skia.Image
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
+import java.net.URL
 import java.nio.file.Paths
 
 /**
@@ -72,7 +73,22 @@ fun ProductImageManager(
             coroutineScope.launch {
                 try {
                     println("Loading image: $imageUrl")
-                    val imageBytes = imageLoader.loadImage(imageUrl)
+
+                    // Handle direct HTTPS URL loading
+                    val imageBytes = if (imageUrl.startsWith("https://")) {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                URL(imageUrl).openStream().readBytes()
+                            }
+                        } catch (e: Exception) {
+                            println("Failed to load HTTPS URL directly, falling back to imageLoader: ${e.message}")
+                            imageLoader.loadImage(imageUrl)
+                        }
+                    } else {
+                        // Use existing imageLoader for gs:// URLs
+                        imageLoader.loadImage(imageUrl)
+                    }
+
                     if (imageBytes != null) {
                         println("Image loaded, size: ${imageBytes.size} bytes")
                         val bitmap = withContext(Dispatchers.IO) {

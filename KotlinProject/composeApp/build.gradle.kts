@@ -21,6 +21,8 @@ kotlin {
             implementation(compose.components.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodel)
             implementation(libs.androidx.lifecycle.runtime.compose)
+
+            //implementation("com.alialbaali.kamel:kamel-image:0.7.3")
         }
         desktopMain.dependencies {
             implementation(compose.desktop.currentOs)
@@ -29,9 +31,11 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.7.3")
             implementation("com.google.cloud:google-cloud-storage:2.29.1")
+            //implementation("io.coil-kt:coil:3.0.0-alpha06")
+
 
             // extended icons
-            implementation("androidx.compose.material:material-icons-extended:1.5.4")
+            //implementation("androidx.compose.material:material-icons-extended:1.5.4")
         }
     }
 }

@@ -5,6 +5,7 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import org.example.project.navigation.JewelryApp
+import org.example.project.ui.StorageLinkConverter
 import java.io.File
 import java.nio.file.Paths
 
@@ -38,8 +39,11 @@ fun main() {
                     // Get the ViewModel from the initializer
                     val viewModel = JewelryAppInitializer.getViewModel()
 
+                    val repo = JewelryAppInitializer.getFirestore()
+
                     // Render the main app UI
                     JewelryApp(viewModel)
+                    //StorageLinkConverter(repo)
                 }
             }
         } catch (e: Exception) {

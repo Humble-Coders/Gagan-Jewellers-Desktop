@@ -1,6 +1,7 @@
 package org.example.project
 
 import com.google.auth.oauth2.GoogleCredentials
+import com.google.cloud.firestore.Firestore
 import com.google.cloud.storage.Storage
 import com.google.cloud.storage.StorageOptions
 import com.google.firebase.FirebaseApp
@@ -126,6 +127,11 @@ object JewelryAppInitializer {
     fun getStorageService(): StorageService {
         checkInitialized()
         return storageService
+    }
+
+    fun getFirestore(): Firestore{
+        checkInitialized()
+        return firestore
     }
 
     /**

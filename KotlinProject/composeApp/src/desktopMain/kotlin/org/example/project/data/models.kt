@@ -31,3 +31,14 @@ data class Material(
     val imageUrl: String = "",
     val types: List<String> = emptyList()
 )
+
+// User.kt
+
+data class User(
+    val id: String = "",
+    val email: String = "",
+    val name: String = "",
+    val phone: String = "",
+    val address: String = "",
+    val createdAt: Long = System.currentTimeMillis()
+)

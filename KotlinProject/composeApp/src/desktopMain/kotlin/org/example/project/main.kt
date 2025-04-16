@@ -29,6 +29,7 @@ fun main() {
             // Initialize Firebase with the path to credentials
             JewelryAppInitializer.initialize(credentialsPath)
 
+
             // Create and show the application window
             application {
                 Window(
@@ -43,7 +44,7 @@ fun main() {
 
                     // Render the main app UI
                     JewelryApp(viewModel)
-                    //StorageLinkConverter(repo)
+                   // StorageLinkConverter(repo)
                 }
             }
         } catch (e: Exception) {

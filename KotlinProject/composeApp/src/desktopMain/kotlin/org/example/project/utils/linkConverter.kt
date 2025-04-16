@@ -155,6 +155,10 @@ fun StorageLinkConverter(firestore: Firestore) {
  * Converts links between GS and HTTPS formats in the Firestore database.
  * @param firestore The Firestore instance from com.google.cloud.firestore.Firestore
  */
+/**
+ * Converts links between GS and HTTPS formats in the Firestore database.
+ * @param firestore The Firestore instance from com.google.cloud.firestore.Firestore
+ */
 private suspend fun convertLinks(
     firestore: Firestore,
     toHttps: Boolean,
@@ -167,11 +171,11 @@ private suspend fun convertLinks(
         onProcessingChange(true)
         onStatusUpdate("Starting conversion process...", false)
 
-        val productsCollection = firestore.collection("products")
+        val carouselCollection = firestore.collection("themed_collections")
 
         // Get the documents with a limit - using get().get() instead of await() for Admin SDK
         val querySnapshot = try {
-            productsCollection.limit(limit.toLong().toInt()).get().get()
+            carouselCollection.limit(limit.toLong().toInt()).get().get()
         } catch (e: Exception) {
             onStatusUpdate("Error fetching documents: ${e.message}", true)
             onProcessingChange(false)
@@ -189,19 +193,16 @@ private suspend fun convertLinks(
         // Process each document
         for (document in querySnapshot.documents) {
             try {
-                val imagesField = document.get("images")
-                if (imagesField is List<*>) {
-                    val images = imagesField as List<String>
-                    val updatedImages = images.map { url ->
-                        convertUrl(url, toHttps)
-                    }
+                val imageUrl = document.getString("imageUrl")
+                if (imageUrl != null) {
+                    val updatedUrl = convertUrl(imageUrl, toHttps)
 
                     // Only update if there's a change
-                    if (images != updatedImages) {
-                        // Update the document with the new image URLs
+                    if (imageUrl != updatedUrl) {
+                        // Update the document with the new image URL
                         try {
                             firestore.runTransaction { transaction ->
-                                transaction.update(document.reference, "images", updatedImages)
+                                transaction.update(document.reference, "imageUrl", updatedUrl)
                                 null // Transaction function must return null or a value
                             }.get()
                             successCount++

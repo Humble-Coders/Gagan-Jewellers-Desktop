@@ -47,13 +47,18 @@ import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.scale
+import org.example.project.JewelryAppInitializer
+import org.example.project.viewModels.CustomerViewModel
 
 enum class BillingStep {
     CUSTOMER, CART, PAYMENT, RECEIPT
 }
 
+// BillingScreen.kt
 @Composable
-fun BillingScreen() {
+fun BillingScreen(
+    customerViewModel: CustomerViewModel = JewelryAppInitializer.getCustomerViewModel()
+) {
     var currentStep by remember { mutableStateOf(BillingStep.CUSTOMER) }
 
     Column(
@@ -86,14 +91,20 @@ fun BillingScreen() {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
+                    .padding(24.dp)
             ) {
                 when (currentStep) {
-                    BillingStep.CUSTOMER -> Text("Customer Selection Step (Coming Soon)", fontSize = 18.sp)
-                    BillingStep.CART -> Text("Cart Building Step (Coming Soon)", fontSize = 18.sp)
-                    BillingStep.PAYMENT -> Text("Payment Processing Step (Coming Soon)", fontSize = 18.sp)
-                    BillingStep.RECEIPT -> Text("Receipt Generation Step (Coming Soon)", fontSize = 18.sp)
+                    BillingStep.CUSTOMER -> CustomerSelectionStep(
+                        viewModel = customerViewModel,
+                        onCustomerSelected = { /* Select the customer */ },
+                        onContinue = {
+                            // Move to next step
+                            currentStep = BillingStep.CART
+                        }
+                    )
+                    BillingStep.CART -> Text("Cart Building Step (Coming Soon)")
+                    BillingStep.PAYMENT -> Text("Payment Processing Step (Coming Soon)")
+                    BillingStep.RECEIPT -> Text("Receipt Generation Step (Coming Soon)")
                 }
             }
         }

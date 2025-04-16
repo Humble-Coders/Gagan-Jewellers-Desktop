@@ -7,10 +7,13 @@ import com.google.cloud.storage.StorageOptions
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.cloud.FirestoreClient
+import org.example.project.data.CustomerRepository
+import org.example.project.data.FirestoreCustomerRepository
 import org.example.project.data.FirestoreProductRepository
 import org.example.project.data.ProductRepository
 import org.example.project.utils.ImageLoader
 import org.example.project.utils.StorageService
+import org.example.project.viewModels.CustomerViewModel
 import org.example.project.viewModels.ProductsViewModel
 import java.io.FileInputStream
 import java.nio.file.Path
@@ -32,6 +35,8 @@ object JewelryAppInitializer {
     private var repository: ProductRepository? = null
     private var viewModel: ProductsViewModel? = null
     private var imageLoader: ImageLoader? = null
+    private var customerRepository: CustomerRepository? = null
+    private var customerViewModel: CustomerViewModel? = null
 
     /**
      * Initialize the app with Firebase credentials.
@@ -82,6 +87,8 @@ object JewelryAppInitializer {
             repository = FirestoreProductRepository(firestore, storage)
             viewModel = ProductsViewModel(repository!!)
             imageLoader = ImageLoader(repository!!)
+            customerRepository = FirestoreCustomerRepository(firestore)
+            customerViewModel = CustomerViewModel(customerRepository!!)
 
             initialized = true
             println("Firebase initialized successfully with project ID: $projectId")
@@ -90,7 +97,10 @@ object JewelryAppInitializer {
             throw IllegalStateException("Failed to initialize Firebase: ${e.message}", e)
         }
     }
-
+    fun getCustomerViewModel(): CustomerViewModel {
+        checkInitialized()
+        return customerViewModel!!
+    }
     /**
      * Extract the project ID from the credentials JSON.
      * This is a simple parser and assumes a standard format of the credentials file.

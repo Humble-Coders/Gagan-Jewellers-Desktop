@@ -63,6 +63,9 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val imageLoader = JewelryAppInitializer.getImageLoader()
+    val cartViewModel = JewelryAppInitializer.getCartViewModel()
+    val customerViewModel = JewelryAppInitializer.getCustomerViewModel()
+
 
     // Material Theme customization for jewelry store
     MaterialTheme(
@@ -141,7 +144,13 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                     icon = Icons.Default.MailOutline,  // Use an appropriate icon
                     title = "Billing",
                     selected = currentScreen == Screen.BILLING,
-                    onClick = { currentScreen = Screen.BILLING }
+                    onClick = {
+                        // Dismiss any active snackbars when switching to billing
+                        coroutineScope.launch {
+                            snackbarHostState.currentSnackbarData?.dismiss()
+                        }
+                        currentScreen = Screen.BILLING
+                    }
                 )
 
                 NavigationItem(
@@ -237,9 +246,17 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                             }
                         )
 
+
+
+
                         Screen.SETTINGS -> SettingsScreen()
 
-                        Screen.BILLING -> BillingScreen()
+                        Screen.BILLING -> BillingScreen(
+                            customerViewModel = customerViewModel,
+                            cartViewModel = cartViewModel,
+                            productsViewModel = viewModel,
+                            imageLoader = imageLoader
+                        )
                     }
 
                     // Error message display

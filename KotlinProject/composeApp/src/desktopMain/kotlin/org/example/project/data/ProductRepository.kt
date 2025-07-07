@@ -17,6 +17,7 @@ interface ProductRepository {
     suspend fun getCategories(): List<Category>
     suspend fun getMaterials(): List<Material>
     suspend fun getProductImage(url: String): ByteArray?
+
 }
 
 class FirestoreProductRepository(private val firestore: Firestore, private val storage: Storage) :

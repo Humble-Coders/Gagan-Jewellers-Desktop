@@ -48,7 +48,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.draw.scale
 import org.example.project.JewelryAppInitializer
+import org.example.project.utils.ImageLoader
+import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.CustomerViewModel
+import org.example.project.viewModels.ProductsViewModel
 
 enum class BillingStep {
     CUSTOMER, CART, PAYMENT, RECEIPT
@@ -57,7 +60,10 @@ enum class BillingStep {
 // BillingScreen.kt
 @Composable
 fun BillingScreen(
-    customerViewModel: CustomerViewModel = JewelryAppInitializer.getCustomerViewModel()
+    customerViewModel: CustomerViewModel = JewelryAppInitializer.getCustomerViewModel(),
+    cartViewModel: CartViewModel = JewelryAppInitializer.getCartViewModel(),
+    productsViewModel: ProductsViewModel = JewelryAppInitializer.getViewModel(),
+    imageLoader: ImageLoader = JewelryAppInitializer.getImageLoader()
 ) {
     var currentStep by remember { mutableStateOf(BillingStep.CUSTOMER) }
 
@@ -71,7 +77,7 @@ fun BillingScreen(
             "Billing",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 24.dp)
+            modifier = Modifier.padding(bottom = 20.dp)
         )
 
         // Step indicator
@@ -80,7 +86,7 @@ fun BillingScreen(
             onStepSelected = { currentStep = it }
         )
 
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
         // Content based on current step
         Card(
@@ -102,7 +108,14 @@ fun BillingScreen(
                             currentStep = BillingStep.CART
                         }
                     )
-                    BillingStep.CART -> Text("Cart Building Step (Coming Soon)")
+                    BillingStep.CART -> {
+                        // Cart Building Step - Use the existing CardBuildingScreen
+                        ShopMainScreen(
+                            productsViewModel = productsViewModel,
+                            cartViewModel = cartViewModel,
+                            imageLoader = imageLoader
+                        )
+                    }
                     BillingStep.PAYMENT -> Text("Payment Processing Step (Coming Soon)")
                     BillingStep.RECEIPT -> Text("Receipt Generation Step (Coming Soon)")
                 }
@@ -132,7 +145,7 @@ fun StepIndicator(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -177,7 +190,7 @@ fun StepDot(
     ) {
         Box(
             modifier = Modifier
-                .size(50.dp)
+                .size(40.dp)
                 .scale(if (isHovered) 1.1f else 1f)  // Scale up when hovered
                 .hoverable(interactionSource)
                 .background(
@@ -202,7 +215,7 @@ fun StepDot(
             // Only the icon is clickable with the newer ripple implementation
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(32.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onClick),  // Use the simpler clickable without custom indication
                 contentAlignment = Alignment.Center
@@ -212,20 +225,20 @@ fun StepDot(
                         Icons.Default.Check,
                         contentDescription = "Completed",
                         tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 } else {
                     Icon(
                         step.icon,
                         contentDescription = step.label,
                         tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         Text(
             text = step.label,
@@ -236,7 +249,8 @@ fun StepDot(
             },
             fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
             textAlign = TextAlign.Center,
-            modifier = Modifier.width(80.dp)
+            fontSize = 12.sp,
+            modifier = Modifier.width(70.dp)
         )
     }
 }

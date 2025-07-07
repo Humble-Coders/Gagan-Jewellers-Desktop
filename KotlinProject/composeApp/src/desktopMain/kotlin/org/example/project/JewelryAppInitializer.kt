@@ -7,12 +7,15 @@ import com.google.cloud.storage.StorageOptions
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.cloud.FirestoreClient
+import org.example.project.data.CartRepository
 import org.example.project.data.CustomerRepository
+import org.example.project.data.FirestoreCartRepository
 import org.example.project.data.FirestoreCustomerRepository
 import org.example.project.data.FirestoreProductRepository
 import org.example.project.data.ProductRepository
 import org.example.project.utils.ImageLoader
 import org.example.project.utils.StorageService
+import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.CustomerViewModel
 import org.example.project.viewModels.ProductsViewModel
 import java.io.FileInputStream
@@ -37,6 +40,9 @@ object JewelryAppInitializer {
     private var imageLoader: ImageLoader? = null
     private var customerRepository: CustomerRepository? = null
     private var customerViewModel: CustomerViewModel? = null
+    private var cartRepository: CartRepository? = null
+    private var cartViewModel: CartViewModel? = null
+
 
     /**
      * Initialize the app with Firebase credentials.
@@ -89,6 +95,9 @@ object JewelryAppInitializer {
             imageLoader = ImageLoader(repository!!)
             customerRepository = FirestoreCustomerRepository(firestore)
             customerViewModel = CustomerViewModel(customerRepository!!)
+            cartRepository = FirestoreCartRepository(firestore)
+            cartViewModel = CartViewModel(repository!!, cartRepository!!, imageLoader!!)
+
 
             initialized = true
             println("Firebase initialized successfully with project ID: $projectId")
@@ -101,6 +110,12 @@ object JewelryAppInitializer {
         checkInitialized()
         return customerViewModel!!
     }
+
+    fun getCartViewModel(): CartViewModel {
+        checkInitialized()
+        return cartViewModel!!
+    }
+
     /**
      * Extract the project ID from the credentials JSON.
      * This is a simple parser and assumes a standard format of the credentials file.

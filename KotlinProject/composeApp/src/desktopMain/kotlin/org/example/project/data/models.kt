@@ -78,3 +78,62 @@ data class MetalPrices(
     val silverPricePerGram: Double = 75.0,  // Current silver price per gram in Rs
     val lastUpdated: Long = System.currentTimeMillis()
 )
+
+
+
+// Add these to your existing models.kt file
+
+enum class PaymentMethod {
+    CARD,
+    UPI,
+    NET_BANKING,
+    CASH_ON_DELIVERY
+}
+
+enum class PaymentStatus {
+    PENDING,
+    PROCESSING,
+    COMPLETED,
+    FAILED,
+    CANCELLED,
+    REFUNDED
+}
+
+enum class OrderStatus {
+    CONFIRMED,
+    PROCESSING,
+    SHIPPED,
+    DELIVERED,
+    CANCELLED
+}
+
+enum class DiscountType {
+    AMOUNT,
+    PERCENTAGE
+}
+
+data class Order(
+    val id: String = "",
+    val customerId: String = "",
+    val paymentMethod: PaymentMethod = PaymentMethod.CARD,
+    val subtotal: Double = 0.0,
+    val discountAmount: Double = 0.0,
+    val gstAmount: Double = 0.0,
+    val totalAmount: Double = 0.0,
+    val status: OrderStatus = OrderStatus.CONFIRMED,
+    val timestamp: Long = System.currentTimeMillis(),
+    val items: List<CartItem> = emptyList()
+)
+
+data class PaymentTransaction(
+    val id: String = "",
+    val cartId: String = "",
+    val paymentMethod: PaymentMethod = PaymentMethod.CARD,
+    val subtotal: Double = 0.0,
+    val discountAmount: Double = 0.0,
+    val gstAmount: Double = 0.0,
+    val totalAmount: Double = 0.0,
+    val status: PaymentStatus = PaymentStatus.PENDING,
+    val timestamp: Long = System.currentTimeMillis(),
+    val items: List<CartItem> = emptyList()
+)

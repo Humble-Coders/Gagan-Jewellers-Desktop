@@ -40,7 +40,7 @@ fun CustomerSelectionStep(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .padding(12.dp)  // Reduced padding
     ) {
         // Error message if any
         error?.let {
@@ -49,9 +49,9 @@ fun CustomerSelectionStep(
                 color = Color.Red,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
+                    .padding(6.dp)  // Reduced padding
                     .background(Color(0xFFFFEBEE), RoundedCornerShape(4.dp))
-                    .padding(8.dp)
+                    .padding(6.dp)  // Reduced padding
             )
         }
 
@@ -63,25 +63,47 @@ fun CustomerSelectionStep(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = { Text("Search customers...") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-                modifier = Modifier.weight(1f),
-                singleLine = true
+                placeholder = {
+                    Text(
+                        "Search customers...",
+                        fontSize = 13.sp  // Reduced font size
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = "Search",
+                        modifier = Modifier.size(18.dp)  // Reduced icon size
+                    )
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(42.dp),  // Reduced height
+                singleLine = true,
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
             )
 
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(12.dp))  // Reduced spacing
 
             Button(
                 onClick = { showAddCustomerDialog = true },
-                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary),
+                modifier = Modifier.height(42.dp)  // Match text field height
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add Customer")
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = "Add Customer",
+                    modifier = Modifier.size(16.dp)  // Reduced icon size
+                )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("New Customer")
+                Text(
+                    "New Customer",
+                    fontSize = 12.sp  // Reduced font size
+                )
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))  // Reduced spacing
 
         // Customer List
         if (isLoading) {
@@ -96,7 +118,10 @@ fun CustomerSelectionStep(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 contentAlignment = Alignment.Center
             ) {
-                Text("No customers found. Add a new customer to get started.")
+                Text(
+                    "No customers found. Add a new customer to get started.",
+                    fontSize = 14.sp  // Reduced font size
+                )
             }
         } else {
             val filteredCustomers = if (searchQuery.isEmpty()) {
@@ -130,13 +155,16 @@ fun CustomerSelectionStep(
         }
 
         // Continue button at bottom
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))  // Reduced spacing
         Button(
             onClick = onContinue,
             enabled = selectedCustomer != null,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Continue with ${selectedCustomer?.name ?: "Selected Customer"}")
+            Text(
+                "Continue with ${selectedCustomer?.name ?: "Selected Customer"}",
+                fontSize = 14.sp  // Reduced font size
+            )
         }
     }
 
@@ -163,13 +191,13 @@ fun CustomerListItem(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .background(if (isSelected) Color(0xFFE3F2FD) else Color.Transparent)
-            .padding(16.dp),
+            .padding(12.dp),  // Reduced padding
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Avatar circle with initials
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(36.dp)  // Reduced size
                 .clip(CircleShape)
                 .background(MaterialTheme.colors.primary),
             contentAlignment = Alignment.Center
@@ -177,27 +205,29 @@ fun CustomerListItem(
             Text(
                 text = customer.name.take(2).uppercase(),
                 color = Color.White,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp  // Reduced font size
             )
         }
 
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(12.dp))  // Reduced spacing
 
         // Customer details
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = customer.name,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp  // Reduced font size
             )
             Text(
                 text = customer.email,
-                fontSize = 14.sp,
+                fontSize = 12.sp,  // Reduced font size
                 color = Color.Gray
             )
             if (customer.phone.isNotEmpty()) {
                 Text(
                     text = customer.phone,
-                    fontSize = 14.sp,
+                    fontSize = 12.sp,  // Reduced font size
                     color = Color.Gray
                 )
             }
@@ -207,7 +237,7 @@ fun CustomerListItem(
         if (isSelected) {
             Box(
                 modifier = Modifier
-                    .size(24.dp)
+                    .size(20.dp)  // Reduced size
                     .clip(CircleShape)
                     .background(MaterialTheme.colors.primary),
                 contentAlignment = Alignment.Center
@@ -216,7 +246,7 @@ fun CustomerListItem(
                     imageVector = Icons.Default.Check,
                     contentDescription = "Selected",
                     tint = Color.White,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(12.dp)  // Reduced icon size
                 )
             }
         }
@@ -239,13 +269,18 @@ fun AddCustomerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add New Customer") },
+        title = {
+            Text(
+                "Add New Customer",
+                fontSize = 16.sp  // Reduced font size
+            )
+        },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(vertical = 12.dp),  // Reduced padding
+                verticalArrangement = Arrangement.spacedBy(12.dp)  // Reduced spacing
             ) {
                 // Name field
                 OutlinedTextField(
@@ -254,17 +289,24 @@ fun AddCustomerDialog(
                         name = it
                         nameError = it.isEmpty()
                     },
-                    label = { Text("Full Name") },
+                    label = {
+                        Text(
+                            "Full Name",
+                            fontSize = 12.sp  // Reduced font size
+                        )
+                    },
                     isError = nameError,
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
                 )
                 if (nameError) {
                     Text(
                         "Name is required",
                         color = MaterialTheme.colors.error,
                         style = MaterialTheme.typography.caption,
-                        modifier = Modifier.padding(start = 16.dp)
+                        modifier = Modifier.padding(start = 12.dp),  // Reduced padding
+                        fontSize = 11.sp  // Reduced font size
                     )
                 }
 
@@ -275,17 +317,24 @@ fun AddCustomerDialog(
                         email = it
                         emailError = !isValidEmail(it)
                     },
-                    label = { Text("Email") },
+                    label = {
+                        Text(
+                            "Email",
+                            fontSize = 12.sp  // Reduced font size
+                        )
+                    },
                     isError = emailError,
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
                 )
                 if (emailError) {
                     Text(
                         "Please enter a valid email",
                         color = MaterialTheme.colors.error,
                         style = MaterialTheme.typography.caption,
-                        modifier = Modifier.padding(start = 16.dp)
+                        modifier = Modifier.padding(start = 12.dp),  // Reduced padding
+                        fontSize = 11.sp  // Reduced font size
                     )
                 }
 
@@ -293,18 +342,30 @@ fun AddCustomerDialog(
                 OutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it },
-                    label = { Text("Phone Number (Optional)") },
+                    label = {
+                        Text(
+                            "Phone Number (Optional)",
+                            fontSize = 12.sp  // Reduced font size
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+                    singleLine = true,
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
                 )
 
                 // Address field (optional)
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
-                    label = { Text("Address (Optional)") },
+                    label = {
+                        Text(
+                            "Address (Optional)",
+                            fontSize = 12.sp  // Reduced font size
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth(),
-                    maxLines = 3
+                    maxLines = 3,
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
                 )
             }
         },
@@ -325,12 +386,18 @@ fun AddCustomerDialog(
                     }
                 }
             ) {
-                Text("Add Customer")
+                Text(
+                    "Add Customer",
+                    fontSize = 12.sp  // Reduced font size
+                )
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel")
+                Text(
+                    "Cancel",
+                    fontSize = 12.sp  // Reduced font size
+                )
             }
         }
     )
@@ -338,5 +405,5 @@ fun AddCustomerDialog(
 
 // Email validation helper
 fun isValidEmail(email: String): Boolean {
-    return email.isNotEmpty() 
+    return email.isNotEmpty() && email.contains("@") && email.contains(".")
 }

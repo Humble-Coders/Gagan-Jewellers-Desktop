@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Button
+import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Card
 import androidx.compose.material.Divider
 import androidx.compose.material.Icon
@@ -40,53 +43,39 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.hoverable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
-import androidx.compose.material.ripple.rememberRipple
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.ui.draw.scale
 import org.example.project.JewelryAppInitializer
 import org.example.project.utils.ImageLoader
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.CustomerViewModel
 import org.example.project.viewModels.ProductsViewModel
+import org.example.project.viewModels.PaymentViewModel
 
 enum class BillingStep {
     CUSTOMER, CART, PAYMENT, RECEIPT
 }
 
-// BillingScreen.kt
 @Composable
 fun BillingScreen(
     customerViewModel: CustomerViewModel = JewelryAppInitializer.getCustomerViewModel(),
     cartViewModel: CartViewModel = JewelryAppInitializer.getCartViewModel(),
     productsViewModel: ProductsViewModel = JewelryAppInitializer.getViewModel(),
-    imageLoader: ImageLoader = JewelryAppInitializer.getImageLoader()
+    imageLoader: ImageLoader = JewelryAppInitializer.getImageLoader(),
+    paymentViewModel: PaymentViewModel = JewelryAppInitializer.getPaymentViewModel() // Add this parameter
 ) {
     var currentStep by remember { mutableStateOf(BillingStep.CUSTOMER) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .padding(8.dp)  // Reduced from 16dp
     ) {
-        // Header
-        Text(
-            "Billing",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 20.dp)
-        )
-
-        // Step indicator
-        StepIndicator(
+        // Compact Step indicator in a single line
+        CompactStepIndicator(
             currentStep = currentStep,
             onStepSelected = { currentStep = it }
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(12.dp))  // Reduced from 24dp
 
         // Content based on current step
         Card(
@@ -97,26 +86,39 @@ fun BillingScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(24.dp)
+                    .padding(12.dp)  // Reduced from 24dp
             ) {
                 when (currentStep) {
                     BillingStep.CUSTOMER -> CustomerSelectionStep(
                         viewModel = customerViewModel,
                         onCustomerSelected = { /* Select the customer */ },
                         onContinue = {
-                            // Move to next step
+                            // Clear cart when continuing to next step
+                            cartViewModel.clearCart()
                             currentStep = BillingStep.CART
                         }
                     )
                     BillingStep.CART -> {
-                        // Cart Building Step - Use the existing CardBuildingScreen
                         ShopMainScreen(
                             productsViewModel = productsViewModel,
                             cartViewModel = cartViewModel,
-                            imageLoader = imageLoader
+                            imageLoader = imageLoader,
+                            onProceedToPayment = { currentStep = BillingStep.PAYMENT } // Navigate to payment step
                         )
                     }
-                    BillingStep.PAYMENT -> Text("Payment Processing Step (Coming Soon)")
+                    BillingStep.PAYMENT -> PaymentScreen( // Handle PaymentScreen internally like other steps
+                        paymentViewModel = paymentViewModel,
+                        cartViewModel = cartViewModel,
+                        onBack = {
+                            currentStep = BillingStep.CART
+                            paymentViewModel.resetPaymentState()
+                        },
+                        onPaymentComplete = {
+                            cartViewModel.clearCart()
+                            paymentViewModel.resetPaymentState()
+                            currentStep = BillingStep.RECEIPT
+                        }
+                    )
                     BillingStep.RECEIPT -> Text("Receipt Generation Step (Coming Soon)")
                 }
             }
@@ -125,133 +127,53 @@ fun BillingScreen(
 }
 
 @Composable
-fun StepIndicator(
+fun CompactStepIndicator(
     currentStep: BillingStep,
     onStepSelected: (BillingStep) -> Unit
 ) {
-    // Define step information
-    val steps = listOf(
-        StepInfo(BillingStep.CUSTOMER, "Customer", Icons.Default.Person),
-        StepInfo(BillingStep.CART, "Cart", Icons.Default.ShoppingCart),
-        StepInfo(BillingStep.PAYMENT, "Payment", Icons.Default.Check),
-        StepInfo(BillingStep.RECEIPT, "Receipt", Icons.Default.MailOutline)
-    )
+    val steps = listOf("Customer", "Cart", "Payment", "Receipt")
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = 4.dp,
-        shape = RoundedCornerShape(8.dp)
+        elevation = 2.dp,
+        shape = RoundedCornerShape(6.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            steps.forEachIndexed { index, step ->
-                if (index > 0) {
-                    // Connector line between steps
-                    Divider(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(2.dp),
-                        color = if (steps[index].step.ordinal <= currentStep.ordinal)
-                            MaterialTheme.colors.primary
-                        else
-                            Color.LightGray
+            steps.forEachIndexed { index, stepName ->
+                // Step button with rounded background
+                Button(
+                    onClick = { onStepSelected(BillingStep.values()[index]) },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = when {
+                            index == currentStep.ordinal -> MaterialTheme.colors.primary
+                            index < currentStep.ordinal -> MaterialTheme.colors.primary.copy(alpha = 0.7f)
+                            else -> Color.LightGray
+                        }
+                    ),
+                    shape = RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 12.dp)
+                ) {
+                    Text(
+                        text = stepName,
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = if (index == currentStep.ordinal) FontWeight.Bold else FontWeight.Normal
                     )
                 }
 
-                // Step indicator
-                StepDot(
-                    step = step,
-                    isActive = step.step == currentStep,
-                    isCompleted = step.step.ordinal < currentStep.ordinal,
-                    onClick = { onStepSelected(step.step) }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun StepDot(
-    step: StepInfo,
-    isActive: Boolean,
-    isCompleted: Boolean,
-    onClick: () -> Unit
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .scale(if (isHovered) 1.1f else 1f)  // Scale up when hovered
-                .hoverable(interactionSource)
-                .background(
-                    color = when {
-                        isActive -> MaterialTheme.colors.primary
-                        isCompleted -> MaterialTheme.colors.primary.copy(alpha = 0.7f)
-                        else -> Color.LightGray
-                    },
-                    shape = CircleShape
-                )
-                .border(
-                    width = 2.dp,
-                    color = when {
-                        isActive -> MaterialTheme.colors.primary
-                        isCompleted -> MaterialTheme.colors.primary
-                        else -> Color.LightGray
-                    },
-                    shape = CircleShape
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            // Only the icon is clickable with the newer ripple implementation
-            Box(
-                modifier = Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onClick),  // Use the simpler clickable without custom indication
-                contentAlignment = Alignment.Center
-            ) {
-                if (isCompleted) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = "Completed",
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
-                } else {
-                    Icon(
-                        step.icon,
-                        contentDescription = step.label,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
+                // Add spacing between buttons except for the last one
+                if (index < steps.size - 1) {
+                    Spacer(modifier = Modifier.width(8.dp))
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Text(
-            text = step.label,
-            color = when {
-                isActive -> MaterialTheme.colors.primary
-                isCompleted -> MaterialTheme.colors.primary
-                else -> Color.Gray
-            },
-            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-            textAlign = TextAlign.Center,
-            fontSize = 12.sp,
-            modifier = Modifier.width(70.dp)
-        )
     }
 }
 

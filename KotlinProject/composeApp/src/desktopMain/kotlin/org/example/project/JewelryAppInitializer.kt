@@ -11,12 +11,15 @@ import org.example.project.data.CartRepository
 import org.example.project.data.CustomerRepository
 import org.example.project.data.FirestoreCartRepository
 import org.example.project.data.FirestoreCustomerRepository
+import org.example.project.data.FirestorePaymentRepository
 import org.example.project.data.FirestoreProductRepository
+import org.example.project.data.PaymentRepository
 import org.example.project.data.ProductRepository
 import org.example.project.utils.ImageLoader
 import org.example.project.utils.StorageService
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.CustomerViewModel
+import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.ProductsViewModel
 import java.io.FileInputStream
 import java.nio.file.Path
@@ -42,6 +45,8 @@ object JewelryAppInitializer {
     private var customerViewModel: CustomerViewModel? = null
     private var cartRepository: CartRepository? = null
     private var cartViewModel: CartViewModel? = null
+    private var paymentRepository: PaymentRepository? = null
+    private var paymentViewModel: PaymentViewModel? = null
 
 
     /**
@@ -97,6 +102,8 @@ object JewelryAppInitializer {
             customerViewModel = CustomerViewModel(customerRepository!!)
             cartRepository = FirestoreCartRepository(firestore)
             cartViewModel = CartViewModel(repository!!, cartRepository!!, imageLoader!!)
+            paymentRepository = FirestorePaymentRepository(firestore)
+            paymentViewModel = PaymentViewModel(paymentRepository!!)
 
 
             initialized = true
@@ -114,6 +121,11 @@ object JewelryAppInitializer {
     fun getCartViewModel(): CartViewModel {
         checkInitialized()
         return cartViewModel!!
+    }
+
+    fun getPaymentViewModel(): PaymentViewModel {
+        checkInitialized()
+        return paymentViewModel!!
     }
 
     /**

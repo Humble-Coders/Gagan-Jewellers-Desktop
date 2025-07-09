@@ -65,7 +65,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     val imageLoader = JewelryAppInitializer.getImageLoader()
     val cartViewModel = JewelryAppInitializer.getCartViewModel()
     val customerViewModel = JewelryAppInitializer.getCustomerViewModel()
-
+    val paymentViewModel = JewelryAppInitializer.getPaymentViewModel() // Add this line
 
     // Material Theme customization for jewelry store
     MaterialTheme(
@@ -83,15 +83,15 @@ fun JewelryApp(viewModel: ProductsViewModel) {
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(280.dp)  // Increase drawer width
+                    .width(260.dp)  // Reduced drawer width
                     .background(Color.White)
                     .border(BorderStroke(1.dp, Color(0xFFEEEEEE)))
             ) {
-                // App logo header
+                // App logo header - reduced height
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(150.dp)
+                        .height(120.dp)  // Reduced from 150dp
                         .background(MaterialTheme.colors.primary),
                     contentAlignment = Alignment.Center
                 ) {
@@ -99,7 +99,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                         // App logo placeholder
                         Box(
                             modifier = Modifier
-                                .size(64.dp)
+                                .size(48.dp)  // Reduced from 64dp
                                 .clip(CircleShape)
                                 .background(Color.White.copy(alpha = 0.2f)),
                             contentAlignment = Alignment.Center
@@ -108,14 +108,14 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 Icons.Default.Build,
                                 contentDescription = "Logo",
                                 tint = Color.White,
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier.size(28.dp)  // Reduced from 40dp
                             )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))  // Reduced spacing
                         Text(
                             "Jewelry Inventory",
                             color = Color.White,
-                            fontSize = 18.sp,
+                            fontSize = 16.sp,  // Reduced from 18sp
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -139,9 +139,8 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                     }
                 )
 
-
                 NavigationItem(
-                    icon = Icons.Default.MailOutline,  // Use an appropriate icon
+                    icon = Icons.Default.MailOutline,
                     title = "Billing",
                     selected = currentScreen == Screen.BILLING,
                     onClick = {
@@ -175,11 +174,25 @@ fun JewelryApp(viewModel: ProductsViewModel) {
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Top bar
+                // Top bar - reduced height and font size
                 TopAppBar(
-                    title = { Text("Jewelry Inventory Management") },
+                    title = {
+                        Text(
+                            when (currentScreen) {
+                                Screen.DASHBOARD -> "Dashboard"
+                                Screen.ADD_PRODUCT -> "Add Product"
+                                Screen.EDIT_PRODUCT -> "Edit Product"
+                                Screen.PRODUCT_DETAIL -> "Product Details"
+                                Screen.SETTINGS -> "Settings"
+                                Screen.BILLING -> "Billing"
+                            },
+                            fontSize = 16.sp  // Reduced from default
+                        )
+                    },
                     backgroundColor = MaterialTheme.colors.primary,
                     contentColor = Color.White,
+                    elevation = 2.dp,
+                    modifier = Modifier.height(48.dp),  // Reduced from default 56dp
                     actions = {
                         IconButton(onClick = {
                             coroutineScope.launch {
@@ -187,7 +200,11 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 snackbarHostState.showSnackbar("Data refreshed")
                             }
                         }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Refresh")
+                            Icon(
+                                Icons.Default.Refresh,
+                                contentDescription = "Refresh",
+                                modifier = Modifier.size(20.dp)  // Reduced icon size
+                            )
                         }
                     }
                 )
@@ -203,7 +220,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 viewModel.createNewProduct()
                                 currentScreen = Screen.ADD_PRODUCT
                             },
-                            // Add this new property
                             onViewProductDetails = { productId ->
                                 viewModel.selectProduct(productId)
                                 currentScreen = Screen.PRODUCT_DETAIL
@@ -233,12 +249,10 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                             isEditing = true
                         )
 
-                        // Add the new product detail screen case
                         Screen.PRODUCT_DETAIL -> ProductDetailScreen(
                             viewModel = viewModel,
                             imageLoader = imageLoader,
                             onEdit = {
-                                // No need to select product again as it's already selected
                                 currentScreen = Screen.EDIT_PRODUCT
                             },
                             onBack = {
@@ -246,16 +260,14 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                             }
                         )
 
-
-
-
                         Screen.SETTINGS -> SettingsScreen()
 
                         Screen.BILLING -> BillingScreen(
                             customerViewModel = customerViewModel,
                             cartViewModel = cartViewModel,
                             productsViewModel = viewModel,
-                            imageLoader = imageLoader
+                            imageLoader = imageLoader,
+                            paymentViewModel = paymentViewModel // Pass paymentViewModel
                         )
                     }
 
@@ -292,7 +304,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     }
 }
 
-// Navigation item composable
+// Navigation item composable - reduced height
 @Composable
 fun NavigationItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -306,7 +318,7 @@ fun NavigationItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
+            .height(48.dp)  // Reduced from 56dp
             .background(backgroundColor)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp),
@@ -315,23 +327,25 @@ fun NavigationItem(
         Icon(
             imageVector = icon,
             contentDescription = title,
-            tint = textColor
+            tint = textColor,
+            modifier = Modifier.size(20.dp)  // Reduced icon size
         )
-        Spacer(modifier = Modifier.width(16.dp))
+        Spacer(modifier = Modifier.width(12.dp))  // Reduced spacing
         Text(
             text = title,
             color = textColor,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 14.sp  // Reduced font size
         )
     }
 }
 
-// Screen enum for navigation
+// Screen enum for navigation - no changes needed
 enum class Screen {
     DASHBOARD,
     ADD_PRODUCT,
     EDIT_PRODUCT,
     PRODUCT_DETAIL,
     SETTINGS,
-    BILLING  // Add this new entry
+    BILLING
 }

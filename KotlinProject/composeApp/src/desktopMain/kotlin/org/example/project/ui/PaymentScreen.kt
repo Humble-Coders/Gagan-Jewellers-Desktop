@@ -37,6 +37,7 @@ import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.CartViewModel
 import org.example.project.data.PaymentMethod
 import org.example.project.data.DiscountType
+import org.example.project.viewModels.ProductsViewModel
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -44,8 +45,10 @@ import java.util.Locale
 fun PaymentScreen(
     paymentViewModel: PaymentViewModel,
     cartViewModel: CartViewModel,
+    customerViewModel: org.example.project.viewModels.CustomerViewModel,
     onBack: () -> Unit,
-    onPaymentComplete: () -> Unit
+    onPaymentComplete: () -> Unit,
+    productsViewModel: ProductsViewModel
 ) {
     val cart by cartViewModel.cart
     val cartImages by cartViewModel.cartImages
@@ -55,6 +58,7 @@ fun PaymentScreen(
     val calculatedDiscountAmount = paymentViewModel.calculateDiscountAmount(cartViewModel.getSubtotal())
     val isProcessing by paymentViewModel.isProcessing
     val errorMessage by paymentViewModel.errorMessage
+    val selectedCustomer by customerViewModel.selectedCustomer
 
     Column(
         modifier = Modifier
@@ -107,13 +111,27 @@ fun PaymentScreen(
                 gst = cartViewModel.getGST(),
                 total = cartViewModel.getFinalTotal() - calculatedDiscountAmount,
                 onConfirmOrder = {
-                    paymentViewModel.saveOrderWithPaymentMethod(
+                    // Validate stock before proceeding
+                    paymentViewModel.validateStockBeforeOrder(
                         cart = cart,
-                        subtotal = cartViewModel.getSubtotal(),
-                        discountAmount = calculatedDiscountAmount,
-                        gst = cartViewModel.getGST(),
-                        finalTotal = cartViewModel.getFinalTotal() - calculatedDiscountAmount,
-                        onSuccess = onPaymentComplete
+                        products = productsViewModel.products.value,
+                        onValidationResult = { isValid, errors ->
+                            if (isValid) {
+                                paymentViewModel.saveOrderWithPaymentMethod(
+                                    cart = cart,
+                                    subtotal = cartViewModel.getSubtotal(),
+                                    discountAmount = calculatedDiscountAmount,
+                                    gst = cartViewModel.getGST(),
+                                    finalTotal = cartViewModel.getFinalTotal() - calculatedDiscountAmount,
+                                    onSuccess = onPaymentComplete
+                                )
+                            } else {
+                                // Show error dialog or snackbar with stock issues
+                                paymentViewModel.setErrorMessage(
+                                    "Stock validation failed:\n${errors.joinToString("\n")}"
+                                )
+                            }
+                        }
                     )
                 },
                 isProcessing = isProcessing,
@@ -122,6 +140,7 @@ fun PaymentScreen(
         }
     }
 }
+
 
 
 @Composable

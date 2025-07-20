@@ -32,6 +32,7 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.7.3")
             implementation("com.google.cloud:google-cloud-storage:2.29.1")
             //implementation("io.coil-kt:coil:3.0.0-alpha06")
+            implementation("org.apache.pdfbox:pdfbox:3.0.1")
 
 
             // extended icons

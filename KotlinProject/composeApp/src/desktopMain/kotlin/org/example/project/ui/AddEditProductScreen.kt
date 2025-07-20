@@ -69,6 +69,8 @@ fun AddEditProductScreen(
     var available by remember { mutableStateOf(product.available) }
     var featured by remember { mutableStateOf(product.featured) }
     var images by remember { mutableStateOf(product.images) }
+    var quantity by remember { mutableStateOf(product.quantity) }
+
 
     // Validation state
     var nameError by remember { mutableStateOf(false) }
@@ -330,6 +332,20 @@ fun AddEditProductScreen(
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true
                 )
+                OutlinedTextField(
+                    value = quantity.toString(),
+                    onValueChange = {
+                        val newQuantity = it.toIntOrNull()
+                        if (newQuantity != null && newQuantity >= 0) {
+                            quantity = newQuantity
+                        }
+                    },
+                    label = { Text("Quantity in Stock") },
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true
+                )
+
 
                 // Availability switch
                 Row(
@@ -412,6 +428,7 @@ fun AddEditProductScreen(
                                     available = available,
                                     featured = featured,
                                     images = images,
+                                    quantity = quantity,
                                     createdAt = product.createdAt
                                 )
 

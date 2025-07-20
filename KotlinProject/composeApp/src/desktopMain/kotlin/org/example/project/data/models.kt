@@ -13,6 +13,7 @@ data class Product(
     val available: Boolean = true,
     val featured: Boolean = false,
     val images: List<String> = emptyList(),
+    val quantity: Int = 0, // Add this line
     val createdAt: Long = System.currentTimeMillis()
 )
 

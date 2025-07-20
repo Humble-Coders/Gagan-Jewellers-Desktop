@@ -13,7 +13,7 @@ import org.example.project.data.Material
 import org.example.project.data.Product
 import org.example.project.data.ProductRepository
 
-class ProductsViewModel(private val repository: ProductRepository) {
+class ProductsViewModel(internal val repository: ProductRepository) {
 
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -57,6 +57,26 @@ class ProductsViewModel(private val repository: ProductRepository) {
                 _error.value = "Failed to load products: ${e.message}"
             } finally {
                 _loading.value = false
+            }
+        }
+    }
+
+    fun updateProductQuantity(productId: String, newQuantity: Int) {
+        viewModelScope.launch {
+            try {
+                val product = repository.getProductById(productId)
+                if (product != null) {
+                    val updatedProduct = product.copy(quantity = newQuantity)
+                    val success = repository.updateProduct(updatedProduct)
+                    if (success) {
+                        loadProducts() // Refresh the list
+                        _error.value = null
+                    } else {
+                        _error.value = "Failed to update quantity"
+                    }
+                }
+            } catch (e: Exception) {
+                _error.value = "Failed to update quantity: ${e.message}"
             }
         }
     }

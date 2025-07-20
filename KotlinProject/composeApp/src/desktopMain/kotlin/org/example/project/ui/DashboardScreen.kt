@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -49,6 +50,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -120,23 +122,26 @@ fun DashboardScreen(
                     .padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.weight(0.15f), contentAlignment = Alignment.CenterStart) {
+                Box(modifier = Modifier.weight(0.12f), contentAlignment = Alignment.CenterStart) {
                     Text("Image", fontWeight = FontWeight.Bold)
                 }
-                Box(modifier = Modifier.weight(0.2f), contentAlignment = Alignment.CenterStart) {
+                Box(modifier = Modifier.weight(0.18f), contentAlignment = Alignment.CenterStart) {
                     Text("Name", fontWeight = FontWeight.Bold)
                 }
-                Box(modifier = Modifier.weight(0.15f), contentAlignment = Alignment.CenterStart) {
+                Box(modifier = Modifier.weight(0.13f), contentAlignment = Alignment.CenterStart) {
                     Text("Category", fontWeight = FontWeight.Bold)
                 }
-                Box(modifier = Modifier.weight(0.15f), contentAlignment = Alignment.CenterStart) {
+                Box(modifier = Modifier.weight(0.13f), contentAlignment = Alignment.CenterStart) {
                     Text("Material", fontWeight = FontWeight.Bold)
                 }
                 Box(modifier = Modifier.weight(0.1f), contentAlignment = Alignment.CenterStart) {
                     Text("Price", fontWeight = FontWeight.Bold)
                 }
-                Box(modifier = Modifier.weight(0.1f), contentAlignment = Alignment.CenterStart) {
+                Box(modifier = Modifier.weight(0.09f), contentAlignment = Alignment.CenterStart) {
                     Text("Available", fontWeight = FontWeight.Bold)
+                }
+                Box(modifier = Modifier.weight(0.1f), contentAlignment = Alignment.CenterStart) {
+                    Text("Quantity", fontWeight = FontWeight.Bold)
                 }
                 Box(modifier = Modifier.weight(0.15f), contentAlignment = Alignment.CenterStart) {
                     Text("Actions", fontWeight = FontWeight.Bold)
@@ -323,6 +328,73 @@ fun ProductRow(
                     if (product.available) "Yes" else "No",
                     color = if (product.available) Color(0xFF388E3C) else Color(0xFFD32F2F),
                     fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        Box(
+            modifier = Modifier.weight(0.1f),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Decrease button
+                IconButton(
+                    onClick = {
+                        if (product.quantity > 0) {
+                            viewModel.updateProductQuantity(product.id, product.quantity - 1)
+                        }
+                    },
+                    modifier = Modifier.size(24.dp),
+                    enabled = product.quantity > 0
+                ) {
+                    Text(
+                        "−",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (product.quantity > 0) Color.Gray else Color.LightGray
+                    )
+                }
+
+                // Quantity display
+                Text(
+                    text = product.quantity.toString(),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.widthIn(min = 20.dp),
+                    textAlign = TextAlign.Center
+                )
+
+                // Increase button
+                IconButton(
+                    onClick = {
+                        viewModel.updateProductQuantity(product.id, product.quantity + 1)
+                    },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Text(
+                        "+",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colors.primary
+                    )
+                }
+            }
+        }
+        if (product.quantity == 0) {
+            Box(
+                modifier = Modifier
+                    .padding(start = 4.dp)
+                    .background(Color(0xFFFFEBEE), RoundedCornerShape(4.dp))
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    "Out of Stock",
+                    fontSize = 10.sp,
+                    color = Color(0xFFD32F2F),
                     fontWeight = FontWeight.Medium
                 )
             }

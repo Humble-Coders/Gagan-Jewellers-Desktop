@@ -106,20 +106,37 @@ fun BillingScreen(
                             onProceedToPayment = { currentStep = BillingStep.PAYMENT } // Navigate to payment step
                         )
                     }
-                    BillingStep.PAYMENT -> PaymentScreen( // Handle PaymentScreen internally like other steps
+                    BillingStep.PAYMENT -> PaymentScreen(
                         paymentViewModel = paymentViewModel,
                         cartViewModel = cartViewModel,
+                        customerViewModel = customerViewModel,
                         onBack = {
                             currentStep = BillingStep.CART
                             paymentViewModel.resetPaymentState()
                         },
                         onPaymentComplete = {
                             cartViewModel.clearCart()
-                            paymentViewModel.resetPaymentState()
                             currentStep = BillingStep.RECEIPT
+                        },
+                        productsViewModel= productsViewModel
+                    )
+                    BillingStep.RECEIPT -> ReceiptScreen(
+                        paymentViewModel = paymentViewModel,
+                        customerViewModel = customerViewModel,
+                        onStartNewOrder = {
+                            // Reset everything and start fresh
+                            customerViewModel.clearSelectedCustomer()
+                            cartViewModel.clearCart()
+                            paymentViewModel.resetPaymentState()
+                            currentStep = BillingStep.CUSTOMER
+                        },
+                        onBackToBilling = {
+                            // Keep the receipt but go back to customer selection for new order
+                            customerViewModel.clearSelectedCustomer()
+                            cartViewModel.clearCart()
+                            currentStep = BillingStep.CUSTOMER
                         }
                     )
-                    BillingStep.RECEIPT -> Text("Receipt Generation Step (Coming Soon)")
                 }
             }
         }

@@ -43,8 +43,10 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 available = data["available"] as? Boolean ?: true,
                 featured = data["featured"] as? Boolean ?: false,
                 images = (data["images"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-            )
+                createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                quantity = (data["quantity"] as? Number)?.toInt() ?: 0
+
+                )
         }
     }
 
@@ -69,7 +71,8 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     available = data?.get("available") as? Boolean ?: true,
                     featured = data?.get("featured") as? Boolean ?: false,
                     images = (data?.get("images") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                    createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis()
+                    createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
+                    quantity = (data?.get("quantity") as? Number)?.toInt() ?: 0
                 )
             } else null
         } catch (e: Exception) {
@@ -95,6 +98,7 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             "available" to product.available,
             "featured" to product.featured,
             "images" to product.images,
+            "quantity" to product.quantity,
             "created_at" to System.currentTimeMillis()
         )
 
@@ -131,6 +135,7 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 "weight" to product.weight,
                 "available" to product.available,
                 "featured" to product.featured,
+                "quantity" to product.quantity,
                 "images" to product.images
             )
 

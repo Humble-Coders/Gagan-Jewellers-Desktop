@@ -66,6 +66,15 @@ class CartViewModel(
 
     fun addToCart(product: Product) {
         val currentCart = _cart.value
+        val existingItem = currentCart.items.find { it.productId == product.id }
+        val currentQuantityInCart = existingItem?.quantity ?: 0
+
+        // Check if we can add more to cart
+        if (currentQuantityInCart >= product.quantity) {
+            _error.value = "Cannot add more items. Only ${product.quantity} available in stock."
+            return
+        }
+
         val existingItemIndex = currentCart.items.indexOfFirst { it.productId == product.id }
 
         val updatedItems = if (existingItemIndex >= 0) {
@@ -82,7 +91,7 @@ class CartViewModel(
                 productId = product.id,
                 product = product,
                 quantity = 1,
-                selectedWeight = productWeight // Fixed weight from Firestore
+                selectedWeight = productWeight
             )
         }
 
@@ -91,8 +100,59 @@ class CartViewModel(
             updatedAt = System.currentTimeMillis()
         )
 
+        // Clear error if successful
+        _error.value = null
+
         // Load image for the added product
         loadProductImage(product)
+    }
+
+    fun updateQuantity(productId: String, newQuantity: Int) {
+        if (newQuantity <= 0) {
+            removeFromCart(productId)
+            return
+        }
+
+        val currentCart = _cart.value
+        val existingItemIndex = currentCart.items.indexOfFirst { it.productId == productId }
+
+        if (existingItemIndex >= 0) {
+            val cartItem = currentCart.items[existingItemIndex]
+
+            // Check stock availability
+            if (newQuantity > cartItem.product.quantity) {
+                _error.value = "Cannot add ${newQuantity} items. Only ${cartItem.product.quantity} available in stock."
+                return
+            }
+
+            val updatedItems = currentCart.items.toMutableList().apply {
+                this[existingItemIndex] = this[existingItemIndex].copy(quantity = newQuantity)
+            }
+
+            _cart.value = currentCart.copy(
+                items = updatedItems,
+                updatedAt = System.currentTimeMillis()
+            )
+
+            // Clear error if successful
+            _error.value = null
+        }
+    }
+
+    // Add method to validate entire cart against current stock
+    fun validateCartAgainstStock(products: List<Product>): List<String> {
+        val errors = mutableListOf<String>()
+
+        _cart.value.items.forEach { cartItem ->
+            val currentProduct = products.find { it.id == cartItem.productId }
+            if (currentProduct == null) {
+                errors.add("${cartItem.product.name} is no longer available")
+            } else if (cartItem.quantity > currentProduct.quantity) {
+                errors.add("${cartItem.product.name}: Only ${currentProduct.quantity} available, but ${cartItem.quantity} in cart")
+            }
+        }
+
+        return errors
     }
 
     fun removeFromCart(productId: String) {
@@ -109,26 +169,6 @@ class CartViewModel(
         _cartImages.value = _cartImages.value.toMutableMap().apply { remove(productId) }
     }
 
-    fun updateQuantity(productId: String, newQuantity: Int) {
-        if (newQuantity <= 0) {
-            removeFromCart(productId)
-            return
-        }
-
-        val currentCart = _cart.value
-        val existingItemIndex = currentCart.items.indexOfFirst { it.productId == productId }
-
-        if (existingItemIndex >= 0) {
-            val updatedItems = currentCart.items.toMutableList().apply {
-                this[existingItemIndex] = this[existingItemIndex].copy(quantity = newQuantity)
-            }
-
-            _cart.value = currentCart.copy(
-                items = updatedItems,
-                updatedAt = System.currentTimeMillis()
-            )
-        }
-    }
 
     // Weight is now fixed from Firestore, remove this method or make it no-op
     fun updateWeight(productId: String, newWeight: Double) {
@@ -136,6 +176,8 @@ class CartViewModel(
         // This method is kept for compatibility but does nothing
         println("Weight update ignored - using fixed Firestore weight")
     }
+
+
 
     fun clearCart() {
         _cart.value = Cart()

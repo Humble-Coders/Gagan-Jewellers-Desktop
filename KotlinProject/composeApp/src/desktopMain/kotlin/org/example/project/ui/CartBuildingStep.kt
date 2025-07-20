@@ -373,7 +373,8 @@ fun CartBuildingScreen(
             val matchesCategory = if (selectedCategoryId.isEmpty()) true else {
                 product.categoryId == selectedCategoryId
             }
-            matchesSearch && matchesCategory && product.available
+            // Add inventory check - only show products with quantity > 0
+            matchesSearch && matchesCategory && product.available && product.quantity > 0
         }
 
         if (filteredProducts.isEmpty()) {
@@ -479,6 +480,8 @@ fun ProductCard(
         else -> goldPrice
     }
     val calculatedPrice = weight * pricePerGram
+    val availableToAdd = product.quantity - cartQuantity
+
 
     Card(
         modifier = Modifier
@@ -608,7 +611,7 @@ fun ProductCard(
                             backgroundColor = Color.White,
                             modifier = Modifier
                                 .padding(2.dp)
-                                .height(28.dp) // consistent height
+                                .height(28.dp)
                                 .wrapContentWidth()
                         ) {
                             Row(
@@ -623,7 +626,7 @@ fun ProductCard(
                                     onClick = {
                                         if (cartQuantity > 0) onUpdateQuantity(cartQuantity - 1)
                                     },
-                                    modifier = Modifier.size(22.dp), // slightly larger for touch
+                                    modifier = Modifier.size(22.dp),
                                     enabled = cartQuantity > 0
                                 ) {
                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -645,24 +648,37 @@ fun ProductCard(
                                     textAlign = TextAlign.Center
                                 )
 
-                                // Increase button
+                                // Increase button - Updated with stock limit
                                 IconButton(
                                     onClick = {
-                                        onUpdateQuantity(cartQuantity + 1)
+                                        if (cartQuantity < product.quantity) {
+                                            onUpdateQuantity(cartQuantity + 1)
+                                        }
                                     },
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(22.dp),
+                                    enabled = cartQuantity < product.quantity // Limit to stock quantity
                                 ) {
                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                         Text(
                                             text = "+",
                                             fontSize = 13.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFFB2935A) // gold accent
+                                            color = if (cartQuantity < product.quantity) Color(0xFFB2935A) else Color.LightGray
                                         )
                                     }
                                 }
                             }
                         }
+                        if (product.quantity <= 5) {
+                            Text(
+                                text = if (product.quantity == 0) "Out of Stock" else "Only ${product.quantity} left",
+                                fontSize = 10.sp,
+                                color = if (product.quantity == 0) Color.Red else Color.Red,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
+
 
 
                     }

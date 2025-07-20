@@ -6,21 +6,22 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.example.project.data.Cart
-import org.example.project.data.DiscountType
-import org.example.project.data.Order
-import org.example.project.data.OrderStatus
-import org.example.project.data.PaymentMethod
-import org.example.project.data.PaymentRepository
-import org.example.project.data.PaymentStatus
-import org.example.project.data.PaymentTransaction
+import org.example.project.JewelryAppInitializer
+import org.example.project.data.*
+import org.example.project.utils.BillPDFGenerator
+import java.awt.Desktop
+import java.io.File
+import java.nio.file.Path
+import java.nio.file.Paths
 
 class PaymentViewModel(
     private val paymentRepository: PaymentRepository
 ) {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    // Lazy initialization to avoid font loading at startup
+    private val pdfGenerator by lazy { BillPDFGenerator() }
 
     // Payment Method State
     private val _selectedPaymentMethod = mutableStateOf<PaymentMethod?>(null)
@@ -47,6 +48,13 @@ class PaymentViewModel(
     private val _lastTransaction = mutableStateOf<PaymentTransaction?>(null)
     val lastTransaction: State<PaymentTransaction?> = _lastTransaction
 
+    // PDF Generation State
+    private val _isGeneratingPDF = mutableStateOf(false)
+    val isGeneratingPDF: State<Boolean> = _isGeneratingPDF
+
+    private val _pdfPath = mutableStateOf<String?>(null)
+    val pdfPath: State<String?> = _pdfPath
+
     fun setPaymentMethod(paymentMethod: PaymentMethod) {
         _selectedPaymentMethod.value = paymentMethod
         _errorMessage.value = null
@@ -58,9 +66,44 @@ class PaymentViewModel(
         _discountAmount.value = 0.0
         _errorMessage.value = null
     }
+    fun validateStockBeforeOrder(
+        cart: Cart,
+        products: List<Product>,
+        onValidationResult: (Boolean, List<String>) -> Unit
+    ) {
+        viewModelScope.launch {
+            val errors = mutableListOf<String>()
+
+            cart.items.forEach { cartItem ->
+                val currentProduct = products.find { it.id == cartItem.productId }
+                if (currentProduct == null) {
+                    errors.add("${cartItem.product.name} is no longer available")
+                } else if (cartItem.quantity > currentProduct.quantity) {
+                    errors.add("${cartItem.product.name}: Only ${currentProduct.quantity} available")
+                }
+            }
+
+            onValidationResult(errors.isEmpty(), errors)
+        }
+    }
+
+    private suspend fun reduceStockAfterOrder(order: Order, productRepository: ProductRepository) {
+        order.items.forEach { cartItem ->
+            try {
+                val product = productRepository.getProductById(cartItem.productId)
+                if (product != null) {
+                    val updatedProduct = product.copy(
+                        quantity = maxOf(0, product.quantity - cartItem.quantity)
+                    )
+                    productRepository.updateProduct(updatedProduct)
+                }
+            } catch (e: Exception) {
+                println("Failed to reduce stock for product ${cartItem.productId}: ${e.message}")
+            }
+        }
+    }
 
     fun setDiscountValue(value: String) {
-        // Allow only numbers and single decimal point
         if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d*\$"))) {
             _discountValue.value = value
             _errorMessage.value = null
@@ -81,10 +124,8 @@ class PaymentViewModel(
                     _errorMessage.value = "Percentage discount cannot exceed 100%"
                     return
                 }
-                // Store percentage value - will be applied to subtotal in calculation
                 _discountAmount.value = value
             }
-
             DiscountType.AMOUNT -> {
                 _discountAmount.value = value
             }
@@ -98,9 +139,8 @@ class PaymentViewModel(
             DiscountType.PERCENTAGE -> {
                 subtotal * (_discountAmount.value / 100)
             }
-
             DiscountType.AMOUNT -> {
-                minOf(_discountAmount.value, subtotal) // Don't exceed subtotal
+                minOf(_discountAmount.value, subtotal)
             }
         }
     }
@@ -140,6 +180,10 @@ class PaymentViewModel(
                 val success = paymentRepository.saveOrder(order)
 
                 if (success) {
+                    // Reduce stock quantities
+                    val productRepository = JewelryAppInitializer.getViewModel().repository
+                    reduceStockAfterOrder(order, productRepository)
+
                     _lastTransaction.value = PaymentTransaction(
                         id = order.id,
                         cartId = order.customerId,
@@ -150,7 +194,7 @@ class PaymentViewModel(
                         totalAmount = order.totalAmount,
                         items = order.items,
                         timestamp = order.timestamp,
-                        status = PaymentStatus.PENDING // Payment method selected but not processed
+                        status = PaymentStatus.COMPLETED
                     )
                     onSuccess()
                 } else {
@@ -160,6 +204,58 @@ class PaymentViewModel(
                 _errorMessage.value = "Error saving order: ${e.message}"
             } finally {
                 _isProcessing.value = false
+            }
+        }
+    }
+
+    fun setErrorMessage(message: String) {
+        _errorMessage.value = message
+    }
+    private fun generateOrderPDF(order: Order, customer: User) {
+        viewModelScope.launch {
+            _isGeneratingPDF.value = true
+            try {
+                val userHome = System.getProperty("user.home")
+                val billsDirectory = File(userHome, "JewelryBills")
+                if (!billsDirectory.exists()) {
+                    billsDirectory.mkdirs()
+                }
+
+                val fileName = "Invoice_${order.id}_${System.currentTimeMillis()}.pdf"
+                val outputPath = Paths.get(billsDirectory.absolutePath, fileName)
+
+                val success = pdfGenerator.generateBill(
+                    order = order,
+                    customer = customer,
+                    outputPath = outputPath
+                )
+
+                if (success) {
+                    _pdfPath.value = outputPath.toString()
+                    println("PDF generated successfully at: ${outputPath}")
+                } else {
+                    _errorMessage.value = "Failed to generate PDF bill"
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Error generating PDF: ${e.message}"
+                e.printStackTrace()
+            } finally {
+                _isGeneratingPDF.value = false
+            }
+        }
+    }
+
+    fun openPDF() {
+        _pdfPath.value?.let { path ->
+            try {
+                val file = File(path)
+                if (file.exists() && Desktop.isDesktopSupported()) {
+                    Desktop.getDesktop().open(file)
+                } else {
+                    _errorMessage.value = "Cannot open PDF file"
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Error opening PDF: ${e.message}"
             }
         }
     }
@@ -186,10 +282,8 @@ class PaymentViewModel(
         _isProcessing.value = false
         _errorMessage.value = null
         _lastTransaction.value = null
-    }
-
-    private fun generateTransactionId(): String {
-        return "TXN_${System.currentTimeMillis()}_${(1000..9999).random()}"
+        _isGeneratingPDF.value = false
+        _pdfPath.value = null
     }
 
     fun onCleared() {

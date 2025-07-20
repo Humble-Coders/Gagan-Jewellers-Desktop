@@ -267,7 +267,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                             cartViewModel = cartViewModel,
                             productsViewModel = viewModel,
                             imageLoader = imageLoader,
-                            paymentViewModel = paymentViewModel // Pass paymentViewModel
+                            paymentViewModel = paymentViewModel
                         )
                     }
 

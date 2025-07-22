@@ -12,7 +12,6 @@ import org.example.project.data.*
 import org.example.project.utils.BillPDFGenerator
 import java.awt.Desktop
 import java.io.File
-import java.nio.file.Path
 import java.nio.file.Paths
 
 class PaymentViewModel(
@@ -66,6 +65,7 @@ class PaymentViewModel(
         _discountAmount.value = 0.0
         _errorMessage.value = null
     }
+
     fun validateStockBeforeOrder(
         cart: Cart,
         products: List<Product>,
@@ -184,6 +184,7 @@ class PaymentViewModel(
                     val productRepository = JewelryAppInitializer.getViewModel().repository
                     reduceStockAfterOrder(order, productRepository)
 
+                    // Create transaction record
                     _lastTransaction.value = PaymentTransaction(
                         id = order.id,
                         cartId = order.customerId,
@@ -196,12 +197,30 @@ class PaymentViewModel(
                         timestamp = order.timestamp,
                         status = PaymentStatus.COMPLETED
                     )
+
+                    // ✅ FIX: Generate PDF after successful order creation
+                    val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
+                    if (customer != null) {
+                        generateOrderPDF(order, customer)
+                    } else {
+                        // Create a default customer if none selected
+                        val defaultCustomer = User(
+                            id = "default",
+                            name = "Walk-in Customer",
+                            email = "",
+                            phone = "",
+                            address = ""
+                        )
+                        generateOrderPDF(order, defaultCustomer)
+                    }
+
                     onSuccess()
                 } else {
                     _errorMessage.value = "Failed to save order. Please try again."
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "Error saving order: ${e.message}"
+                e.printStackTrace()
             } finally {
                 _isProcessing.value = false
             }
@@ -211,9 +230,12 @@ class PaymentViewModel(
     fun setErrorMessage(message: String) {
         _errorMessage.value = message
     }
+
     private fun generateOrderPDF(order: Order, customer: User) {
         viewModelScope.launch {
             _isGeneratingPDF.value = true
+            _errorMessage.value = null // Clear any previous errors
+
             try {
                 val userHome = System.getProperty("user.home")
                 val billsDirectory = File(userHome, "JewelryBills")
@@ -224,6 +246,9 @@ class PaymentViewModel(
                 val fileName = "Invoice_${order.id}_${System.currentTimeMillis()}.pdf"
                 val outputPath = Paths.get(billsDirectory.absolutePath, fileName)
 
+                println("Starting PDF generation for order: ${order.id}")
+                println("Output path: $outputPath")
+
                 val success = pdfGenerator.generateBill(
                     order = order,
                     customer = customer,
@@ -232,12 +257,14 @@ class PaymentViewModel(
 
                 if (success) {
                     _pdfPath.value = outputPath.toString()
-                    println("PDF generated successfully at: ${outputPath}")
+                    println("PDF generated successfully at: $outputPath")
                 } else {
                     _errorMessage.value = "Failed to generate PDF bill"
+                    println("PDF generation failed")
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "Error generating PDF: ${e.message}"
+                println("Exception during PDF generation: ${e.message}")
                 e.printStackTrace()
             } finally {
                 _isGeneratingPDF.value = false
@@ -252,10 +279,11 @@ class PaymentViewModel(
                 if (file.exists() && Desktop.isDesktopSupported()) {
                     Desktop.getDesktop().open(file)
                 } else {
-                    _errorMessage.value = "Cannot open PDF file"
+                    _errorMessage.value = "Cannot open PDF file or file does not exist"
                 }
             } catch (e: Exception) {
                 _errorMessage.value = "Error opening PDF: ${e.message}"
+                e.printStackTrace()
             }
         }
     }

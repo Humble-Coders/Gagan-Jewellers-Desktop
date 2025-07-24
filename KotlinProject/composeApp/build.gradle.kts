@@ -36,7 +36,8 @@ kotlin {
 
 
             // extended icons
-            //implementation("androidx.compose.material:material-icons-extended:1.5.4")
+            implementation(compose.materialIconsExtended)
+
         }
     }
 }

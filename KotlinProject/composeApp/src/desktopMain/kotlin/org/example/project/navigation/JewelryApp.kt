@@ -24,14 +24,19 @@ import androidx.compose.material.SnackbarHost
 import androidx.compose.material.SnackbarHostState
 import androidx.compose.material.Text
 import androidx.compose.material.TopAppBar
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountBox
-import androidx.compose.material.icons.filled.AddCircle
-import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.MailOutline
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.lightColors
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Autorenew
+import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Diamond
+import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.Money
+import androidx.compose.material.icons.outlined.PostAdd
+import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.RequestQuote
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.SettingsApplications
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -55,82 +60,74 @@ import org.example.project.ui.DashboardScreen
 import org.example.project.ui.ProductDetailScreen
 import org.example.project.ui.SettingsScreen
 
-
 @Composable
 fun JewelryApp(viewModel: ProductsViewModel) {
-    // State for navigation
     var currentScreen by remember { mutableStateOf(Screen.DASHBOARD) }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val imageLoader = JewelryAppInitializer.getImageLoader()
     val cartViewModel = JewelryAppInitializer.getCartViewModel()
     val customerViewModel = JewelryAppInitializer.getCustomerViewModel()
-    val paymentViewModel = JewelryAppInitializer.getPaymentViewModel() // Add this line
+    val paymentViewModel = JewelryAppInitializer.getPaymentViewModel()
 
-    // Material Theme customization for jewelry store
     MaterialTheme(
         colors = lightColors(
-            primary = Color(0xFFC9AD6E),        // Gold
-            primaryVariant = Color(0xFFB8973D),  // Darker gold
-            secondary = Color(0xFF7D7D7D),      // Silver
-            background = Color(0xFFF9F9F9),     // Light background
+            primary = Color(0xFFC9AD6E),
+            primaryVariant = Color(0xFFB8973D),
+            secondary = Color(0xFF7D7D7D),
+            background = Color(0xFFF9F9F9),
             surface = Color.White
         )
     ) {
-        // Use a Row layout to create a permanent drawer effect
         Row {
-            // Sidebar navigation - fixed width, always visible
             Column(
                 modifier = Modifier
                     .fillMaxHeight()
-                    .width(260.dp)  // Reduced drawer width
+                    .width(260.dp)
                     .background(Color.White)
                     .border(BorderStroke(1.dp, Color(0xFFEEEEEE)))
             ) {
-                // App logo header - reduced height
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(120.dp)  // Reduced from 150dp
+                        .height(120.dp)
                         .background(MaterialTheme.colors.primary),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        // App logo placeholder
                         Box(
                             modifier = Modifier
-                                .size(48.dp)  // Reduced from 64dp
+                                .size(48.dp)
                                 .clip(CircleShape)
                                 .background(Color.White.copy(alpha = 0.2f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                Icons.Default.Build,
+                                Icons.Outlined.Diamond,
                                 contentDescription = "Logo",
                                 tint = Color.White,
-                                modifier = Modifier.size(28.dp)  // Reduced from 40dp
+                                modifier = Modifier.size(28.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.height(6.dp))  // Reduced spacing
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             "Jewelry Inventory",
                             color = Color.White,
-                            fontSize = 16.sp,  // Reduced from 18sp
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
 
-                // Navigation items
                 NavigationItem(
-                    icon = Icons.Default.AccountBox,
+                    icon = Icons.Outlined.Insights,
                     title = "Dashboard",
                     selected = currentScreen == Screen.DASHBOARD,
                     onClick = { currentScreen = Screen.DASHBOARD }
                 )
 
                 NavigationItem(
-                    icon = Icons.Default.AddCircle,
+                    icon = Icons.Outlined.PostAdd,
                     title = "Add Product",
                     selected = currentScreen == Screen.ADD_PRODUCT,
                     onClick = {
@@ -140,11 +137,10 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                 )
 
                 NavigationItem(
-                    icon = Icons.Default.MailOutline,
+                    icon = Icons.Outlined.ReceiptLong,
                     title = "Billing",
                     selected = currentScreen == Screen.BILLING,
                     onClick = {
-                        // Dismiss any active snackbars when switching to billing
                         coroutineScope.launch {
                             snackbarHostState.currentSnackbarData?.dismiss()
                         }
@@ -153,7 +149,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                 )
 
                 NavigationItem(
-                    icon = Icons.Default.Settings,
+                    icon = Icons.Outlined.Settings,
                     title = "Settings",
                     selected = currentScreen == Screen.SETTINGS,
                     onClick = { currentScreen = Screen.SETTINGS }
@@ -161,7 +157,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                // Version info
                 Text(
                     "Version 1.0",
                     modifier = Modifier.padding(16.dp),
@@ -170,11 +165,9 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                 )
             }
 
-            // Main content area
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Top bar - reduced height and font size
                 TopAppBar(
                     title = {
                         Text(
@@ -186,13 +179,13 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 Screen.SETTINGS -> "Settings"
                                 Screen.BILLING -> "Billing"
                             },
-                            fontSize = 16.sp  // Reduced from default
+                            fontSize = 16.sp
                         )
                     },
                     backgroundColor = MaterialTheme.colors.primary,
                     contentColor = Color.White,
                     elevation = 2.dp,
-                    modifier = Modifier.height(48.dp),  // Reduced from default 56dp
+                    modifier = Modifier.height(48.dp),
                     actions = {
                         IconButton(onClick = {
                             coroutineScope.launch {
@@ -201,17 +194,15 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                             }
                         }) {
                             Icon(
-                                Icons.Default.Refresh,
+                                Icons.Outlined.Autorenew,
                                 contentDescription = "Refresh",
-                                modifier = Modifier.size(20.dp)  // Reduced icon size
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
                 )
 
-                // Content with SnackbarHost
                 Box(modifier = Modifier.fillMaxSize()) {
-                    // Screen content based on navigation
                     when (currentScreen) {
                         Screen.DASHBOARD -> DashboardScreen(
                             viewModel = viewModel,
@@ -271,7 +262,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                         )
                     }
 
-                    // Error message display
                     viewModel.error.value?.let { errorMessage ->
                         if (errorMessage.isNotEmpty()) {
                             LaunchedEffect(errorMessage) {
@@ -283,7 +273,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                         }
                     }
 
-                    // Loading indicator
                     if (viewModel.loading.value) {
                         Box(
                             modifier = Modifier.fillMaxSize(),
@@ -293,7 +282,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                         }
                     }
 
-                    // Snackbar host
                     SnackbarHost(
                         hostState = snackbarHostState,
                         modifier = Modifier.align(Alignment.BottomCenter)
@@ -304,7 +292,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     }
 }
 
-// Navigation item composable - reduced height
 @Composable
 fun NavigationItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -318,7 +305,7 @@ fun NavigationItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(48.dp)  // Reduced from 56dp
+            .height(48.dp)
             .background(backgroundColor)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp),
@@ -328,19 +315,18 @@ fun NavigationItem(
             imageVector = icon,
             contentDescription = title,
             tint = textColor,
-            modifier = Modifier.size(20.dp)  // Reduced icon size
+            modifier = Modifier.size(20.dp)
         )
-        Spacer(modifier = Modifier.width(12.dp))  // Reduced spacing
+        Spacer(modifier = Modifier.width(12.dp))
         Text(
             text = title,
             color = textColor,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            fontSize = 14.sp  // Reduced font size
+            fontSize = 14.sp
         )
     }
 }
 
-// Screen enum for navigation - no changes needed
 enum class Screen {
     DASHBOARD,
     ADD_PRODUCT,

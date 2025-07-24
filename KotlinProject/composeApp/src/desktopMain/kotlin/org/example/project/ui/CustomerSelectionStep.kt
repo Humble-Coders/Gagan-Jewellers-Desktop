@@ -66,21 +66,15 @@ fun CustomerSelectionStep(
                 placeholder = {
                     Text(
                         "Search customers...",
-                        fontSize = 13.sp  // Reduced font size
+//                        fontSize = 13.sp  // Reduced font size
                     )
                 },
-                leadingIcon = {
-                    Icon(
-                        Icons.Default.Search,
-                        contentDescription = "Search",
-                        modifier = Modifier.size(18.dp)  // Reduced icon size
-                    )
-                },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
                 modifier = Modifier
-                    .weight(1f)
-                    .height(42.dp),  // Reduced height
+                    .weight(1f),
+//                    .height(42.dp),  // Reduced height
                 singleLine = true,
-                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
+                //textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
             )
 
             Spacer(modifier = Modifier.width(12.dp))  // Reduced spacing

@@ -116,16 +116,17 @@ fun PaymentScreen(
                 modifier = Modifier.weight(0.4f),
                 cartItems = cart.items,
                 cartImages = cartImages,
-                subtotal = cartViewModel.getSubtotal(),
+                cartViewModel = cartViewModel, // Add this
                 discountAmount = calculatedDiscountAmount,
-                gst = if (isGstIncluded) cartViewModel.getGST() else 0.0,
-                total = if (isGstIncluded)
-                    cartViewModel.getFinalTotal() - calculatedDiscountAmount
-                else
-                    cartViewModel.getSubtotal() - calculatedDiscountAmount,
                 isGstIncluded = isGstIncluded,
                 onConfirmOrder = {
-                    // Validate stock before proceeding
+                    // Update the order saving logic
+                    val finalTotal = if (isGstIncluded) {
+                        cartViewModel.getGrossTotal() + cartViewModel.getGST() - calculatedDiscountAmount
+                    } else {
+                        cartViewModel.getGrossTotal() - calculatedDiscountAmount
+                    }
+
                     paymentViewModel.validateStockBeforeOrder(
                         cart = cart,
                         products = productsViewModel.products.value,
@@ -134,12 +135,10 @@ fun PaymentScreen(
                                 paymentViewModel.saveOrderWithPaymentMethod(
                                     cart = cart,
                                     subtotal = cartViewModel.getSubtotal(),
+                                    makingCharges = cartViewModel.getMakingCharges(),
                                     discountAmount = calculatedDiscountAmount,
                                     gst = if (isGstIncluded) cartViewModel.getGST() else 0.0,
-                                    finalTotal = if (isGstIncluded)
-                                        cartViewModel.getFinalTotal() - calculatedDiscountAmount
-                                    else
-                                        cartViewModel.getSubtotal() - calculatedDiscountAmount,
+                                    finalTotal = finalTotal,
                                     customerId = selectedCustomer?.id ?: "",
                                     isGstIncluded = isGstIncluded,
                                     onSuccess = onPaymentComplete
@@ -494,20 +493,26 @@ private fun PaymentMethodCard(
 
 
 
+// Fixed PaymentScreen.kt - Order Summary Section with correct calculations
 @Composable
 private fun OrderSummarySection(
     modifier: Modifier = Modifier,
     cartItems: List<CartItem>,
     cartImages: Map<String, ImageBitmap>,
-    subtotal: Double,
+    cartViewModel: CartViewModel, // Add this parameter
     discountAmount: Double,
-    gst: Double,
-    total: Double,
     isGstIncluded: Boolean,
     onConfirmOrder: () -> Unit,
     isProcessing: Boolean,
     paymentMethodSelected: Boolean
 ) {
+    // Get correct calculations from CartViewModel
+    val subtotal = cartViewModel.getSubtotal()
+    val makingCharges = cartViewModel.getMakingCharges()
+    val grossTotal = cartViewModel.getGrossTotal()
+    val gst = if (isGstIncluded) cartViewModel.getGST() else 0.0
+    val finalTotal = grossTotal + gst - discountAmount
+
     Card(
         modifier = modifier.fillMaxHeight(),
         elevation = 4.dp,
@@ -528,7 +533,7 @@ private fun OrderSummarySection(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Cart Items List
+            // Cart Items List with weight-based prices
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -536,7 +541,8 @@ private fun OrderSummarySection(
                 items(cartItems) { cartItem ->
                     OrderSummaryItem(
                         cartItem = cartItem,
-                        image = cartImages[cartItem.productId]
+                        image = cartImages[cartItem.productId],
+                        cartViewModel = cartViewModel // Pass cartViewModel to get correct price
                     )
                 }
             }
@@ -550,9 +556,10 @@ private fun OrderSummarySection(
 
             PriceBreakdown(
                 subtotal = subtotal,
+                makingCharges = makingCharges,
                 discountAmount = discountAmount,
                 gst = gst,
-                total = total,
+                total = finalTotal,
                 isGstIncluded = isGstIncluded
             )
 
@@ -582,7 +589,7 @@ private fun OrderSummarySection(
                     Text("Saving Order...")
                 } else {
                     Text(
-                        "Confirm Order - ₹${formatCurrency(total)}",
+                        "Confirm Order - ₹${formatCurrency(finalTotal)}",
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -591,6 +598,138 @@ private fun OrderSummarySection(
         }
     }
 }
+
+@Composable
+private fun OrderSummaryItem(
+    cartItem: CartItem,
+    image: ImageBitmap?,
+    cartViewModel: CartViewModel
+) {
+    val itemPrice = cartViewModel.getItemPrice(cartItem)
+    val itemWeight = cartViewModel.getItemWeight(cartItem)
+    val pricePerGram = cartViewModel.getItemPricePerGram(cartItem)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Product Image
+        Box(
+            modifier = Modifier
+                .size(50.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFFF5F5F5)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (image != null) {
+                Image(
+                    bitmap = image,
+                    contentDescription = cartItem.product.name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Icon(
+                    Icons.Default.AccountCircle,
+                    contentDescription = "Product",
+                    tint = Color(0xFFB8973D),
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        // Product Details
+        Column(
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                cartItem.product.name,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF2E2E2E),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Text(
+                "Qty: ${cartItem.quantity} | Weight: ${String.format("%.2f", itemWeight)}g",
+                fontSize = 12.sp,
+                color = Color(0xFF666666)
+            )
+
+            Text(
+                "₹${formatCurrency(pricePerGram)}/g",
+                fontSize = 11.sp,
+                color = Color(0xFF888888)
+            )
+        }
+
+        // Price
+        Text(
+            "₹${formatCurrency(itemPrice)}",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFFB8973D)
+        )
+    }
+}
+
+@Composable
+private fun PriceBreakdown(
+    subtotal: Double,
+    makingCharges: Double,
+    discountAmount: Double,
+    gst: Double,
+    total: Double,
+    isGstIncluded: Boolean
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        PriceRow(
+            label = "Metal Cost",
+            amount = subtotal,
+            isTotal = false
+        )
+
+        PriceRow(
+            label = "Making Charges",
+            amount = makingCharges,
+            isTotal = false
+        )
+
+        if (discountAmount > 0) {
+            PriceRow(
+                label = "Discount",
+                amount = -discountAmount,
+                isDiscount = true,
+                isTotal = false
+            )
+        }
+
+        if (isGstIncluded) {
+            PriceRow(
+                label = "GST (18%)",
+                amount = gst,
+                isTotal = false
+            )
+        }
+
+        Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+
+        PriceRow(
+            label = "Total",
+            amount = total,
+            isTotal = true
+        )
+    }
+}
+
+
 
 @Composable
 private fun OrderSummaryItem(

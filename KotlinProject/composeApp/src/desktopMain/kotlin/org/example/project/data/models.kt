@@ -117,25 +117,28 @@ data class Order(
     val id: String = "",
     val customerId: String = "",
     val paymentMethod: PaymentMethod = PaymentMethod.CARD,
-    val subtotal: Double = 0.0,
+    val subtotal: Double = 0.0, // Metal cost only
+    val makingCharges: Double = 0.0, // Making charges
     val discountAmount: Double = 0.0,
     val gstAmount: Double = 0.0,
-    val totalAmount: Double = 0.0,
+    val totalAmount: Double = 0.0, // Final total
     val status: OrderStatus = OrderStatus.CONFIRMED,
     val timestamp: Long = System.currentTimeMillis(),
     val items: List<CartItem> = emptyList(),
-    val isGstIncluded: Boolean = false // New field for GST inclusion
+    val isGstIncluded: Boolean = false
 )
 
 data class PaymentTransaction(
     val id: String = "",
     val cartId: String = "",
     val paymentMethod: PaymentMethod = PaymentMethod.CARD,
-    val subtotal: Double = 0.0,
+    val subtotal: Double = 0.0, // Metal cost only
+    val makingCharges: Double = 0.0, // Making charges
     val discountAmount: Double = 0.0,
     val gstAmount: Double = 0.0,
-    val totalAmount: Double = 0.0,
+    val totalAmount: Double = 0.0, // Final total
     val status: PaymentStatus = PaymentStatus.PENDING,
     val timestamp: Long = System.currentTimeMillis(),
-    val items: List<CartItem> = emptyList()
+    val items: List<CartItem> = emptyList(),
+    val isGstIncluded: Boolean = false
 )

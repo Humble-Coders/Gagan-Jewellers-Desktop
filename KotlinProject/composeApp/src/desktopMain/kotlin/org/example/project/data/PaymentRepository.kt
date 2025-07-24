@@ -1,3 +1,4 @@
+// Updated PaymentRepository.kt - Handle making charges
 package org.example.project.data
 
 import com.google.cloud.firestore.Firestore
@@ -19,20 +20,31 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                 "id" to order.id,
                 "customerId" to order.customerId,
                 "paymentMethod" to order.paymentMethod.name,
-                "subtotal" to order.subtotal,
+                "subtotal" to order.subtotal, // Metal cost
+                "makingCharges" to order.makingCharges, // Making charges
                 "discountAmount" to order.discountAmount,
                 "gstAmount" to order.gstAmount,
                 "totalAmount" to order.totalAmount,
                 "status" to order.status.name,
                 "timestamp" to order.timestamp,
-                "isGstIncluded" to order.isGstIncluded, // Add the new field
+                "isGstIncluded" to order.isGstIncluded,
                 "items" to order.items.map { item ->
                     mapOf(
                         "productId" to item.productId,
                         "productName" to item.product.name,
                         "quantity" to item.quantity,
-                        "price" to item.product.price,
-                        "weight" to item.selectedWeight
+                        "weight" to item.selectedWeight,
+                        "materialType" to item.product.materialType,
+                        "pricePerGram" to when {
+                            item.product.materialType.contains("gold", ignoreCase = true) -> 6080.0 // Store current gold price
+                            item.product.materialType.contains("silver", ignoreCase = true) -> 75.0 // Store current silver price
+                            else -> 6080.0
+                        },
+                        "itemTotal" to (item.selectedWeight * item.quantity * when {
+                            item.product.materialType.contains("gold", ignoreCase = true) -> 6080.0
+                            item.product.materialType.contains("silver", ignoreCase = true) -> 75.0
+                            else -> 6080.0
+                        })
                     )
                 }
             )
@@ -62,12 +74,13 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                     customerId = data["customerId"] as? String ?: "",
                     paymentMethod = PaymentMethod.valueOf(data["paymentMethod"] as? String ?: "CARD"),
                     subtotal = (data["subtotal"] as? Number)?.toDouble() ?: 0.0,
+                    makingCharges = (data["makingCharges"] as? Number)?.toDouble() ?: 0.0,
                     discountAmount = (data["discountAmount"] as? Number)?.toDouble() ?: 0.0,
                     gstAmount = (data["gstAmount"] as? Number)?.toDouble() ?: 0.0,
                     totalAmount = (data["totalAmount"] as? Number)?.toDouble() ?: 0.0,
                     status = OrderStatus.valueOf(data["status"] as? String ?: "CONFIRMED"),
                     timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    isGstIncluded = data["isGstIncluded"] as? Boolean ?: false, // Handle the new field
+                    isGstIncluded = data["isGstIncluded"] as? Boolean ?: false,
                     items = emptyList() // Items would need to be reconstructed if needed
                 )
             } else {
@@ -95,12 +108,13 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                     customerId = data["customerId"] as? String ?: "",
                     paymentMethod = PaymentMethod.valueOf(data["paymentMethod"] as? String ?: "CARD"),
                     subtotal = (data["subtotal"] as? Number)?.toDouble() ?: 0.0,
+                    makingCharges = (data["makingCharges"] as? Number)?.toDouble() ?: 0.0,
                     discountAmount = (data["discountAmount"] as? Number)?.toDouble() ?: 0.0,
                     gstAmount = (data["gstAmount"] as? Number)?.toDouble() ?: 0.0,
                     totalAmount = (data["totalAmount"] as? Number)?.toDouble() ?: 0.0,
                     status = OrderStatus.valueOf(data["status"] as? String ?: "CONFIRMED"),
                     timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    isGstIncluded = data["isGstIncluded"] as? Boolean ?: false, // Handle the new field
+                    isGstIncluded = data["isGstIncluded"] as? Boolean ?: false,
                     items = emptyList() // Items would need to be reconstructed if needed
                 )
             }

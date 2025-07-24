@@ -64,6 +64,74 @@ class CartViewModel(
         }
     }
 
+    // Fixed weight-based calculation method
+    private fun calculateItemPrice(cartItem: CartItem): Double {
+        val weight = parseWeight(cartItem.product.weight)
+        val pricePerGram = when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> _metalPrices.value.goldPricePerGram
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> _metalPrices.value.silverPricePerGram
+            else -> _metalPrices.value.goldPricePerGram // Default to gold
+        }
+        return weight * cartItem.quantity * pricePerGram
+    }
+
+    // Fixed subtotal calculation - weight based
+    fun getSubtotal(): Double {
+        return _cart.value.items.sumOf { cartItem ->
+            calculateItemPrice(cartItem)
+        }
+    }
+
+    // Calculate making charges (₹100 per gram)
+    fun getMakingCharges(): Double {
+        return _cart.value.items.sumOf { cartItem ->
+            val weight = parseWeight(cartItem.product.weight)
+            weight * cartItem.quantity * 100.0 // ₹100 per gram making charges
+        }
+    }
+
+    // Calculate gross total (subtotal + making charges)
+    fun getGrossTotal(): Double {
+        return getSubtotal() + getMakingCharges()
+    }
+
+    // Calculate 18% GST on gross total
+    fun getGST(): Double {
+        return getGrossTotal() * 0.18 // 18% GST
+    }
+
+    // Calculate final total
+    fun getFinalTotal(): Double {
+        return getGrossTotal() + getGST()
+    }
+
+    // Get total weight of all items
+    fun getTotalWeight(): Double {
+        return _cart.value.items.sumOf { cartItem ->
+            val weight = parseWeight(cartItem.product.weight)
+            weight * cartItem.quantity
+        }
+    }
+
+    // Get weight-based price for a specific item
+    fun getItemPrice(cartItem: CartItem): Double {
+        return calculateItemPrice(cartItem)
+    }
+
+    // Get weight for a specific item
+    fun getItemWeight(cartItem: CartItem): Double {
+        return parseWeight(cartItem.product.weight)
+    }
+
+    // Get price per gram for a specific item
+    fun getItemPricePerGram(cartItem: CartItem): Double {
+        return when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> _metalPrices.value.goldPricePerGram
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> _metalPrices.value.silverPricePerGram
+            else -> _metalPrices.value.goldPricePerGram
+        }
+    }
+
     fun addToCart(product: Product) {
         val currentCart = _cart.value
         val existingItem = currentCart.items.find { it.productId == product.id }
@@ -139,7 +207,6 @@ class CartViewModel(
         }
     }
 
-    // Add method to validate entire cart against current stock
     fun validateCartAgainstStock(products: List<Product>): List<String> {
         val errors = mutableListOf<String>()
 
@@ -169,50 +236,10 @@ class CartViewModel(
         _cartImages.value = _cartImages.value.toMutableMap().apply { remove(productId) }
     }
 
-
-    // Weight is now fixed from Firestore, remove this method or make it no-op
-    fun updateWeight(productId: String, newWeight: Double) {
-        // Weight is fixed from Firestore, no update needed
-        // This method is kept for compatibility but does nothing
-        println("Weight update ignored - using fixed Firestore weight")
-    }
-
-
-
     fun clearCart() {
         _cart.value = Cart()
         imageCache.clear()
         _cartImages.value = emptyMap()
-    }
-
-    // Calculate subtotal (before GST)
-    fun getSubtotal(): Double {
-        return _cart.value.calculateTotalPrice(
-            _metalPrices.value.goldPricePerGram,
-            _metalPrices.value.silverPricePerGram
-        )
-    }
-
-    // Calculate 18% GST (updated from 3%)
-    fun getGST(): Double {
-        return getSubtotal() * 0.18 // 18% GST
-    }
-
-    // Calculate final total (subtotal + 18% GST)
-    fun getFinalTotal(): Double {
-        return getSubtotal() + getGST()
-    }
-
-    // Legacy method with custom GST rate (deprecated)
-    @Deprecated("Use getGST() instead - GST is now fixed at 18%")
-    fun getGST(gstRate: Double): Double {
-        return getSubtotal() * (gstRate / 100)
-    }
-
-    // Legacy method with custom GST rate (deprecated)
-    @Deprecated("Use getFinalTotal() instead - GST is now fixed at 18%")
-    fun getFinalTotal(gstRate: Double): Double {
-        return getSubtotal() + getGST(gstRate)
     }
 
     private fun loadProductImage(product: Product) {

@@ -432,6 +432,56 @@ fun CategoryChip(
 }
 
 @Composable
+fun PriceEditorDialog(
+    goldPrice: Double,
+    silverPrice: Double,
+    onPricesUpdated: (Double, Double) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var goldPriceText by remember { mutableStateOf(goldPrice.toString()) }
+    var silverPriceText by remember { mutableStateOf(silverPrice.toString()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Metal Prices") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = goldPriceText,
+                    onValueChange = { goldPriceText = it },
+                    label = { Text("Gold Price per gram") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = silverPriceText,
+                    onValueChange = { silverPriceText = it },
+                    label = { Text("Silver Price per gram") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val gold = goldPriceText.toDoubleOrNull() ?: goldPrice
+                    val silver = silverPriceText.toDoubleOrNull() ?: silverPrice
+                    onPricesUpdated(gold, silver)
+                }
+            ) {
+                Text("Update")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+// Updated ProductCard in CartBuildingStep.kt - Fixed price calculation
+@Composable
 fun ProductCard(
     product: Product,
     image: ImageBitmap?,
@@ -445,18 +495,21 @@ fun ProductCard(
     onUpdateQuantity: (Int) -> Unit
 ) {
     val weight = parseWeight(product.weight)
+    // Fix: Use correct price based on material type
     val pricePerGram = when {
         product.materialType.contains("gold", ignoreCase = true) -> goldPrice
         product.materialType.contains("silver", ignoreCase = true) -> silverPrice
-        else -> goldPrice
+        else -> goldPrice // Default to gold
     }
-    val calculatedPrice = weight * pricePerGram
+    val metalCost = weight * pricePerGram
+    val makingCharges = weight * 100.0 // ₹100 per gram making charges
+    val totalPrice = metalCost + makingCharges
     val availableToAdd = product.quantity - cartQuantity
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(250.dp)
+            .height(280.dp) // Increased height to accommodate new info
             .clickable { onCardClick() },
         elevation = if (isInCart) 6.dp else 2.dp,
         shape = RoundedCornerShape(8.dp),
@@ -475,13 +528,13 @@ fun ProductCard(
                         Image(
                             bitmap = image,
                             contentDescription = product.name,
-                            modifier = Modifier.fillMaxSize().height(140.dp) // Explicit height to avoid aspect ratio mismatch
+                            modifier = Modifier.fillMaxSize()
                                 .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
                             contentScale = ContentScale.Crop
                         )
                     } else {
                         Box(
-                            modifier = Modifier.fillMaxSize().height(130.dp),
+                            modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
                             CircularProgressIndicator(
@@ -513,7 +566,7 @@ fun ProductCard(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 8.dp, vertical = 2.dp), // Reduced from 8.dp
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
@@ -525,7 +578,7 @@ fun ProductCard(
                             overflow = TextOverflow.Ellipsis
                         )
 
-                        Spacer(modifier = Modifier.height(0.3.dp)) // Reduced spacing
+                        Spacer(modifier = Modifier.height(2.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -534,7 +587,7 @@ fun ProductCard(
                             Text(
                                 text = categoryName,
                                 color = Color.Gray,
-                                fontSize = 12.sp, // Reduced font size
+                                fontSize = 11.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
@@ -542,14 +595,14 @@ fun ProductCard(
                             Text(
                                 text = product.weight,
                                 color = Color.Gray,
-                                fontSize = 12.sp, // Reduced font size
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(0.3.dp)) // Reduced spacing
+                        Spacer(modifier = Modifier.height(2.dp))
 
                         // Material and stock indicator row
                         Row(
@@ -560,7 +613,7 @@ fun ProductCard(
                             Text(
                                 text = materialName,
                                 color = MaterialTheme.colors.primary,
-                                fontSize = 12.sp, // Reduced font size
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -571,11 +624,27 @@ fun ProductCard(
                             if (product.quantity <= 5) {
                                 Text(
                                     text = if (product.quantity == 0) "Out of Stock" else "Only ${product.quantity} left",
-                                    fontSize = 10.sp,
+                                    fontSize = 9.sp,
                                     color = if (product.quantity == 0) Color.Red else Color.Red,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
+                        }
+
+                        Spacer(modifier = Modifier.height(2.dp))
+
+                        // Price breakdown - NEW
+                        Column {
+                            Text(
+                                text = "Metal: ₹${formatNumber(metalCost)}",
+                                fontSize = 10.sp,
+                                color = Color(0xFF666666)
+                            )
+                            Text(
+                                text = "Making: ₹${formatNumber(makingCharges)}",
+                                fontSize = 10.sp,
+                                color = Color(0xFF666666)
+                            )
                         }
                     }
 
@@ -585,13 +654,20 @@ fun ProductCard(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Price
-                        Text(
-                            text = "₹${formatNumber(calculatedPrice)}",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colors.primary
-                        )
+                        // Total Price
+                        Column {
+                            Text(
+                                text = "₹${formatNumber(totalPrice)}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colors.primary
+                            )
+                            Text(
+                                text = "Total",
+                                fontSize = 9.sp,
+                                color = Color.Gray
+                            )
+                        }
 
                         Card(
                             elevation = 1.dp,
@@ -644,7 +720,7 @@ fun ProductCard(
                                         }
                                     },
                                     modifier = Modifier.size(22.dp),
-                                    enabled = cartQuantity < product.quantity // Limit to stock quantity
+                                    enabled = cartQuantity < product.quantity
                                 ) {
                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                         Text(
@@ -658,331 +734,6 @@ fun ProductCard(
                             }
                         }
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun PriceEditorDialog(
-    goldPrice: Double,
-    silverPrice: Double,
-    onPricesUpdated: (Double, Double) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var goldPriceText by remember { mutableStateOf(goldPrice.toString()) }
-    var silverPriceText by remember { mutableStateOf(silverPrice.toString()) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit Metal Prices") },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = goldPriceText,
-                    onValueChange = { goldPriceText = it },
-                    label = { Text("Gold Price per gram") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = silverPriceText,
-                    onValueChange = { silverPriceText = it },
-                    label = { Text("Silver Price per gram") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val gold = goldPriceText.toDoubleOrNull() ?: goldPrice
-                    val silver = silverPriceText.toDoubleOrNull() ?: silverPrice
-                    onPricesUpdated(gold, silver)
-                }
-            ) {
-                Text("Update")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-private fun parseWeight(weightStr: String): Double {
-    return try {
-        weightStr.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0
-    } catch (e: Exception) {
-        0.0
-    }
-}
-
-@Composable
-fun CartItemCard(
-    cartItem: CartItem,
-    image: ImageBitmap?,
-    goldPrice: Double,
-    silverPrice: Double,
-    onUpdateQuantity: (Int) -> Unit,
-    onUpdateWeight: (Double) -> Unit,
-    onRemove: () -> Unit
-) {
-    val pricePerGram = when {
-        cartItem.product.materialType.contains("gold", ignoreCase = true) -> goldPrice
-        cartItem.product.materialType.contains("silver", ignoreCase = true) -> silverPrice
-        else -> goldPrice
-    }
-
-    val productWeight = parseWeight(cartItem.product.weight)
-    val actualWeight = if (cartItem.selectedWeight > 0) cartItem.selectedWeight else productWeight
-    val itemTotal = actualWeight * cartItem.quantity * pricePerGram
-    var showDialog by remember { mutableStateOf(false) }
-
-    if (showDialog) {
-        AlertDialog(
-            onDismissRequest = { showDialog = false },
-            title = { Text("Confirm Delete") },
-            text = { Text("Are you sure you want to remove this item from cart?") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onRemove()
-                    showDialog = false
-                }) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDialog = false }) { Text("Cancel") }
-            }
-        )
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        elevation = 4.dp,
-        backgroundColor = Color.White,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Product icon/image
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(
-                        Color(0xFFFFA726),
-                        RoundedCornerShape(8.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                if (image != null) {
-                    Image(
-                        bitmap = image,
-                        contentDescription = cartItem.product.name,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    // Default icon based on product type
-                    Text(
-                        text = when {
-                            cartItem.product.name.contains("earring", ignoreCase = true) -> "💎"
-                            cartItem.product.name.contains("necklace", ignoreCase = true) -> "💛"
-                            else -> "💍"
-                        },
-                        fontSize = 20.sp
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            // Product details
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = cartItem.product.name,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.Black
-                )
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                Text(
-                    text = "${String.format("%.1f", actualWeight)}g • ${cartItem.product.materialType} • Making: ₹${String.format("%.2f", actualWeight * 100)}/g",
-                    fontSize = 12.sp,
-                    color = Color.Gray
-                )
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            // Quantity controls
-            Card(
-                elevation = 1.dp,
-                shape = RoundedCornerShape(20.dp),
-                backgroundColor = Color.White,
-                modifier = Modifier.wrapContentSize()
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                ) {
-                    // Decrease button
-                    IconButton(
-                        onClick = {
-                            if (cartItem.quantity > 1) {
-                                onUpdateQuantity(cartItem.quantity - 1)
-                            }
-                        },
-                        modifier = Modifier.size(32.dp),
-                        enabled = cartItem.quantity > 1
-                    ) {
-                        Text(
-                            text = "−",
-                            fontSize = 18.sp,
-                            color = if (cartItem.quantity > 1) Color.Gray else Color.LightGray,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    // Quantity display
-                    Text(
-                        text = cartItem.quantity.toString(),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.widthIn(min = 24.dp),
-                        textAlign = TextAlign.Center
-                    )
-
-                    // Increase button
-                    IconButton(
-                        onClick = {
-                            onUpdateQuantity(cartItem.quantity + 1)
-                        },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Text(
-                            text = "+",
-                            fontSize = 18.sp,
-                            color = Color.Gray,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            // Price and delete
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Text(
-                    text = "₹${String.format("%.0f", itemTotal)}",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colors.primary
-                )
-
-                IconButton(onClick = { showDialog = true }) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Gray)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun CartSummary(
-    subtotal: Double,
-    total: Double, // This will be the same as subtotal now
-    onClearCart: () -> Unit,
-    onProceedToPayment: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = 4.dp,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Text(
-                "Order Summary",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Subtotal:", fontSize = 16.sp)
-                Text(
-                    "₹${String.format("%.0f", subtotal)}",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
-            Divider(modifier = Modifier.padding(vertical = 12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    "Total:",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    "₹${String.format("%.0f", total)}",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colors.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onClearCart,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Clear Cart")
-                }
-
-                Button(
-                    onClick = onProceedToPayment,
-                    modifier = Modifier.weight(2f),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
-                ) {
-                    Text(
-                        "Proceed to Payment",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
                 }
             }
         }
@@ -1050,7 +801,7 @@ fun CartScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            // Cart items
+            // Cart items - FIXED: Removed onUpdateWeight parameter
             cart.items.forEach { cartItem ->
                 CartItemCard(
                     cartItem = cartItem,
@@ -1060,9 +811,6 @@ fun CartScreen(
                     onUpdateQuantity = { newQuantity ->
                         cartViewModel.updateQuantity(cartItem.productId, newQuantity)
                     },
-                    onUpdateWeight = { newWeight ->
-                        cartViewModel.updateWeight(cartItem.productId, newWeight)
-                    },
                     onRemove = {
                         cartViewModel.removeFromCart(cartItem.productId)
                     }
@@ -1070,14 +818,320 @@ fun CartScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            // Cart summary - only subtotal, no GST
-            val subtotal = cartViewModel.getSubtotal()
+            // Cart summary with correct calculations
             CartSummary(
-                subtotal = subtotal,
-                total = subtotal, // Same as subtotal, no GST added here
+                subtotal = cartViewModel.getSubtotal(),
+                makingCharges = cartViewModel.getMakingCharges(),
+                total = cartViewModel.getGrossTotal(), // Metal cost + Making charges (before GST)
                 onClearCart = { cartViewModel.clearCart() },
                 onProceedToPayment = onProceedToPayment
             )
         }
+    }
+}
+
+// Updated CartItemCard signature - removed onUpdateWeight parameter
+@Composable
+fun CartItemCard(
+    cartItem: CartItem,
+    image: ImageBitmap?,
+    goldPrice: Double,
+    silverPrice: Double,
+    onUpdateQuantity: (Int) -> Unit,
+    onRemove: () -> Unit
+) {
+    val pricePerGram = when {
+        cartItem.product.materialType.contains("gold", ignoreCase = true) -> goldPrice
+        cartItem.product.materialType.contains("silver", ignoreCase = true) -> silverPrice
+        else -> goldPrice
+    }
+
+    val productWeight = parseWeight(cartItem.product.weight)
+    val actualWeight = if (cartItem.selectedWeight > 0) cartItem.selectedWeight else productWeight
+    val metalCost = actualWeight * cartItem.quantity * pricePerGram
+    val makingCharges = actualWeight * cartItem.quantity * 100.0 // ₹100 per gram
+    val itemTotal = metalCost + makingCharges
+    var showDialog by remember { mutableStateOf(false) }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("Confirm Delete") },
+            text = { Text("Are you sure you want to remove this item from cart?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRemove()
+                    showDialog = false
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        elevation = 4.dp,
+        backgroundColor = Color.White,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Product icon/image
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(
+                        Color(0xFFFFA726),
+                        RoundedCornerShape(8.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                if (image != null) {
+                    Image(
+                        bitmap = image,
+                        contentDescription = cartItem.product.name,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Text(
+                        text = when {
+                            cartItem.product.name.contains("earring", ignoreCase = true) -> "💎"
+                            cartItem.product.name.contains("necklace", ignoreCase = true) -> "💛"
+                            else -> "💍"
+                        },
+                        fontSize = 20.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Product details with price breakdown
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = cartItem.product.name,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color.Black
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "${String.format("%.1f", actualWeight)}g • ${cartItem.product.materialType}",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+
+                Text(
+                    text = "Metal: ₹${String.format("%.0f", metalCost)} • Making: ₹${String.format("%.0f", makingCharges)}",
+                    fontSize = 11.sp,
+                    color = Color(0xFF666666)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Quantity controls
+            Card(
+                elevation = 1.dp,
+                shape = RoundedCornerShape(20.dp),
+                backgroundColor = Color.White,
+                modifier = Modifier.wrapContentSize()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    IconButton(
+                        onClick = {
+                            if (cartItem.quantity > 1) {
+                                onUpdateQuantity(cartItem.quantity - 1)
+                            }
+                        },
+                        modifier = Modifier.size(32.dp),
+                        enabled = cartItem.quantity > 1
+                    ) {
+                        Text(
+                            text = "−",
+                            fontSize = 18.sp,
+                            color = if (cartItem.quantity > 1) Color.Gray else Color.LightGray,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Text(
+                        text = cartItem.quantity.toString(),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.widthIn(min = 24.dp),
+                        textAlign = TextAlign.Center
+                    )
+
+                    IconButton(
+                        onClick = {
+                            onUpdateQuantity(cartItem.quantity + 1)
+                        },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Text(
+                            text = "+",
+                            fontSize = 18.sp,
+                            color = Color.Gray,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Price and delete
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "₹${String.format("%.0f", itemTotal)}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colors.primary
+                )
+
+                IconButton(onClick = { showDialog = true }) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Gray)
+                }
+            }
+        }
+    }
+}
+
+// Updated CartSummary with separate making charges display
+@Composable
+fun CartSummary(
+    subtotal: Double,
+    makingCharges: Double,
+    total: Double,
+    onClearCart: () -> Unit,
+    onProceedToPayment: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = 4.dp,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                "Order Summary",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Metal Cost
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Metal Cost:", fontSize = 16.sp)
+                Text(
+                    "₹${String.format("%.0f", subtotal)}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Making Charges
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Making Charges:", fontSize = 16.sp)
+                Text(
+                    "₹${String.format("%.0f", makingCharges)}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "Total:",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "₹${String.format("%.0f", total)}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colors.primary
+                )
+            }
+
+            Text(
+                "* GST will be calculated at checkout if selected",
+                fontSize = 12.sp,
+                color = Color.Gray,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onClearCart,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Clear Cart")
+                }
+
+                Button(
+                    onClick = onProceedToPayment,
+                    modifier = Modifier.weight(2f),
+                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                ) {
+                    Text(
+                        "Proceed to Payment",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+// Utility function for parsing weight
+private fun parseWeight(weightStr: String): Double {
+    return try {
+        weightStr.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0
+    } catch (e: Exception) {
+        0.0
     }
 }

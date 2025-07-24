@@ -1,3 +1,4 @@
+// Updated PaymentViewModel.kt - Fix order saving with correct calculations
 package org.example.project.viewModels
 
 import androidx.compose.runtime.State
@@ -154,9 +155,11 @@ class PaymentViewModel(
         }
     }
 
+    // Updated order saving method with correct structure
     fun saveOrderWithPaymentMethod(
         cart: Cart,
         subtotal: Double,
+        makingCharges: Double,
         discountAmount: Double,
         gst: Double,
         finalTotal: Double,
@@ -176,16 +179,17 @@ class PaymentViewModel(
             try {
                 val order = Order(
                     id = generateOrderId(),
-                    customerId = customerId, // Use the passed customer ID
+                    customerId = customerId,
                     paymentMethod = _selectedPaymentMethod.value!!,
-                    subtotal = subtotal,
+                    subtotal = subtotal, // Metal cost only
+                    makingCharges = makingCharges, // Making charges
                     discountAmount = discountAmount,
                     gstAmount = gst,
                     totalAmount = finalTotal,
                     items = cart.items,
                     timestamp = System.currentTimeMillis(),
                     status = OrderStatus.CONFIRMED,
-                    isGstIncluded = isGstIncluded // Set the GST inclusion flag
+                    isGstIncluded = isGstIncluded
                 )
 
                 // Save order to database
@@ -202,12 +206,14 @@ class PaymentViewModel(
                         cartId = order.customerId,
                         paymentMethod = order.paymentMethod,
                         subtotal = order.subtotal,
+                        makingCharges = order.makingCharges,
                         discountAmount = order.discountAmount,
                         gstAmount = order.gstAmount,
                         totalAmount = order.totalAmount,
                         items = order.items,
                         timestamp = order.timestamp,
-                        status = PaymentStatus.COMPLETED
+                        status = PaymentStatus.COMPLETED,
+                        isGstIncluded = order.isGstIncluded
                     )
 
                     // Generate PDF after successful order creation
@@ -336,106 +342,5 @@ class PaymentViewModel(
 
     fun onCleared() {
         viewModelScope.cancel()
-    }
-
-    // Add these functions to your existing PaymentViewModel class
-
-    // Helper function to calculate dynamic prices based on metal prices
-    private fun calculateDynamicPrices(
-        cart: Cart,
-        goldPrice: Double,
-        silverPrice: Double
-    ): Triple<Double, Double, Double> {
-        val subtotal = cart.items.sumOf { cartItem ->
-            val pricePerGram = when {
-                cartItem.product.materialType.contains("gold", ignoreCase = true) -> goldPrice
-                cartItem.product.materialType.contains("silver", ignoreCase = true) -> silverPrice
-                else -> goldPrice
-            }
-            val productWeight = parseWeight(cartItem.product.weight)
-            val actualWeight = if (cartItem.selectedWeight > 0) cartItem.selectedWeight else productWeight
-            actualWeight * cartItem.quantity * pricePerGram
-        }
-
-        val gst = subtotal * 0.18
-        val discountAmount = calculateDiscountAmount(subtotal)
-        val total = subtotal + gst - discountAmount
-
-        return Triple(subtotal, gst, total)
-    }
-
-    // Utility function to parse weight from string
-    private fun parseWeight(weightStr: String): Double {
-        return try {
-            weightStr.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0
-        } catch (e: Exception) {
-            0.0
-        }
-    }
-
-    // New overloaded function that accepts metal prices and calculates dynamic pricing
-    fun saveOrderWithPaymentMethod(
-        cart: Cart,
-        goldPrice: Double,
-        silverPrice: Double,
-        onSuccess: () -> Unit
-    ) {
-        if (_selectedPaymentMethod.value == null) {
-            _errorMessage.value = "Please select a payment method"
-            return
-        }
-
-        viewModelScope.launch {
-            _isProcessing.value = true
-            _errorMessage.value = null
-
-            try {
-                // Calculate dynamic prices based on current metal prices
-                val (dynamicSubtotal, dynamicGst, dynamicTotal) = calculateDynamicPrices(cart, goldPrice, silverPrice)
-                val discountAmount = calculateDiscountAmount(dynamicSubtotal)
-
-                val order = Order(
-                    id = generateOrderId(),
-                    customerId = cart.customerId,
-                    paymentMethod = _selectedPaymentMethod.value!!,
-                    subtotal = dynamicSubtotal,
-                    discountAmount = discountAmount,
-                    gstAmount = dynamicGst,
-                    totalAmount = dynamicTotal,
-                    items = cart.items,
-                    timestamp = System.currentTimeMillis(),
-                    status = OrderStatus.CONFIRMED
-                )
-
-                // Save order to database
-                val success = paymentRepository.saveOrder(order)
-
-                if (success) {
-                    // Reduce stock quantities
-                    val productRepository = JewelryAppInitializer.getViewModel().repository
-                    reduceStockAfterOrder(order, productRepository)
-
-                    _lastTransaction.value = PaymentTransaction(
-                        id = order.id,
-                        cartId = order.customerId,
-                        paymentMethod = order.paymentMethod,
-                        subtotal = order.subtotal,
-                        discountAmount = order.discountAmount,
-                        gstAmount = order.gstAmount,
-                        totalAmount = order.totalAmount,
-                        items = order.items,
-                        timestamp = order.timestamp,
-                        status = PaymentStatus.COMPLETED
-                    )
-                    onSuccess()
-                } else {
-                    _errorMessage.value = "Failed to save order. Please try again."
-                }
-            } catch (e: Exception) {
-                _errorMessage.value = "Error saving order: ${e.message}"
-            } finally {
-                _isProcessing.value = false
-            }
-        }
     }
 }

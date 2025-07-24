@@ -296,47 +296,18 @@ fun CartBuildingScreen(
             .fillMaxSize()
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
-        // Compact search bar
+        Spacer(modifier = Modifier.height(4.dp))
+        // Search bar styled like dashboard
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = {
-                Text(
-                    text = "Search products...",
-                    fontSize = 13.sp
-                )
-            },
-            textStyle = LocalTextStyle.current.copy(
-                fontSize = 13.sp
-            ),
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Search",
-                    modifier = Modifier
-                        .size(20.dp)
-                        .padding(start = 4.dp)
-                )
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-            singleLine = true,
-            shape = RoundedCornerShape(8.dp),
-            colors = TextFieldDefaults.outlinedTextFieldColors(
-                cursorColor = MaterialTheme.colors.primary,
-                focusedBorderColor = MaterialTheme.colors.primary,
-                unfocusedBorderColor = MaterialTheme.colors.primary,
-                textColor = MaterialTheme.colors.onSurface,
-                placeholderColor = Color.Gray
-            )
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            placeholder = { Text("Search products...") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
+            singleLine = true
         )
 
-
-
-
-
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(7.dp))
 
         // Category filter
         if (categories.isNotEmpty()) {
@@ -449,7 +420,7 @@ fun CategoryChip(
                 if (selected) MaterialTheme.colors.primary else Color.LightGray
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         Text(
             text = text,
@@ -481,7 +452,6 @@ fun ProductCard(
     }
     val calculatedPrice = weight * pricePerGram
     val availableToAdd = product.quantity - cartQuantity
-
 
     Card(
         modifier = Modifier
@@ -581,14 +551,32 @@ fun ProductCard(
 
                         Spacer(modifier = Modifier.height(0.3.dp)) // Reduced spacing
 
-                        Text(
-                            text = materialName,
-                            color = MaterialTheme.colors.primary,
-                            fontSize = 12.sp, // Reduced font size
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        // Material and stock indicator row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = materialName,
+                                color = MaterialTheme.colors.primary,
+                                fontSize = 12.sp, // Reduced font size
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            // Stock indicator
+                            if (product.quantity <= 5) {
+                                Text(
+                                    text = if (product.quantity == 0) "Out of Stock" else "Only ${product.quantity} left",
+                                    fontSize = 10.sp,
+                                    color = if (product.quantity == 0) Color.Red else Color.Red,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
                     }
 
                     // Price and quantity controls in the same row
@@ -669,18 +657,6 @@ fun ProductCard(
                                 }
                             }
                         }
-                        if (product.quantity <= 5) {
-                            Text(
-                                text = if (product.quantity == 0) "Out of Stock" else "Only ${product.quantity} left",
-                                fontSize = 10.sp,
-                                color = if (product.quantity == 0) Color.Red else Color.Red,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
-
-
-
                     }
                 }
             }

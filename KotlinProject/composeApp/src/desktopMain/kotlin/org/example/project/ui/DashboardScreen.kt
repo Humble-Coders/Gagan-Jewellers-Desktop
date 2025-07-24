@@ -67,8 +67,7 @@ fun DashboardScreen(
     viewModel: ProductsViewModel,
     imageLoader: ImageLoader,
     onAddProduct: () -> Unit,
-    onViewProductDetails: (String) -> Unit  // Add this parameter
-
+    onViewProductDetails: (String) -> Unit
 ) {
     val products by remember { viewModel.products }
     val showDeleteDialog = remember { mutableStateOf(false) }
@@ -120,32 +119,17 @@ fun DashboardScreen(
                     .fillMaxWidth()
                     .background(Color(0xFFF5F5F5))
                     .padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.weight(0.12f), contentAlignment = Alignment.CenterStart) {
-                    Text("Image", fontWeight = FontWeight.Bold)
-                }
-                Box(modifier = Modifier.weight(0.18f), contentAlignment = Alignment.CenterStart) {
-                    Text("Name", fontWeight = FontWeight.Bold)
-                }
-                Box(modifier = Modifier.weight(0.13f), contentAlignment = Alignment.CenterStart) {
-                    Text("Category", fontWeight = FontWeight.Bold)
-                }
-                Box(modifier = Modifier.weight(0.13f), contentAlignment = Alignment.CenterStart) {
-                    Text("Material", fontWeight = FontWeight.Bold)
-                }
-                Box(modifier = Modifier.weight(0.1f), contentAlignment = Alignment.CenterStart) {
-                    Text("Price", fontWeight = FontWeight.Bold)
-                }
-                Box(modifier = Modifier.weight(0.09f), contentAlignment = Alignment.CenterStart) {
-                    Text("Available", fontWeight = FontWeight.Bold)
-                }
-                Box(modifier = Modifier.weight(0.1f), contentAlignment = Alignment.CenterStart) {
-                    Text("Quantity", fontWeight = FontWeight.Bold)
-                }
-                Box(modifier = Modifier.weight(0.15f), contentAlignment = Alignment.CenterStart) {
-                    Text("Actions", fontWeight = FontWeight.Bold)
-                }
+                Text("Image", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("Name", fontWeight = FontWeight.Bold, modifier = Modifier.weight(2f))
+                Text("Category", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f))
+                Text("Material", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f))
+                Text("Price", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.2f))
+                Text("Available", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("Quantity", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f))
+                Text("Actions", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
             }
 
             Divider()
@@ -172,7 +156,6 @@ fun DashboardScreen(
                                 productToDelete.value = product.id
                                 showDeleteDialog.value = true
                             },
-                            // Add this new parameter
                             onClick = { onViewProductDetails(product.id) }
                         )
                         Divider()
@@ -208,7 +191,6 @@ fun DashboardScreen(
     }
 }
 
-
 @Composable
 fun ProductRow(
     product: Product,
@@ -239,13 +221,14 @@ fun ProductRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick=onClick)
+            .clickable(onClick = onClick)
             .padding(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Product image
         Box(
-            modifier = Modifier.weight(0.15f),
+            modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterStart
         ) {
             if (productImage != null) {
@@ -275,44 +258,40 @@ fun ProductRow(
         }
 
         // Name
-        Box(modifier = Modifier.weight(0.2f), contentAlignment = Alignment.CenterStart) {
-            Text(
-                text = product.name,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Text(
+            text = product.name,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(2f)
+        )
 
         // Category
-        Box(modifier = Modifier.weight(0.15f), contentAlignment = Alignment.CenterStart) {
-            Text(
-                text = viewModel.getCategoryName(product.categoryId),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Text(
+            text = viewModel.getCategoryName(product.categoryId),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.5f)
+        )
 
         // Material
-        Box(modifier = Modifier.weight(0.15f), contentAlignment = Alignment.CenterStart) {
-            Text(
-                text = viewModel.getMaterialName(product.materialId),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Text(
+            text = viewModel.getMaterialName(product.materialId),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.5f)
+        )
 
         // Price
-        Box(modifier = Modifier.weight(0.1f), contentAlignment = Alignment.CenterStart) {
-            Text(
-                text = "$${product.price}",
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
+        Text(
+            text = "$${product.price}",
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.2f)
+        )
 
         // Availability status
         Box(
-            modifier = Modifier.weight(0.1f),
+            modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterStart
         ) {
             Box(
@@ -333,95 +312,97 @@ fun ProductRow(
             }
         }
 
+        // Quantity with out of stock indicator above controls
         Box(
-            modifier = Modifier.weight(0.1f),
+            modifier = Modifier.weight(1.5f),
             contentAlignment = Alignment.CenterStart
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
             ) {
-                // Decrease button
-                IconButton(
-                    onClick = {
-                        if (product.quantity > 0) {
-                            viewModel.updateProductQuantity(product.id, product.quantity - 1)
-                        }
-                    },
-                    modifier = Modifier.size(24.dp),
-                    enabled = product.quantity > 0
-                ) {
-                    Text(
-                        "−",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (product.quantity > 0) Color.Gray else Color.LightGray
-                    )
+                // Out of stock indicator (only show when quantity is 0)
+                if (product.quantity == 0) {
+                    Box(
+                        modifier = Modifier
+                            .background(Color(0xFFFFEBEE), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "Out of Stock",
+                            fontSize = 9.sp,
+                            color = Color(0xFFD32F2F),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
                 }
 
-                // Quantity display
-                Text(
-                    text = product.quantity.toString(),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.widthIn(min = 20.dp),
-                    textAlign = TextAlign.Center
-                )
-
-                // Increase button
-                IconButton(
-                    onClick = {
-                        viewModel.updateProductQuantity(product.id, product.quantity + 1)
-                    },
-                    modifier = Modifier.size(24.dp)
+                // Quantity controls
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    // Decrease button
+                    IconButton(
+                        onClick = {
+                            if (product.quantity > 0) {
+                                viewModel.updateProductQuantity(product.id, product.quantity - 1)
+                            }
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Text(
+                            "−",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Gray
+                        )
+                    }
+
+                    // Quantity display
                     Text(
-                        "+",
+                        text = product.quantity.toString(),
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colors.primary
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.widthIn(min = 20.dp),
+                        textAlign = TextAlign.Center
                     )
+
+                    // Increase button
+                    IconButton(
+                        onClick = {
+                            viewModel.updateProductQuantity(product.id, product.quantity + 1)
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Text(
+                            "+",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colors.primary
+                        )
+                    }
                 }
-            }
-        }
-        if (product.quantity == 0) {
-            Box(
-                modifier = Modifier
-                    .padding(start = 4.dp)
-                    .background(Color(0xFFFFEBEE), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 4.dp, vertical = 2.dp)
-            ) {
-                Text(
-                    "Out of Stock",
-                    fontSize = 10.sp,
-                    color = Color(0xFFD32F2F),
-                    fontWeight = FontWeight.Medium
-                )
             }
         }
 
         // Action buttons
         Box(
-            modifier = Modifier.weight(0.15f),
+            modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterStart
         ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(Color(0xFFFFEBEE), CircleShape)
             ) {
-
-
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .background(Color(0xFFFFEBEE), CircleShape)
-                ) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "Delete",
-                        tint = Color(0xFFD32F2F)
-                    )
-                }
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete",
+                    tint = Color(0xFFD32F2F)
+                )
             }
         }
     }

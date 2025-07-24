@@ -110,7 +110,7 @@ class BillPDFGenerator {
             contentStream.showText(customerCopyText)
             contentStream.endText()
 
-            yPos -= 20f
+            yPos -= 30f
         } catch (e: Exception) {
             println("Error in drawCustomerCopyHeader: ${e.message}")
         }
@@ -142,14 +142,14 @@ class BillPDFGenerator {
             contentStream.newLineAtOffset(centerX - textWidth/2, yPos)
             contentStream.showText(text)
             contentStream.endText()
-            yPos -= 30f
+            yPos -= 40f
 
             // Draw horizontal line
             contentStream.setLineWidth(1f)
             contentStream.moveTo(margin, yPos)
             contentStream.lineTo(pageWidth - margin, yPos)
             contentStream.stroke()
-            yPos -= 15f
+            yPos -= 20f
 
             // Left side - Company Details
             contentStream.setFont(helveticaBold, 14f)
@@ -157,20 +157,20 @@ class BillPDFGenerator {
             contentStream.newLineAtOffset(margin, yPos)
             contentStream.showText(companyName)
             contentStream.endText()
-            yPos -= 15f
+            yPos -= 18f
 
             contentStream.setFont(helvetica, 9f)
             contentStream.beginText()
             contentStream.newLineAtOffset(margin, yPos)
             contentStream.showText(address)
             contentStream.endText()
-            yPos -= 12f
+            yPos -= 15f
 
             contentStream.beginText()
             contentStream.newLineAtOffset(margin, yPos)
             contentStream.showText("Phone Number : $phone")
             contentStream.endText()
-            yPos -= 12f
+            yPos -= 15f
 
             contentStream.beginText()
             contentStream.newLineAtOffset(margin, yPos)
@@ -178,8 +178,8 @@ class BillPDFGenerator {
             contentStream.endText()
 
             // Right side - Customer Details and Invoice Info
-            val rightColumnX = pageWidth * 0.6f
-            var rightY = startY - 45f
+            val rightColumnX = pageWidth * 0.55f
+            var rightY = startY - 20f
 
             val dateFormat = SimpleDateFormat("dd/MM/yyyy h:mm a", Locale.getDefault())
             val invoiceDate = dateFormat.format(Date(order.timestamp))
@@ -189,27 +189,27 @@ class BillPDFGenerator {
             contentStream.newLineAtOffset(rightColumnX, rightY)
             contentStream.showText("DOC//SAL/${order.id.takeLast(4)} Date : $invoiceDate")
             contentStream.endText()
-            rightY -= 20f
+            rightY -= 25f
 
             contentStream.beginText()
             contentStream.newLineAtOffset(rightColumnX, rightY)
             contentStream.showText("CUSTOMER DETAILS:")
             contentStream.endText()
-            rightY -= 15f
+            rightY -= 18f
 
             contentStream.setFont(helvetica, 9f)
             contentStream.beginText()
             contentStream.newLineAtOffset(rightColumnX, rightY)
             contentStream.showText(customer.name.uppercase())
             contentStream.endText()
-            rightY -= 12f
+            rightY -= 15f
 
             if (customer.phone.isNotEmpty()) {
                 contentStream.beginText()
                 contentStream.newLineAtOffset(rightColumnX, rightY)
                 contentStream.showText(customer.phone)
                 contentStream.endText()
-                rightY -= 12f
+                rightY -= 15f
             }
 
             if (customer.address.isNotEmpty()) {
@@ -217,23 +217,23 @@ class BillPDFGenerator {
                 contentStream.newLineAtOffset(rightColumnX, rightY)
                 contentStream.showText(customer.address.uppercase())
                 contentStream.endText()
-                rightY -= 12f
+                rightY -= 15f
             }
 
             if (customer.email.isNotEmpty()) {
                 contentStream.beginText()
                 contentStream.newLineAtOffset(rightColumnX, rightY)
-                contentStream.showText("Phone Number : ${customer.phone}")
+                contentStream.showText("Email : ${customer.email}")
                 contentStream.endText()
-                rightY -= 12f
+                rightY -= 15f
             }
 
             contentStream.beginText()
             contentStream.newLineAtOffset(rightColumnX, rightY)
-            contentStream.showText("Encircle Id : ${order.id}")
+            contentStream.showText("Order Id : ${order.id}")
             contentStream.endText()
 
-            yPos -= 20f
+            yPos -= 30f
         } catch (e: Exception) {
             println("Error in drawMainHeader: ${e.message}")
         }
@@ -260,7 +260,6 @@ class BillPDFGenerator {
             contentStream.setFont(helvetica, 8f)
             val rateText = "Standard Rate of 24 Karat/22 Karat/18 Karat/14 Karat Gold Rs: 7063.58 Rs/6475.00 Rs/5297.72 Rs/4120.43 Rs/ Standard Rate of 95.00% Purity Platinum Rs: 3,530.00"
 
-            // Split long text into multiple lines if needed
             val maxWidth = pageWidth - (2 * margin)
             val textWidth = getTextWidth(rateText, helvetica, 8f)
 
@@ -325,7 +324,6 @@ class BillPDFGenerator {
         val rowHeight = 25f
 
         try {
-            // Table headers
             val headers = listOf(
                 "Variant no/\nProduct description\n/Fineness",
                 "Purity\nHSN",
@@ -341,8 +339,8 @@ class BillPDFGenerator {
                 "Product\nValue\n(Rs.)"
             )
 
-            // Adjusted column widths to prevent overflow
             val columnWidths = listOf(0.14f, 0.08f, 0.05f, 0.08f, 0.08f, 0.08f, 0.08f, 0.12f, 0.07f, 0.07f, 0.07f, 0.08f)
+
             // Draw table border
             contentStream.setLineWidth(1f)
             contentStream.addRect(margin, yPos - (rowHeight * 2), tableWidth, rowHeight * 2)
@@ -355,7 +353,7 @@ class BillPDFGenerator {
             contentStream.setNonStrokingColor(0f, 0f, 0f)
 
             // Draw header text
-            contentStream.setFont(helvetica, 6.5f) // Reduced font size
+            contentStream.setFont(helvetica, 6.5f)
             var xPos = margin + 1f
 
             headers.forEachIndexed { index, header ->
@@ -364,7 +362,6 @@ class BillPDFGenerator {
                 var textY = yPos - 6f
 
                 lines.forEach { line ->
-                    // Center align text in column
                     val lineWidth = getTextWidth(line, helvetica, 6.5f)
                     val centerOffset = (columnWidth - lineWidth) / 2
 
@@ -385,11 +382,16 @@ class BillPDFGenerator {
 
             yPos -= rowHeight * 2
 
-            // Draw items
-            contentStream.setFont(helvetica, 7f) // Reduced font size for data
+            // Calculate totals from actual order data
             var totalQty = 0
             var totalWeight = 0.0
-            var totalValue = 0.0
+            var totalGrossValue = 0.0
+            var totalSGST = 0.0
+            var totalCGST = 0.0
+            var totalFinalValue = 0.0
+
+            // Draw items
+            contentStream.setFont(helvetica, 7f)
 
             order.items.forEach { item ->
                 val itemRowHeight = rowHeight * 1.5f
@@ -401,15 +403,19 @@ class BillPDFGenerator {
 
                 xPos = margin + 1f
                 val weight = parseWeight(item.product.weight)
-                val makingCharges = weight * 100 // Assuming Rs 100 per gram making charges
-                val itemTotal = (item.product.price * item.quantity) + makingCharges
-                val sgst = itemTotal * 0.015 // 1.5% SGST
-                val cgst = itemTotal * 0.015 // 1.5% CGST
-                val finalValue = itemTotal + sgst + cgst
+                val grossPrice = item.product.price * item.quantity
+                val makingCharges = weight * 100 // Rs 100 per gram making charges
+                val grossTotal = grossPrice + makingCharges
+                val sgst = grossTotal * 0.015 // 1.5% SGST
+                val cgst = grossTotal * 0.015 // 1.5% CGST
+                val finalValue = grossTotal + sgst + cgst
 
                 totalQty += item.quantity
                 totalWeight += weight * item.quantity
-                totalValue += finalValue
+                totalGrossValue += grossPrice
+                totalSGST += sgst
+                totalCGST += cgst
+                totalFinalValue += finalValue
 
                 val values = listOf(
                     "${item.product.id}\n${truncateText(item.product.name, 15)}\n${item.product.materialType}",
@@ -418,9 +424,8 @@ class BillPDFGenerator {
                     String.format("%.3f", weight),
                     "0.000\n0.000",
                     String.format("%.3f", weight),
-                    formatCurrencyShort(item.product.price),
+                    formatCurrencyShort(grossPrice),
                     String.format("%.0f", makingCharges) + "\n20.00 %\n45.00",
-                    formatCurrencyShort(0.0),
                     formatCurrencyShort(sgst),
                     formatCurrencyShort(cgst),
                     formatCurrencyShort(finalValue)
@@ -432,13 +437,12 @@ class BillPDFGenerator {
                     var textY = yPos + itemRowHeight - 8f
 
                     lines.forEach { line ->
-                        // For numerical columns (price columns), right align
-                        val isNumericColumn = index >= 6 // Price columns
+                        val isNumericColumn = index >= 6
                         val lineWidth = getTextWidth(line, helvetica, 7f)
                         val textOffset = if (isNumericColumn) {
-                            maxOf(1f, columnWidth - lineWidth - 3f) // Right align with minimum 1f offset
+                            maxOf(1f, columnWidth - lineWidth - 3f)
                         } else {
-                            2f // Left align with small margin
+                            2f
                         }
 
                         contentStream.beginText()
@@ -472,18 +476,19 @@ class BillPDFGenerator {
 
             val totalValues = listOf(
                 "Total", "", "${totalQty}N", String.format("%.3f", totalWeight),
-                "0.000", String.format("%.3f", totalWeight), "", "",
-                "", "", "", formatCurrencyShort(totalValue)
+                "0.000", String.format("%.3f", totalWeight),
+                formatCurrencyShort(totalGrossValue), "",
+                "", formatCurrencyShort(totalSGST), formatCurrencyShort(totalCGST),
+                formatCurrencyShort(totalFinalValue)
             )
 
             totalValues.forEachIndexed { index, value ->
                 val columnWidth = tableWidth * columnWidths[index]
 
-                // Right align for numeric columns
                 val isNumericColumn = index >= 6
                 val textWidth = getTextWidth(value, helveticaBold, 8f)
                 val textOffset = if (isNumericColumn && value.isNotEmpty()) {
-                    maxOf(1f, columnWidth - textWidth - 3f) // Right align with minimum 1f offset
+                    maxOf(1f, columnWidth - textWidth - 3f)
                 } else {
                     2f
                 }
@@ -562,15 +567,15 @@ class BillPDFGenerator {
             contentStream.endText()
             yPos -= 15f
 
-            // Draw table for payment details with proper spacing
-            val paymentTableHeight = 85f // Increased height
+            // Draw table for payment details
+            val paymentTableHeight = 85f
             contentStream.addRect(margin, yPos - paymentTableHeight, centerX - margin - 10f, paymentTableHeight)
             contentStream.stroke()
 
             contentStream.addRect(centerX + 10f, yPos - paymentTableHeight, pageWidth - centerX - margin - 10f, paymentTableHeight)
             contentStream.stroke()
 
-            // Payment mode details with better spacing
+            // Payment mode details
             contentStream.setFont(helvetica, 8f)
             var paymentY = yPos - 15f
 
@@ -581,13 +586,14 @@ class BillPDFGenerator {
             contentStream.endText()
 
             contentStream.beginText()
-            contentStream.newLineAtOffset(margin + 5f + 100f, paymentY) // Fixed position
+            contentStream.newLineAtOffset(margin + 105f, paymentY)
             contentStream.showText("Amount (Rs)")
             contentStream.endText()
             paymentY -= 18f
 
-            // Payment entries
+            // Use actual payment method from order
             val paymentMethod = when (order.paymentMethod.name) {
+                "UPI" -> "UPI"
                 "CARD" -> "HDFC"
                 "CASH_ON_DELIVERY" -> "CASH"
                 else -> order.paymentMethod.name
@@ -599,25 +605,12 @@ class BillPDFGenerator {
             contentStream.endText()
 
             contentStream.beginText()
-            contentStream.newLineAtOffset(margin + 5f + 100f, paymentY)
-            contentStream.showText(formatCurrency(order.totalAmount - 10.0))
+            contentStream.newLineAtOffset(margin + 105f, paymentY)
+            contentStream.showText(formatCurrency(order.totalAmount))
             contentStream.endText()
-            paymentY -= 18f
+            paymentY -= 25f
 
-            if (order.totalAmount > 10.0) {
-                contentStream.beginText()
-                contentStream.newLineAtOffset(margin + 5f, paymentY)
-                contentStream.showText("CASH")
-                contentStream.endText()
-
-                contentStream.beginText()
-                contentStream.newLineAtOffset(margin + 5f + 100f, paymentY)
-                contentStream.showText("10.00")
-                contentStream.endText()
-                paymentY -= 18f
-            }
-
-            // Total Amount Paid with proper spacing
+            // Total Amount Paid
             contentStream.setFont(helveticaBold, 9f)
             contentStream.beginText()
             contentStream.newLineAtOffset(margin + 5f, paymentY)
@@ -625,11 +618,11 @@ class BillPDFGenerator {
             contentStream.endText()
 
             contentStream.beginText()
-            contentStream.newLineAtOffset(margin + 5f + 100f, paymentY)
+            contentStream.newLineAtOffset(margin + 105f, paymentY)
             contentStream.showText(formatCurrency(order.totalAmount))
             contentStream.endText()
 
-            // Right side - Other charges and totals with proper spacing
+            // Right side - Other charges and totals
             var rightY = yPos - 15f
             contentStream.setFont(helvetica, 8f)
 
@@ -639,7 +632,7 @@ class BillPDFGenerator {
             contentStream.endText()
 
             contentStream.beginText()
-            contentStream.newLineAtOffset(pageWidth - margin - 60f, rightY) // Fixed right position
+            contentStream.newLineAtOffset(pageWidth - margin - 60f, rightY)
             contentStream.showText("0.00")
             contentStream.endText()
             rightY -= 18f
@@ -674,7 +667,7 @@ class BillPDFGenerator {
                 rightY -= 12f
             }
 
-            // Total Amount to be paid with proper spacing
+            // Total Amount to be paid
             contentStream.setFont(helveticaBold, 9f)
             contentStream.beginText()
             contentStream.newLineAtOffset(centerX + 15f, rightY)
@@ -735,7 +728,7 @@ class BillPDFGenerator {
 
     private fun parseWeight(weightStr: String): Double {
         return try {
-            weightStr.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 4.0 // Default weight
+            weightStr.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 4.0
         } catch (e: Exception) {
             4.0
         }
@@ -751,7 +744,6 @@ class BillPDFGenerator {
         }
     }
 
-    // Short format for table cells to prevent overflow
     private fun formatCurrencyShort(amount: Double): String {
         return try {
             if (amount >= 100000) {

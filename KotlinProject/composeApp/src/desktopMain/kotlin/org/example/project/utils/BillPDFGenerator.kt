@@ -31,7 +31,9 @@ class BillPDFGenerator {
         companyAddress: String = "123 Jewelry Street, Golden City, GC 12345",
         companyPhone: String = "+91 98765 43210",
         companyEmail: String = "info@gaganjewellers.com",
-        gstNumber: String = "22AAAAA0000A1Z5"
+        gstNumber: String = "22AAAAA0000A1Z5",
+        goldPricePerGram: Double = 7063.58,
+        silverPricePerGram: Double = 75.0
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             PDDocument().use { document ->
@@ -58,10 +60,14 @@ class BillPDFGenerator {
                     yPosition = drawGoldRateInfo(contentStream, margin, yPosition, pageWidth)
 
                     // Items Table
-                    yPosition = drawProfessionalItemsTable(contentStream, order, margin, yPosition, pageWidth)
+                    val tableResult = drawProfessionalItemsTable(
+                        contentStream, order, goldPricePerGram, silverPricePerGram, margin, yPosition, pageWidth
+                    )
+                    yPosition = tableResult.first
+                    val calculatedTotal = tableResult.second
 
                     // Payment and Total Section
-                    yPosition = drawPaymentSection(contentStream, order, margin, yPosition, pageWidth)
+                    yPosition = drawPaymentSection(contentStream, order, calculatedTotal, margin, yPosition, pageWidth)
 
                     // Amount in Words
                     drawAmountInWords(contentStream, order.totalAmount, margin, yPosition, pageWidth)
@@ -315,10 +321,12 @@ class BillPDFGenerator {
     private fun drawProfessionalItemsTable(
         contentStream: PDPageContentStream,
         order: Order,
+        goldPricePerGram: Double,
+        silverPricePerGram: Double,
         margin: Float,
         startY: Float,
         pageWidth: Float
-    ): Float {
+    ): Pair<Float, Double> {
         var yPos = startY - 10f
         val tableWidth = pageWidth - (2 * margin)
         val rowHeight = 25f
@@ -386,9 +394,9 @@ class BillPDFGenerator {
             var totalQty = 0
             var totalWeight = 0.0
             var totalGrossValue = 0.0
+            var totalMakingCharges = 0.0
             var totalSGST = 0.0
             var totalCGST = 0.0
-            var totalFinalValue = 0.0
 
             // Draw items
             contentStream.setFont(helvetica, 7f)
@@ -413,9 +421,10 @@ class BillPDFGenerator {
                 totalQty += item.quantity
                 totalWeight += weight * item.quantity
                 totalGrossValue += grossPrice
+                totalMakingCharges += makingCharges
                 totalSGST += sgst
                 totalCGST += cgst
-                totalFinalValue += finalValue
+                var totalFinalValue = finalValue
 
                 val values = listOf(
                     "${item.product.id}\n${truncateText(item.product.name, 15)}\n${item.product.materialType}",
@@ -477,9 +486,9 @@ class BillPDFGenerator {
             val totalValues = listOf(
                 "Total", "", "${totalQty}N", String.format("%.3f", totalWeight),
                 "0.000", String.format("%.3f", totalWeight),
-                formatCurrencyShort(totalGrossValue), "",
+                formatCurrencyShort(totalGrossValue), formatCurrencyShort(totalMakingCharges),
                 "", formatCurrencyShort(totalSGST), formatCurrencyShort(totalCGST),
-                formatCurrencyShort(totalFinalValue)
+                formatCurrencyShort(order.totalAmount)
             )
 
             totalValues.forEachIndexed { index, value ->
@@ -510,12 +519,13 @@ class BillPDFGenerator {
             println("Error in drawProfessionalItemsTable: ${e.message}")
         }
 
-        return yPos
+        return Pair(yPos, order.totalAmount)
     }
 
     private fun drawPaymentSection(
         contentStream: PDPageContentStream,
         order: Order,
+        calculatedTotal: Double,
         margin: Float,
         startY: Float,
         pageWidth: Float
@@ -595,6 +605,7 @@ class BillPDFGenerator {
             val paymentMethod = when (order.paymentMethod.name) {
                 "UPI" -> "UPI"
                 "CARD" -> "HDFC"
+                "NET_BANKING" -> "NET_BANKING"
                 "CASH_ON_DELIVERY" -> "CASH"
                 else -> order.paymentMethod.name
             }

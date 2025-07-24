@@ -258,13 +258,20 @@ class PaymentViewModel(
                 val fileName = "Invoice_${order.id}_${System.currentTimeMillis()}.pdf"
                 val outputPath = Paths.get(billsDirectory.absolutePath, fileName)
 
+                // Get current metal prices from CartViewModel
+                val cartViewModel = JewelryAppInitializer.getCartViewModel()
+                val metalPrices = cartViewModel.metalPrices.value
+
                 println("Starting PDF generation for order: ${order.id}")
+                println("Using metal prices - Gold: ${metalPrices.goldPricePerGram}, Silver: ${metalPrices.silverPricePerGram}")
                 println("Output path: $outputPath")
 
                 val success = pdfGenerator.generateBill(
                     order = order,
                     customer = customer,
-                    outputPath = outputPath
+                    outputPath = outputPath,
+                    goldPricePerGram = metalPrices.goldPricePerGram,
+                    silverPricePerGram = metalPrices.silverPricePerGram
                 )
 
                 if (success) {

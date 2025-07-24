@@ -656,7 +656,7 @@ private fun OrderSummaryItem(
             )
 
             Text(
-                "Qty: ${cartItem.quantity} | Weight: ${String.format("%.2f", itemWeight)}g",
+                "Qty: ${cartItem.quantity} | Weight: ${String.format("%.2f", itemWeight * cartItem.quantity)}g",
                 fontSize = 12.sp,
                 color = Color(0xFF666666)
             )
@@ -668,7 +668,7 @@ private fun OrderSummaryItem(
             )
         }
 
-        // Price
+        // Price - Fixed to show total price for quantity
         Text(
             "₹${formatCurrency(itemPrice)}",
             fontSize = 14.sp,

@@ -64,32 +64,6 @@ class CartViewModel(
         }
     }
 
-    // Fixed weight-based calculation method
-    private fun calculateItemPrice(cartItem: CartItem): Double {
-        val weight = parseWeight(cartItem.product.weight)
-        val pricePerGram = when {
-            cartItem.product.materialType.contains("gold", ignoreCase = true) -> _metalPrices.value.goldPricePerGram
-            cartItem.product.materialType.contains("silver", ignoreCase = true) -> _metalPrices.value.silverPricePerGram
-            else -> _metalPrices.value.goldPricePerGram // Default to gold
-        }
-        return weight * cartItem.quantity * pricePerGram
-    }
-
-    // Fixed subtotal calculation - weight based
-    fun getSubtotal(): Double {
-        return _cart.value.items.sumOf { cartItem ->
-            calculateItemPrice(cartItem)
-        }
-    }
-
-    // Calculate making charges (₹100 per gram)
-    fun getMakingCharges(): Double {
-        return _cart.value.items.sumOf { cartItem ->
-            val weight = parseWeight(cartItem.product.weight)
-            weight * cartItem.quantity * 100.0 // ₹100 per gram making charges
-        }
-    }
-
     // Calculate gross total (subtotal + making charges)
     fun getGrossTotal(): Double {
         return getSubtotal() + getMakingCharges()
@@ -113,24 +87,7 @@ class CartViewModel(
         }
     }
 
-    // Get weight-based price for a specific item
-    fun getItemPrice(cartItem: CartItem): Double {
-        return calculateItemPrice(cartItem)
-    }
 
-    // Get weight for a specific item
-    fun getItemWeight(cartItem: CartItem): Double {
-        return parseWeight(cartItem.product.weight)
-    }
-
-    // Get price per gram for a specific item
-    fun getItemPricePerGram(cartItem: CartItem): Double {
-        return when {
-            cartItem.product.materialType.contains("gold", ignoreCase = true) -> _metalPrices.value.goldPricePerGram
-            cartItem.product.materialType.contains("silver", ignoreCase = true) -> _metalPrices.value.silverPricePerGram
-            else -> _metalPrices.value.goldPricePerGram
-        }
-    }
 
     fun addToCart(product: Product) {
         val currentCart = _cart.value
@@ -315,5 +272,73 @@ class CartViewModel(
     fun onCleared() {
         viewModelScope.cancel()
         imageCache.clear()
+    }
+
+    // Add these methods to your CartViewModel class
+
+    // Fixed weight-based calculation method with quantity
+    private fun calculateItemPrice(cartItem: CartItem): Double {
+        val weight = parseWeight(cartItem.product.weight)
+        val pricePerGram = when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> _metalPrices.value.goldPricePerGram
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> _metalPrices.value.silverPricePerGram
+            else -> _metalPrices.value.goldPricePerGram // Default to gold
+        }
+
+        // Fixed: Include quantity in calculation
+        val metalCost = weight * cartItem.quantity * pricePerGram
+        val makingCharges = weight * cartItem.quantity * 100.0 // ₹100 per gram making charges
+
+        return metalCost + makingCharges
+    }
+
+    // Fixed subtotal calculation - weight based with quantity
+    fun getSubtotal(): Double {
+        return _cart.value.items.sumOf { cartItem ->
+            val weight = parseWeight(cartItem.product.weight)
+            val pricePerGram = when {
+                cartItem.product.materialType.contains("gold", ignoreCase = true) -> _metalPrices.value.goldPricePerGram
+                cartItem.product.materialType.contains("silver", ignoreCase = true) -> _metalPrices.value.silverPricePerGram
+                else -> _metalPrices.value.goldPricePerGram
+            }
+            weight * cartItem.quantity * pricePerGram // Metal cost only
+        }
+    }
+
+    // Calculate making charges (₹100 per gram) with quantity
+    fun getMakingCharges(): Double {
+        return _cart.value.items.sumOf { cartItem ->
+            val weight = parseWeight(cartItem.product.weight)
+            weight * cartItem.quantity * 100.0 // ₹100 per gram making charges
+        }
+    }
+
+    // Get weight-based price for a specific item with quantity
+    fun getItemPrice(cartItem: CartItem): Double {
+        val weight = parseWeight(cartItem.product.weight)
+        val pricePerGram = when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> _metalPrices.value.goldPricePerGram
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> _metalPrices.value.silverPricePerGram
+            else -> _metalPrices.value.goldPricePerGram
+        }
+
+        val metalCost = weight * cartItem.quantity * pricePerGram
+        val makingCharges = weight * cartItem.quantity * 100.0
+
+        return metalCost + makingCharges
+    }
+
+    // Get total weight for a specific item (weight * quantity)
+    fun getItemWeight(cartItem: CartItem): Double {
+        return parseWeight(cartItem.product.weight)
+    }
+
+    // Get price per gram for a specific item
+    fun getItemPricePerGram(cartItem: CartItem): Double {
+        return when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> _metalPrices.value.goldPricePerGram
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> _metalPrices.value.silverPricePerGram
+            else -> _metalPrices.value.goldPricePerGram
+        }
     }
 }

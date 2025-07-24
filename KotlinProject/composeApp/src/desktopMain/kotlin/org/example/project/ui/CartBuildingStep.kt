@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -480,7 +481,6 @@ fun PriceEditorDialog(
     )
 }
 
-// Updated ProductCard in CartBuildingStep.kt - Fixed price calculation
 @Composable
 fun ProductCard(
     product: Product,
@@ -495,28 +495,30 @@ fun ProductCard(
     onUpdateQuantity: (Int) -> Unit
 ) {
     val weight = parseWeight(product.weight)
-    // Fix: Use correct price based on material type
     val pricePerGram = when {
         product.materialType.contains("gold", ignoreCase = true) -> goldPrice
         product.materialType.contains("silver", ignoreCase = true) -> silverPrice
-        else -> goldPrice // Default to gold
+        else -> goldPrice
     }
     val metalCost = weight * pricePerGram
-    val makingCharges = weight * 100.0 // ₹100 per gram making charges
+    val makingCharges = weight * 100.0
     val totalPrice = metalCost + makingCharges
-    val availableToAdd = product.quantity - cartQuantity
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(280.dp) // Increased height to accommodate new info
-            .clickable { onCardClick() },
+            .height(280.dp),
         elevation = if (isInCart) 6.dp else 2.dp,
         shape = RoundedCornerShape(8.dp),
         border = if (isInCart) BorderStroke(2.dp, MaterialTheme.colors.primary) else null
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            // Make the main content clickable (but not the quantity controls)
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { onCardClick() }
+            ) {
                 // Product image
                 Box(
                     modifier = Modifier
@@ -562,7 +564,7 @@ fun ProductCard(
                     }
                 }
 
-                // Product details with reduced padding
+                // Product details
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -604,7 +606,6 @@ fun ProductCard(
 
                         Spacer(modifier = Modifier.height(2.dp))
 
-                        // Material and stock indicator row
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -620,7 +621,6 @@ fun ProductCard(
                                 modifier = Modifier.weight(1f)
                             )
 
-                            // Stock indicator
                             if (product.quantity <= 5) {
                                 Text(
                                     text = if (product.quantity == 0) "Out of Stock" else "Only ${product.quantity} left",
@@ -633,7 +633,6 @@ fun ProductCard(
 
                         Spacer(modifier = Modifier.height(2.dp))
 
-                        // Price breakdown - NEW
                         Column {
                             Text(
                                 text = "Metal: ₹${formatNumber(metalCost)}",
@@ -648,98 +647,90 @@ fun ProductCard(
                         }
                     }
 
-                    // Price and quantity controls in the same row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Total Price
-                        Column {
-                            Text(
-                                text = "₹${formatNumber(totalPrice)}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colors.primary
-                            )
-                            Text(
-                                text = "Total",
-                                fontSize = 9.sp,
-                                color = Color.Gray
-                            )
-                        }
+                    // Price display only (quantity controls will be overlay)
+                    Column {
+                        Text(
+                            text = "₹${formatNumber(totalPrice)}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colors.primary
+                        )
+                        Text(
+                            text = "Total",
+                            fontSize = 9.sp,
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
 
-                        Card(
-                            elevation = 1.dp,
-                            shape = RoundedCornerShape(20.dp),
-                            backgroundColor = Color.White,
-                            modifier = Modifier
-                                .padding(2.dp)
-                                .height(28.dp)
-                                .wrapContentWidth()
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center,
-                                modifier = Modifier
-                                    .padding(horizontal = 4.dp, vertical = 2.dp)
-                                    .defaultMinSize(minWidth = 64.dp)
-                            ) {
-                                // Decrease button
-                                IconButton(
-                                    onClick = {
-                                        if (cartQuantity > 0) onUpdateQuantity(cartQuantity - 1)
-                                    },
-                                    modifier = Modifier.size(22.dp),
-                                    enabled = cartQuantity > 0
-                                ) {
-                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = "−",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (cartQuantity > 0) Color.Gray else Color.LightGray
-                                        )
-                                    }
-                                }
-
-                                // Quantity display
-                                Text(
-                                    text = cartQuantity.toString(),
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    modifier = Modifier.widthIn(min = 24.dp),
-                                    textAlign = TextAlign.Center
-                                )
-
-                                // Increase button - Updated with stock limit
-                                IconButton(
-                                    onClick = {
-                                        if (cartQuantity < product.quantity) {
-                                            onUpdateQuantity(cartQuantity + 1)
-                                        }
-                                    },
-                                    modifier = Modifier.size(22.dp),
-                                    enabled = cartQuantity < product.quantity
-                                ) {
-                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = "+",
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (cartQuantity < product.quantity) Color(0xFFB2935A) else Color.LightGray
-                                        )
-                                    }
-                                }
+            // Quantity controls as overlay (bottom right)
+            Card(
+                elevation = 3.dp,
+                shape = RoundedCornerShape(20.dp),
+                backgroundColor = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .height(32.dp)
+                    .wrapContentWidth()
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier
+                        .padding(horizontal = 6.dp, vertical = 4.dp)
+                        .defaultMinSize(minWidth = 80.dp)
+                ) {
+                    // Decrease button
+                    IconButton(
+                        onClick = {
+                            if (cartQuantity > 0) {
+                                onUpdateQuantity(cartQuantity - 1)
                             }
-                        }
+                        },
+                        modifier = Modifier.size(24.dp),
+                        enabled = cartQuantity > 0
+                    ) {
+                        Text(
+                            text = "−",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (cartQuantity > 0) Color.Gray else Color.LightGray
+                        )
+                    }
+
+                    // Quantity display
+                    Text(
+                        text = cartQuantity.toString(),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.widthIn(min = 28.dp),
+                        textAlign = TextAlign.Center
+                    )
+
+                    // Increase button
+                    IconButton(
+                        onClick = {
+                            if (cartQuantity < product.quantity) {
+                                onUpdateQuantity(cartQuantity + 1)
+                            }
+                        },
+                        modifier = Modifier.size(24.dp),
+                        enabled = cartQuantity < product.quantity
+                    ) {
+                        Text(
+                            text = "+",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (cartQuantity < product.quantity) Color(0xFFB2935A) else Color.LightGray
+                        )
                     }
                 }
             }
         }
     }
 }
-
 @Composable
 fun CartScreen(
     cartViewModel: CartViewModel,

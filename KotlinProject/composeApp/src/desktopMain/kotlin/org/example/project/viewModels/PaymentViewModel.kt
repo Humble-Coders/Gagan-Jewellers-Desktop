@@ -26,6 +26,10 @@ class PaymentViewModel(
     private val _selectedPaymentMethod = mutableStateOf<PaymentMethod?>(null)
     val selectedPaymentMethod: State<PaymentMethod?> = _selectedPaymentMethod
 
+    // GST Inclusion State
+    private val _isGstIncluded = mutableStateOf(false)
+    val isGstIncluded: State<Boolean> = _isGstIncluded
+
     // Discount State
     private val _discountType = mutableStateOf(DiscountType.AMOUNT)
     val discountType: State<DiscountType> = _discountType
@@ -56,6 +60,11 @@ class PaymentViewModel(
 
     fun setPaymentMethod(paymentMethod: PaymentMethod) {
         _selectedPaymentMethod.value = paymentMethod
+        _errorMessage.value = null
+    }
+
+    fun setGstIncluded(included: Boolean) {
+        _isGstIncluded.value = included
         _errorMessage.value = null
     }
 
@@ -151,6 +160,8 @@ class PaymentViewModel(
         discountAmount: Double,
         gst: Double,
         finalTotal: Double,
+        customerId: String,
+        isGstIncluded: Boolean,
         onSuccess: () -> Unit
     ) {
         if (_selectedPaymentMethod.value == null) {
@@ -165,7 +176,7 @@ class PaymentViewModel(
             try {
                 val order = Order(
                     id = generateOrderId(),
-                    customerId = cart.customerId,
+                    customerId = customerId, // Use the passed customer ID
                     paymentMethod = _selectedPaymentMethod.value!!,
                     subtotal = subtotal,
                     discountAmount = discountAmount,
@@ -173,7 +184,8 @@ class PaymentViewModel(
                     totalAmount = finalTotal,
                     items = cart.items,
                     timestamp = System.currentTimeMillis(),
-                    status = OrderStatus.CONFIRMED
+                    status = OrderStatus.CONFIRMED,
+                    isGstIncluded = isGstIncluded // Set the GST inclusion flag
                 )
 
                 // Save order to database
@@ -198,7 +210,7 @@ class PaymentViewModel(
                         status = PaymentStatus.COMPLETED
                     )
 
-                    // ✅ FIX: Generate PDF after successful order creation
+                    // Generate PDF after successful order creation
                     val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
                     if (customer != null) {
                         generateOrderPDF(order, customer)
@@ -234,7 +246,7 @@ class PaymentViewModel(
     private fun generateOrderPDF(order: Order, customer: User) {
         viewModelScope.launch {
             _isGeneratingPDF.value = true
-            _errorMessage.value = null // Clear any previous errors
+            _errorMessage.value = null
 
             try {
                 val userHome = System.getProperty("user.home")
@@ -304,6 +316,7 @@ class PaymentViewModel(
 
     fun resetPaymentState() {
         _selectedPaymentMethod.value = null
+        _isGstIncluded.value = false
         _discountType.value = DiscountType.AMOUNT
         _discountValue.value = ""
         _discountAmount.value = 0.0

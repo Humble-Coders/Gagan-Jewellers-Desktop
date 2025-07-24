@@ -929,6 +929,91 @@ fun CartItemCard(
 }
 
 @Composable
+fun CartSummary(
+    subtotal: Double,
+    total: Double, // This will be the same as subtotal now
+    onClearCart: () -> Unit,
+    onProceedToPayment: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = 4.dp,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Text(
+                "Order Summary",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Subtotal:", fontSize = 16.sp)
+                Text(
+                    "₹${String.format("%.0f", subtotal)}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Divider(modifier = Modifier.padding(vertical = 12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    "Total:",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "₹${String.format("%.0f", total)}",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colors.primary
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onClearCart,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Clear Cart")
+                }
+
+                Button(
+                    onClick = onProceedToPayment,
+                    modifier = Modifier.weight(2f),
+                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
+                ) {
+                    Text(
+                        "Proceed to Payment",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun CartScreen(
     cartViewModel: CartViewModel,
     onProceedToPayment: () -> Unit = {},
@@ -1009,114 +1094,14 @@ fun CartScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            // Cart summary
+            // Cart summary - only subtotal, no GST
+            val subtotal = cartViewModel.getSubtotal()
             CartSummary(
-                subtotal = cartViewModel.getSubtotal(),
-                gst = cartViewModel.getGST(),
-                total = cartViewModel.getFinalTotal(),
+                subtotal = subtotal,
+                total = subtotal, // Same as subtotal, no GST added here
                 onClearCart = { cartViewModel.clearCart() },
                 onProceedToPayment = onProceedToPayment
             )
-        }
-    }
-}
-
-@Composable
-fun CartSummary(
-    subtotal: Double,
-    gst: Double,
-    total: Double,
-    onClearCart: () -> Unit,
-    onProceedToPayment: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = 4.dp,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp)
-        ) {
-            Text(
-                "Order Summary",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Subtotal:", fontSize = 16.sp)
-                Text(
-                    "₹${String.format("%.0f", subtotal)}",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("GST (18.0%):", fontSize = 16.sp)
-                Text(
-                    "₹${String.format("%.0f", gst)}",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
-            Divider(modifier = Modifier.padding(vertical = 12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    "Total:",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    "₹${String.format("%.0f", total)}",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colors.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedButton(
-                    onClick = onClearCart,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("Clear Cart")
-                }
-
-                Button(
-                    onClick = onProceedToPayment,
-                    modifier = Modifier.weight(2f),
-                    colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
-                ) {
-                    Text(
-                        "Proceed to Payment",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
         }
     }
 }

@@ -25,6 +25,7 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                 "totalAmount" to order.totalAmount,
                 "status" to order.status.name,
                 "timestamp" to order.timestamp,
+                "isGstIncluded" to order.isGstIncluded, // Add the new field
                 "items" to order.items.map { item ->
                     mapOf(
                         "productId" to item.productId,
@@ -66,6 +67,7 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                     totalAmount = (data["totalAmount"] as? Number)?.toDouble() ?: 0.0,
                     status = OrderStatus.valueOf(data["status"] as? String ?: "CONFIRMED"),
                     timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                    isGstIncluded = data["isGstIncluded"] as? Boolean ?: false, // Handle the new field
                     items = emptyList() // Items would need to be reconstructed if needed
                 )
             } else {
@@ -98,6 +100,7 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                     totalAmount = (data["totalAmount"] as? Number)?.toDouble() ?: 0.0,
                     status = OrderStatus.valueOf(data["status"] as? String ?: "CONFIRMED"),
                     timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                    isGstIncluded = data["isGstIncluded"] as? Boolean ?: false, // Handle the new field
                     items = emptyList() // Items would need to be reconstructed if needed
                 )
             }

@@ -36,6 +36,7 @@ fun ReceiptScreen(
     val pdfPath by paymentViewModel.pdfPath
     val selectedCustomer by customerViewModel.selectedCustomer
     val errorMessage by paymentViewModel.errorMessage
+    val isGstIncluded by paymentViewModel.isGstIncluded
 
     Column(
         modifier = Modifier
@@ -170,7 +171,10 @@ fun ReceiptScreen(
                         AmountRow("Discount", -transaction.discountAmount, isDiscount = true)
                     }
 
-                    AmountRow("GST (18%)", transaction.gstAmount)
+                    // Show GST only if it was included in the order
+                    if (isGstIncluded && transaction.gstAmount > 0) {
+                        AmountRow("GST (18%)", transaction.gstAmount)
+                    }
 
                     Spacer(modifier = Modifier.height(8.dp))
                     Divider(thickness = 1.dp, color = Color(0xFFE0E0E0))
@@ -193,6 +197,15 @@ fun ReceiptScreen(
                             color = Color(0xFF4CAF50)
                         )
                     }
+
+                    // Add GST status indicator
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        if (isGstIncluded) "* GST included in total amount" else "* GST not included",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666),
+                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                    )
                 }
             }
         }

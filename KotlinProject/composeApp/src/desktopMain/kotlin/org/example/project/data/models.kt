@@ -123,7 +123,8 @@ data class Order(
     val totalAmount: Double = 0.0,
     val status: OrderStatus = OrderStatus.CONFIRMED,
     val timestamp: Long = System.currentTimeMillis(),
-    val items: List<CartItem> = emptyList()
+    val items: List<CartItem> = emptyList(),
+    val isGstIncluded: Boolean = false // New field for GST inclusion
 )
 
 data class PaymentTransaction(

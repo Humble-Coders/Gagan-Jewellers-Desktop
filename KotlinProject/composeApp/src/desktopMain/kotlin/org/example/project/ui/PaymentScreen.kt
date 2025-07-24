@@ -59,6 +59,7 @@ fun PaymentScreen(
     val isProcessing by paymentViewModel.isProcessing
     val errorMessage by paymentViewModel.errorMessage
     val selectedCustomer by customerViewModel.selectedCustomer
+    val isGstIncluded by paymentViewModel.isGstIncluded
 
     Column(
         modifier = Modifier
@@ -75,13 +76,18 @@ fun PaymentScreen(
                 .padding(15.dp),
             horizontalArrangement = Arrangement.spacedBy(32.dp)
         ) {
-            // Left Side - Discounts & Payment Options (60%)
+            // Left Side - GST, Discounts & Payment Options (60%)
             Column(
                 modifier = Modifier
                     .weight(0.6f)
                     .fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
+                // GST Inclusion Section
+                GstInclusionSection(
+                    isGstIncluded = isGstIncluded,
+                    onGstInclusionChange = { paymentViewModel.setGstIncluded(it) }
+                )
 
                 // Payment Options Section
                 PaymentOptionsSection(
@@ -98,7 +104,6 @@ fun PaymentScreen(
                     onApplyDiscount = { paymentViewModel.applyDiscount() },
                     errorMessage = errorMessage
                 )
-
             }
 
             // Right Side - Order Summary (40%)
@@ -108,8 +113,12 @@ fun PaymentScreen(
                 cartImages = cartImages,
                 subtotal = cartViewModel.getSubtotal(),
                 discountAmount = calculatedDiscountAmount,
-                gst = cartViewModel.getGST(),
-                total = cartViewModel.getFinalTotal() - calculatedDiscountAmount,
+                gst = if (isGstIncluded) cartViewModel.getGST() else 0.0,
+                total = if (isGstIncluded)
+                    cartViewModel.getFinalTotal() - calculatedDiscountAmount
+                else
+                    cartViewModel.getSubtotal() - calculatedDiscountAmount,
+                isGstIncluded = isGstIncluded,
                 onConfirmOrder = {
                     // Validate stock before proceeding
                     paymentViewModel.validateStockBeforeOrder(
@@ -121,12 +130,16 @@ fun PaymentScreen(
                                     cart = cart,
                                     subtotal = cartViewModel.getSubtotal(),
                                     discountAmount = calculatedDiscountAmount,
-                                    gst = cartViewModel.getGST(),
-                                    finalTotal = cartViewModel.getFinalTotal() - calculatedDiscountAmount,
+                                    gst = if (isGstIncluded) cartViewModel.getGST() else 0.0,
+                                    finalTotal = if (isGstIncluded)
+                                        cartViewModel.getFinalTotal() - calculatedDiscountAmount
+                                    else
+                                        cartViewModel.getSubtotal() - calculatedDiscountAmount,
+                                    customerId = selectedCustomer?.id ?: "",
+                                    isGstIncluded = isGstIncluded,
                                     onSuccess = onPaymentComplete
                                 )
                             } else {
-                                // Show error dialog or snackbar with stock issues
                                 paymentViewModel.setErrorMessage(
                                     "Stock validation failed:\n${errors.joinToString("\n")}"
                                 )
@@ -485,6 +498,7 @@ private fun OrderSummarySection(
     discountAmount: Double,
     gst: Double,
     total: Double,
+    isGstIncluded: Boolean,
     onConfirmOrder: () -> Unit,
     isProcessing: Boolean,
     paymentMethodSelected: Boolean
@@ -533,7 +547,8 @@ private fun OrderSummarySection(
                 subtotal = subtotal,
                 discountAmount = discountAmount,
                 gst = gst,
-                total = total
+                total = total,
+                isGstIncluded = isGstIncluded
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -646,7 +661,8 @@ private fun PriceBreakdown(
     subtotal: Double,
     discountAmount: Double,
     gst: Double,
-    total: Double
+    total: Double,
+    isGstIncluded: Boolean
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -666,11 +682,13 @@ private fun PriceBreakdown(
             )
         }
 
-        PriceRow(
-            label = "GST (18%)",
-            amount = gst,
-            isTotal = false
-        )
+        if (isGstIncluded) {
+            PriceRow(
+                label = "GST (18%)",
+                amount = gst,
+                isTotal = false
+            )
+        }
 
         Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
 
@@ -718,4 +736,61 @@ private fun formatCurrency(amount: Double): String {
     val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
     formatter.maximumFractionDigits = 0
     return formatter.format(amount)
+}
+
+@Composable
+private fun GstInclusionSection(
+    isGstIncluded: Boolean,
+    onGstInclusionChange: (Boolean) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = 4.dp,
+        shape = RoundedCornerShape(16.dp),
+        backgroundColor = Color.White
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp)
+        ) {
+            Text(
+                "Tax Options",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF2E2E2E)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Checkbox(
+                    checked = isGstIncluded,
+                    onCheckedChange = onGstInclusionChange,
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = Color(0xFFB8973D),
+                        uncheckedColor = Color(0xFFE0E0E0)
+                    )
+                )
+
+                Column {
+                    Text(
+                        "Include GST (18%)",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF2E2E2E)
+                    )
+                    Text(
+                        "Check this box to add 18% GST to the final amount",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+            }
+        }
+    }
 }

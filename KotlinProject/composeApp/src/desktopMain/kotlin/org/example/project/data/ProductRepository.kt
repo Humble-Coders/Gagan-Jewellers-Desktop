@@ -98,6 +98,7 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     else -> false
                 },
                 customProductId = data["custom_product_id"] as? String ?: "",
+                commonId = data["common_id"] as? String,
                 createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                 show = ProductShowConfig(
                     name = showMap["name"] as? Boolean ?: true,
@@ -304,6 +305,7 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
         productMap["barcode_ids"] = product.barcodeIds.takeIf { it.isNotEmpty() } ?: emptyList<String>()
         productMap["auto_generate_id"] = product.autoGenerateId
         productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
+        productMap["common_id"] = product.commonId
 
         // Show map
         val showMap = mapOf(
@@ -425,6 +427,7 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["barcode_ids"] = product.barcodeIds.takeIf { it.isNotEmpty() } ?: emptyList<String>()
             productMap["auto_generate_id"] = product.autoGenerateId
             productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
+        productMap["common_id"] = product.commonId
             // Show map
             val showMap = mapOf(
                 "name" to product.show.name,

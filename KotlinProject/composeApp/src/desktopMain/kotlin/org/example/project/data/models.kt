@@ -17,6 +17,7 @@ data class Product(
     val images: List<String> = emptyList(),
     val barcodeIds: List<String> = emptyList(), // Unique barcodes for each unit
     val quantity: Int = 0,
+    val commonId: String? = null, // Common ID for grouped products (null for single products)
     val createdAt: Long = System.currentTimeMillis(),
     // New fields for enhanced product details
     val autoGenerateId: Boolean = true, // Radio button for auto-generating product ID
@@ -65,6 +66,18 @@ data class ProductShowConfig(
     val images: Boolean = true,
     val available: Boolean = true,
     val featured: Boolean = true
+)
+
+/**
+ * Represents a grouped product for dashboard display
+ * Groups individual products by commonId and shows combined quantity
+ */
+data class GroupedProduct(
+    val baseProduct: Product, // The representative product (first one in the group)
+    val quantity: Int, // Total quantity of products in this group
+    val individualProducts: List<Product>, // All individual products in this group
+    val barcodeIds: List<String>, // All barcode IDs in this group
+    val commonId: String? // Common ID (null for single products)
 )
 
 data class Category(
@@ -284,6 +297,7 @@ enum class PaymentMethod {
     UPI,
     NET_BANKING,
     BANK_TRANSFER,
+    CASH_ON_DELIVERY,
     DUE
 }
 
@@ -330,9 +344,11 @@ data class Order(
     val paymentMethod: PaymentMethod = PaymentMethod.CARD,
     val paymentSplit: PaymentSplit? = null, // New: Detailed payment splitting
     val subtotal: Double = 0.0,
+    val makingCharges: Double = 0.0, // Making charges for the order
     val discountAmount: Double = 0.0,
     val gstAmount: Double = 0.0,
     val totalAmount: Double = 0.0,
+    val isGstIncluded: Boolean = true, // Whether GST is included in the price
     val status: OrderStatus = OrderStatus.CONFIRMED,
     val timestamp: Long = System.currentTimeMillis(),
     val items: List<CartItem> = emptyList(),
@@ -344,9 +360,11 @@ data class PaymentTransaction(
     val cartId: String = "",
     val paymentMethod: PaymentMethod = PaymentMethod.CARD,
     val subtotal: Double = 0.0,
+    val makingCharges: Double = 0.0, // Making charges for the transaction
     val discountAmount: Double = 0.0,
     val gstAmount: Double = 0.0,
     val totalAmount: Double = 0.0,
+    val isGstIncluded: Boolean = true, // Whether GST is included in the price
     val status: PaymentStatus = PaymentStatus.PENDING,
     val timestamp: Long = System.currentTimeMillis(),
     val items: List<CartItem> = emptyList()

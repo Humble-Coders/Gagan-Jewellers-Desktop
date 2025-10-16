@@ -499,6 +499,7 @@ private fun PaymentOptionsSection(
                             PaymentMethod.UPI -> Icons.Default.AccountBox
                             PaymentMethod.NET_BANKING -> Icons.Default.AccountBox
                             PaymentMethod.BANK_TRANSFER -> Icons.Default.AccountBox
+                            PaymentMethod.CASH_ON_DELIVERY -> Icons.Default.AccountBox
                             PaymentMethod.DUE -> Icons.Default.AccountBox
                         },
                         title = label,

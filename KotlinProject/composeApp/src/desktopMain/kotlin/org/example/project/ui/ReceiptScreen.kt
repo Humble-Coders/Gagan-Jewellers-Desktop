@@ -422,6 +422,7 @@ private fun formatPaymentMethod(paymentMethod: org.example.project.data.PaymentM
         org.example.project.data.PaymentMethod.UPI -> "UPI"
         org.example.project.data.PaymentMethod.NET_BANKING -> "Net Banking"
         org.example.project.data.PaymentMethod.BANK_TRANSFER -> "Bank Transfer"
+        org.example.project.data.PaymentMethod.CASH_ON_DELIVERY -> "Cash on Delivery"
         org.example.project.data.PaymentMethod.DUE -> "Due Payment"
     }
 }

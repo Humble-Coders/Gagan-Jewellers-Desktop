@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import org.example.project.data.Category
 import org.example.project.data.Material
 import org.example.project.data.Product
+import org.example.project.data.GroupedProduct
 import org.example.project.data.ProductRepository
 import org.example.project.data.StonesRepository
 
@@ -153,6 +154,42 @@ class ProductsViewModel(internal val repository: ProductRepository, private val 
             }
         }
     }
+    
+    /**
+     * Group products by commonId for dashboard display
+     * Products with same commonId are grouped together
+     * Products with null commonId are shown individually
+     */
+    fun getGroupedProducts(): List<GroupedProduct> {
+        val allProducts = _products.value
+        val groupedMap = allProducts.groupBy { it.commonId }
+        
+        return groupedMap.map { (commonId, products) ->
+            if (commonId == null) {
+                // Single products (no grouping)
+                products.map { product ->
+                    GroupedProduct(
+                        baseProduct = product,
+                        quantity = 1,
+                        individualProducts = listOf(product),
+                        barcodeIds = product.barcodeIds,
+                        commonId = null
+                    )
+                }
+            } else {
+                // Grouped products
+                listOf(
+                    GroupedProduct(
+                        baseProduct = products.first(), // Use first product as representative
+                        quantity = products.size,
+                        individualProducts = products,
+                        barcodeIds = products.flatMap { it.barcodeIds },
+                        commonId = commonId
+                    )
+                )
+            }
+        }.flatten()
+    }
 
     // New: add suggestion helpers used by UI
     fun addCategorySuggestion(name: String, onComplete: (String) -> Unit) {
@@ -242,6 +279,15 @@ class ProductsViewModel(internal val repository: ProductRepository, private val 
     suspend fun generateUniqueBarcodes(quantity: Int, digits: Int): List<String> {
         return repository.generateUniqueBarcodes(quantity, digits)
     }
+    
+    /**
+     * Generate a common ID for grouping multiple products
+     */
+    private fun generateCommonId(): String {
+        val timestamp = System.currentTimeMillis()
+        val random = (1000..9999).random()
+        return "GRP_${timestamp}_${random}"
+    }
 
     fun addProductsBatch(baseProduct: org.example.project.data.Product, barcodes: List<String>, onComplete: (() -> Unit)? = null) {
         println("=== ProductsViewModel.addProductsBatch() called ===")
@@ -251,13 +297,24 @@ class ProductsViewModel(internal val repository: ProductRepository, private val 
             _loading.value = true
             try {
                 println("🔄 Starting batch processing...")
+                
+        // Generate common ID only if multiple barcodes (quantity > 1)
+        val commonId = if (barcodes.size > 1) {
+            generateCommonId()
+        } else {
+            null // Single product gets null commonId
+        }
+                
+                println("📋 Common ID: $commonId")
+                
                 for (code in barcodes) {
                     val productForDoc = baseProduct.copy(
                         id = "", // repository will assign auto document id
                         quantity = 1,
-                        barcodeIds = listOf(code)
+                        barcodeIds = listOf(code),
+                        commonId = commonId // Assign common ID for grouping
                     )
-                    println("📝 Creating product for barcode: $code")
+                    println("📝 Creating product for barcode: $code with commonId: $commonId")
                     repository.addProduct(productForDoc)
                     println("✅ Added product with barcode: $code")
                 }

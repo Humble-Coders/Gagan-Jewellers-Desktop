@@ -458,16 +458,12 @@ fun ProductCard(
     onCardClick: () -> Unit,
     onUpdateQuantity: (Int) -> Unit
 ) {
-    val metalRates by MetalRatesManager.metalRates
-    val weight = parseWeight(product.weight)
-    val pricePerGram = when {
-        product.materialType.contains("gold", ignoreCase = true) -> 
-            metalRates.getGoldRateForKarat(product.karat)
-        product.materialType.contains("silver", ignoreCase = true) -> 
-            metalRates.getSilverRateForPurity(999) // Default to 999 purity
-        else -> metalRates.getGoldRateForKarat(22) // Default to 22k gold
+    // Use the same price logic as dashboard: check hasCustomPrice first
+    val displayPrice = if (product.hasCustomPrice) {
+        product.customPrice
+    } else {
+        calculateProductTotalCost(product)
     }
-    val calculatedPrice = weight * pricePerGram
     val availableToAdd = product.quantity - cartQuantity
 
     Card(
@@ -604,7 +600,7 @@ fun ProductCard(
                     ) {
                         // Price
                         Text(
-                            text = "₹${formatNumber(calculatedPrice)}",
+                            text = "₹${formatCurrency(displayPrice)}",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = MaterialTheme.colors.primary
@@ -1097,4 +1093,68 @@ fun CartSummary(
             }
         }
     }
+}
+
+private fun formatCurrency(amount: Double): String {
+    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
+    formatter.maximumFractionDigits = 0
+    return formatter.format(amount)
+}
+
+/**
+ * Calculate the total product cost based on the same logic used in AddEditProductScreen
+ */
+private fun calculateProductTotalCost(product: Product): Double {
+    // Calculate net weight (total weight - less weight)
+    val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
+    
+    // Material cost (net weight × material rate)
+    val materialRate = getMaterialRateForProduct(product)
+    val materialCost = netWeight * materialRate
+    
+    // Making charges (net weight × making rate)
+    val makingCharges = netWeight * product.defaultMakingRate
+    
+    // Stone amount (if has stones)
+    val stoneAmount = if (product.hasStones) {
+        if (product.cwWeight > 0 && product.stoneRate > 0 && product.stoneQuantity > 0) {
+            product.cwWeight * product.stoneRate * product.stoneQuantity
+        } else 0.0
+    } else 0.0
+    
+    // Total = Material Cost + Making Charges + Stone Amount + VA Charges
+    return materialCost + makingCharges + stoneAmount + product.vaCharges
+}
+
+/**
+ * Get material rate for a product based on material and type
+ * Uses MetalRatesManager to get current rates from Firestore
+ */
+private fun getMaterialRateForProduct(product: Product): Double {
+    val metalRates = MetalRatesManager.metalRates.value
+    
+    return when {
+        product.materialType.contains("gold", ignoreCase = true) -> {
+            // Extract karat and use appropriate gold rate
+            val karat = extractKaratFromMaterialTypeString(product.materialType)
+            metalRates.getGoldRateForKarat(karat)
+        }
+        product.materialType.contains("silver", ignoreCase = true) -> {
+            // Use silver rate
+            metalRates.getSilverRateForPurity(999) // Default to 999 purity
+        }
+        else -> {
+            // Fallback to a reasonable rate
+            metalRates.getGoldRateForKarat(22) // Default to 22K gold rate
+        }
+    }
+}
+
+/**
+ * Extract karat from material type string (e.g., "18K Gold" -> 18)
+ */
+private fun extractKaratFromMaterialTypeString(materialType: String): Int {
+    val karatRegex = Regex("""(\d+)K""", RegexOption.IGNORE_CASE)
+    val match = karatRegex.find(materialType)
+    return match?.groupValues?.get(1)?.toIntOrNull() ?: 22 // Default to 22K
 }

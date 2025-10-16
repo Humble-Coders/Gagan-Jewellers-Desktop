@@ -59,8 +59,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.example.project.utils.ImageLoader
 import org.example.project.data.Product
+import org.example.project.data.GroupedProduct
+import org.example.project.data.MetalRatesManager
 import org.example.project.viewModels.ProductsViewModel
 import org.jetbrains.skia.Image
+import java.text.NumberFormat
+import java.util.Locale
 
 @Composable
 fun DashboardScreen(
@@ -70,6 +74,7 @@ fun DashboardScreen(
     onViewProductDetails: (String) -> Unit
 ) {
     val products by remember { viewModel.products }
+    val groupedProducts = remember(products) { viewModel.getGroupedProducts() }
     val showDeleteDialog = remember { mutableStateOf(false) }
     val productToDelete = remember { mutableStateOf<String?>(null) }
 
@@ -136,7 +141,7 @@ fun DashboardScreen(
             Divider()
 
             // Table content
-            if (products.isEmpty()) {
+            if (groupedProducts.isEmpty()) {
                 Box(
                     modifier = Modifier.fillMaxWidth().height(200.dp),
                     contentAlignment = Alignment.Center
@@ -148,16 +153,20 @@ fun DashboardScreen(
                 }
             } else {
                 LazyColumn {
-                    items(products) { product ->
-                        ProductRow(
-                            product = product,
+                    items(groupedProducts) { groupedProduct ->
+                        GroupedProductRow(
+                            groupedProduct = groupedProduct,
                             viewModel = viewModel,
                             imageLoader = imageLoader,
                             onDelete = {
-                                productToDelete.value = product.id
+                                // For grouped products, delete all products in the group
+                                productToDelete.value = groupedProduct.baseProduct.id
                                 showDeleteDialog.value = true
                             },
-                            onClick = { onViewProductDetails(product.id) }
+                            onClick = { 
+                                // For grouped products, show details of the first product
+                                onViewProductDetails(groupedProduct.baseProduct.id) 
+                            }
                         )
                         Divider()
                     }
@@ -189,6 +198,159 @@ fun DashboardScreen(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun GroupedProductRow(
+    groupedProduct: GroupedProduct,
+    viewModel: ProductsViewModel,
+    imageLoader: ImageLoader,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val product = groupedProduct.baseProduct
+    var productImage by remember { mutableStateOf<ImageBitmap?>(null) }
+
+    // Load product image
+    LaunchedEffect(product.images) {
+        if (product.images.isNotEmpty()) {
+            try {
+                val imageBytes = imageLoader.loadImage(product.images.first())
+                if (imageBytes != null && imageBytes.isNotEmpty()) {
+                    productImage = withContext(Dispatchers.IO) {
+                        Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
+                    }
+                }
+            } catch (e: Exception) {
+                println("Failed to load product image: ${e.message}")
+            }
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Product image
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            if (productImage != null) {
+                Image(
+                    bitmap = productImage!!,
+                    contentDescription = product.name,
+                    modifier = Modifier
+                        .size(50.dp)
+                        .clip(RoundedCornerShape(4.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(50.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.LightGray),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = Color.White
+                    )
+                }
+            }
+        }
+
+        // Name
+        Text(
+            text = product.name,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(2f)
+        )
+
+        // Category
+        Text(
+            text = viewModel.getCategoryName(product.categoryId),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.5f)
+        )
+
+        // Material
+        Text(
+            text = viewModel.getMaterialName(product.materialId),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.5f)
+        )
+
+        // Price - Show custom price if enabled, otherwise calculated total cost
+        val displayPrice = if (product.hasCustomPrice) {
+            product.customPrice
+        } else {
+            calculateProductTotalCost(product)
+        }
+        Text(
+            text = "₹${formatCurrency(displayPrice)}",
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.2f)
+        )
+
+        // Availability status
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 70.dp, height = 30.dp)
+                    .background(
+                        if (product.available) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                        RoundedCornerShape(15.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (product.available) "Yes" else "No",
+                    color = if (product.available) Color(0xFF388E3C) else Color(0xFFD32F2F),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        // Quantity - Show grouped quantity
+        Text(
+            text = groupedProduct.quantity.toString(),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1.5f)
+        )
+
+        // Actions
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "Delete",
+                    tint = Color(0xFFD32F2F)
+                )
+            }
+        }
     }
 }
 
@@ -289,9 +451,14 @@ fun ProductRow(
             modifier = Modifier.weight(1.5f)
         )
 
-        // Price
+        // Price - Show custom price if enabled, otherwise calculated total cost
+        val displayPrice = if (product.hasCustomPrice) {
+            product.customPrice
+        } else {
+            calculateProductTotalCost(product)
+        }
         Text(
-            text = "$${product.price}",
+            text = "₹${formatCurrency(displayPrice)}",
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1.2f)
@@ -414,4 +581,69 @@ fun ProductRow(
             }
         }
     }
+}
+
+private fun formatCurrency(amount: Double): String {
+    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
+    formatter.maximumFractionDigits = 0
+    return formatter.format(amount)
+}
+
+/**
+ * Calculate the total product cost based on the same logic used in AddEditProductScreen
+ */
+private fun calculateProductTotalCost(product: Product): Double {
+    // Calculate net weight (total weight - less weight)
+    val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
+    
+    // Material cost (net weight × material rate)
+    // Note: We need to get the material rate from MetalRatesManager or use a fallback
+    val materialRate = getMaterialRateForProduct(product) // We'll implement this
+    val materialCost = netWeight * materialRate
+    
+    // Making charges (net weight × making rate)
+    val makingCharges = netWeight * product.defaultMakingRate
+    
+    // Stone amount (if has stones)
+    val stoneAmount = if (product.hasStones) {
+        if (product.cwWeight > 0 && product.stoneRate > 0 && product.stoneQuantity > 0) {
+            product.cwWeight * product.stoneRate * product.stoneQuantity
+        } else 0.0
+    } else 0.0
+    
+    // Total = Material Cost + Making Charges + Stone Amount + VA Charges
+    return materialCost + makingCharges + stoneAmount + product.vaCharges
+}
+
+/**
+ * Get material rate for a product based on material and type
+ * Uses MetalRatesManager to get current rates from Firestore
+ */
+private fun getMaterialRateForProduct(product: Product): Double {
+    val metalRates = MetalRatesManager.metalRates.value
+    
+    return when {
+        product.materialType.contains("gold", ignoreCase = true) -> {
+            // Extract karat and use appropriate gold rate
+            val karat = extractKaratFromMaterialTypeString(product.materialType)
+            metalRates.getGoldRateForKarat(karat)
+        }
+        product.materialType.contains("silver", ignoreCase = true) -> {
+            // Use silver rate
+            metalRates.getSilverRateForPurity(999) // Default to 999 purity
+        }
+        else -> {
+            // Fallback to a reasonable rate
+            metalRates.getGoldRateForKarat(22) // Default to 22K gold rate
+        }
+    }
+}
+
+/**
+ * Extract karat from material type string (e.g., "18K Gold" -> 18)
+ */
+private fun extractKaratFromMaterialTypeString(materialType: String): Int {
+    val karatRegex = Regex("""(\d+)K""", RegexOption.IGNORE_CASE)
+    val match = karatRegex.find(materialType)
+    return match?.groupValues?.get(1)?.toIntOrNull() ?: 22 // Default to 22K
 }

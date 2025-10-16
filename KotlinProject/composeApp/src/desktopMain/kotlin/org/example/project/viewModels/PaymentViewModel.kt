@@ -36,6 +36,10 @@ class PaymentViewModel(
     private val _discountAmount = mutableStateOf(0.0)
     val discountAmount: State<Double> = _discountAmount
 
+    // GST State
+    private val _isGstIncluded = mutableStateOf(true)
+    val isGstIncluded: State<Boolean> = _isGstIncluded
+
     // Loading and Error States
     private val _isProcessing = mutableStateOf(false)
     val isProcessing: State<Boolean> = _isProcessing
@@ -68,6 +72,11 @@ class PaymentViewModel(
         _discountType.value = discountType
         _discountValue.value = ""
         _discountAmount.value = 0.0
+        _errorMessage.value = null
+    }
+
+    fun setIsGstIncluded(isGstIncluded: Boolean) {
+        _isGstIncluded.value = isGstIncluded
         _errorMessage.value = null
     }
 

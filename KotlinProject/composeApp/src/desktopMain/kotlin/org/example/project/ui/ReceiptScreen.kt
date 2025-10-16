@@ -36,6 +36,7 @@ fun ReceiptScreen(
     val pdfPath by paymentViewModel.pdfPath
     val selectedCustomer by customerViewModel.selectedCustomer
     val errorMessage by paymentViewModel.errorMessage
+    val isGstIncluded by paymentViewModel.isGstIncluded
 
     Column(
         modifier = Modifier
@@ -155,7 +156,7 @@ fun ReceiptScreen(
                     Divider()
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Amount Details
+                    // Amount Details with correct structure
                     Text(
                         "Payment Summary",
                         fontSize = 16.sp,
@@ -164,35 +165,14 @@ fun ReceiptScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    AmountRow("Subtotal", transaction.subtotal)
-
-                    if (transaction.discountAmount > 0) {
-                        AmountRow("Discount", -transaction.discountAmount, isDiscount = true)
-                    }
-
-                    AmountRow("GST (18%)", transaction.gstAmount)
-
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Divider(thickness = 1.dp, color = Color(0xFFE0E0E0))
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            "Total Amount",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF2E2E2E)
-                        )
-                        Text(
-                            "₹${formatCurrency(transaction.totalAmount)}",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF4CAF50)
-                        )
-                    }
+                    PriceBreakdown(
+                        subtotal = transaction.subtotal,
+                        makingCharges = transaction.makingCharges,
+                        discountAmount = transaction.discountAmount,
+                        gst = transaction.gstAmount,
+                        total = transaction.totalAmount,
+                        isGstIncluded = transaction.isGstIncluded
+                    )
                 }
             }
         }
@@ -450,4 +430,74 @@ private fun formatCurrency(amount: Double): String {
     val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
     formatter.maximumFractionDigits = 0
     return formatter.format(amount)
+}
+
+@Composable
+private fun PriceBreakdown(
+    subtotal: Double,
+    makingCharges: Double,
+    discountAmount: Double,
+    gst: Double,
+    total: Double,
+    isGstIncluded: Boolean
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        AmountRow(
+            label = "Metal Cost",
+            amount = subtotal
+        )
+
+        AmountRow(
+            label = "Making Charges",
+            amount = makingCharges
+        )
+
+        if (discountAmount > 0) {
+            AmountRow(
+                label = "Discount",
+                amount = -discountAmount,
+                isDiscount = true
+            )
+        }
+
+        if (isGstIncluded && gst > 0) {
+            AmountRow(
+                label = "GST (18%)",
+                amount = gst
+            )
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Divider(thickness = 1.dp, color = Color(0xFFE0E0E0))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                "Total Amount",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF2E2E2E)
+            )
+            Text(
+                "₹${formatCurrency(total)}",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF4CAF50)
+            )
+        }
+
+        // Add GST status indicator
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            if (isGstIncluded) "* GST included in total amount" else "* GST not included",
+            fontSize = 12.sp,
+            color = Color(0xFF666666),
+            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+        )
+    }
 }

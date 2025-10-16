@@ -23,7 +23,7 @@ class FirestoreCustomerRepository(private val firestore: Firestore) : CustomerRe
             val data = doc.data ?: return@mapNotNull null
 
             User(
-                id = doc.id,
+                id = doc.id, // This will be "qqolMSTOKJSZAb0xBWKA"
                 email = data["email"] as? String ?: "",
                 name = data["name"] as? String ?: "",
                 phone = data["phone"] as? String ?: "",
@@ -42,7 +42,7 @@ class FirestoreCustomerRepository(private val firestore: Firestore) : CustomerRe
             val data = doc.data ?: return@withContext null
 
             User(
-                id = doc.id,
+                id = doc.id, // This will be "qqolMSTOKJSZAb0xBWKA"
                 email = data["email"] as? String ?: "",
                 name = data["name"] as? String ?: "",
                 phone = data["phone"] as? String ?: "",
@@ -54,9 +54,9 @@ class FirestoreCustomerRepository(private val firestore: Firestore) : CustomerRe
 
     override suspend fun addCustomer(user: User): String = withContext(Dispatchers.IO) {
         try {
-            // Use email as document ID for temporary users
-            val docId =
-                user.email.trim().lowercase(Locale.getDefault()) // Use lowercase email for consistency
+            // For new customers, use auto-generated document ID
+            val docRef = firestore.collection("users").document()
+            val docId = docRef.id
 
             val userMap = mapOf(
                 "email" to user.email,
@@ -64,16 +64,12 @@ class FirestoreCustomerRepository(private val firestore: Firestore) : CustomerRe
                 "phone" to user.phone,
                 "address" to user.address,
                 "createdAt" to System.currentTimeMillis(),
-                "isTemporary" to true // Flag to identify temporary users
+                "isTemporary" to true
             )
 
-            // Create/update the document with email as ID
-            firestore.collection("users")
-                .document(docId)
-                .set(userMap)
-                .get()
+            docRef.set(userMap).get()
 
-            return@withContext docId
+            return@withContext docId // Return the auto-generated document ID
         } catch (e: Exception) {
             throw e
         }

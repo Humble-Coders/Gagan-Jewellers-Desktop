@@ -89,19 +89,24 @@ fun ProductImageManager(
                         imageLoader.loadImage(imageUrl)
                     }
 
-                    if (imageBytes != null) {
+                    if (imageBytes != null && imageBytes.isNotEmpty()) {
                         println("Image loaded, size: ${imageBytes.size} bytes")
-                        val bitmap = withContext(Dispatchers.IO) {
-                            Image.makeFromEncoded(imageBytes).asImageBitmap()
-                        }
-                        // Update just this image in the list
-                        val updatedList = imageDisplayList.toMutableList()
-                        if (index < updatedList.size) {
-                            updatedList[index] = imageUrl to bitmap
-                            imageDisplayList = updatedList
+                        try {
+                            val bitmap = withContext(Dispatchers.IO) {
+                                Image.makeFromEncoded(imageBytes).asImageBitmap()
+                            }
+                            // Update just this image in the list
+                            val updatedList = imageDisplayList.toMutableList()
+                            if (index < updatedList.size) {
+                                updatedList[index] = imageUrl to bitmap
+                                imageDisplayList = updatedList
+                            }
+                        } catch (e: Exception) {
+                            println("Failed to decode image: $imageUrl - ${e.message}")
+                            // Keep the null bitmap to show placeholder
                         }
                     } else {
-                        println("Failed to load image: $imageUrl")
+                        println("Failed to load image: $imageUrl - no data or empty data")
                     }
                 } catch (e: Exception) {
                     println("Error loading image: ${e.message}")

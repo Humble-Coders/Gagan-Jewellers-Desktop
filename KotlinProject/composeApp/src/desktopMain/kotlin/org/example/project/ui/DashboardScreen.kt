@@ -208,11 +208,18 @@ fun ProductRow(
             val imageUrl = product.images.first()
             coroutineScope.launch {
                 val imageBytes = imageLoader.loadImage(imageUrl)
-                imageBytes?.let {
-                    val image = withContext(Dispatchers.IO) {
-                        Image.makeFromEncoded(it).toComposeImageBitmap()
+                if (imageBytes != null && imageBytes.isNotEmpty()) {
+                    try {
+                        val image = withContext(Dispatchers.IO) {
+                            Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
+                        }
+                        productImage = image
+                    } catch (e: Exception) {
+                        println("Failed to decode image: $imageUrl - ${e.message}")
+                        // Keep null to show placeholder
                     }
-                    productImage = image
+                } else {
+                    println("Failed to load image: $imageUrl - no data or empty data")
                 }
             }
         }

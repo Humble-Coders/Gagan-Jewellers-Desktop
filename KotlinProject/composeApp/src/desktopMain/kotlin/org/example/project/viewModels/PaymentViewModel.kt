@@ -55,7 +55,12 @@ class PaymentViewModel(
     val pdfPath: State<String?> = _pdfPath
 
     fun setPaymentMethod(paymentMethod: PaymentMethod) {
-        _selectedPaymentMethod.value = paymentMethod
+        // Toggle selection: if already selected, deselect it
+        if (_selectedPaymentMethod.value == paymentMethod) {
+            _selectedPaymentMethod.value = null
+        } else {
+            _selectedPaymentMethod.value = paymentMethod
+        }
         _errorMessage.value = null
     }
 
@@ -129,6 +134,10 @@ class PaymentViewModel(
             DiscountType.AMOUNT -> {
                 _discountAmount.value = value
             }
+            DiscountType.TOTAL_PAYABLE -> {
+                // This will be handled in calculateDiscountAmount
+                _discountAmount.value = value
+            }
         }
 
         _errorMessage.value = null
@@ -142,6 +151,11 @@ class PaymentViewModel(
             DiscountType.AMOUNT -> {
                 minOf(_discountAmount.value, subtotal)
             }
+            DiscountType.TOTAL_PAYABLE -> {
+                // Calculate discount as: subtotal - totalPayable
+                // If totalPayable is greater than subtotal, return 0 (no discount)
+                maxOf(0.0, subtotal - _discountAmount.value)
+            }
         }
     }
 
@@ -151,9 +165,11 @@ class PaymentViewModel(
         discountAmount: Double,
         gst: Double,
         finalTotal: Double,
+        paymentSplit: PaymentSplit? = null,
         onSuccess: () -> Unit
     ) {
-        if (_selectedPaymentMethod.value == null) {
+        // Allow order processing if either a payment method is selected OR a split payment is configured
+        if (_selectedPaymentMethod.value == null && paymentSplit == null) {
             _errorMessage.value = "Please select a payment method"
             return
         }
@@ -163,10 +179,14 @@ class PaymentViewModel(
             _errorMessage.value = null
 
             try {
+                // Determine payment method: use selected method or default to CASH if split payment is configured
+                val paymentMethod = _selectedPaymentMethod.value ?: PaymentMethod.CASH
+                
                 val order = Order(
                     id = generateOrderId(),
                     customerId = cart.customerId,
-                    paymentMethod = _selectedPaymentMethod.value!!,
+                    paymentMethod = paymentMethod,
+                    paymentSplit = paymentSplit,
                     subtotal = subtotal,
                     discountAmount = discountAmount,
                     gstAmount = gst,

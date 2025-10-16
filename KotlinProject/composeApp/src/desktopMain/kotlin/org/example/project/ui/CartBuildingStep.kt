@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -45,6 +46,8 @@ import kotlinx.coroutines.withContext
 import org.example.project.data.Category
 import org.example.project.data.Product
 import org.example.project.data.CartItem
+import org.example.project.data.MetalRatesManager
+import org.example.project.ui.CartTable
 import org.example.project.utils.ImageLoader
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.ProductsViewModel
@@ -71,8 +74,12 @@ fun ShopMainScreen(
 ) {
     var selectedTabIndex by remember { mutableStateOf(0) }
     val cart by cartViewModel.cart
-    val metalPrices by cartViewModel.metalPrices
     var showPriceEditor by remember { mutableStateOf(false) }
+
+    // Update existing cart items with current gold rate when cart is loaded
+    LaunchedEffect(Unit) {
+        cartViewModel.updateExistingCartItemsWithGoldRate()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize()
@@ -153,8 +160,10 @@ fun ShopMainScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
                 ) {
+                    val metalRates by MetalRatesManager.metalRates
+                    
                     Text(
-                        "Gold: ₹${formatNumber(metalPrices.goldPricePerGram)}/g",
+                        "Gold: ₹${formatNumber(metalRates.goldRates.rate24k)}/g",
                         fontSize = 11.sp,
                         color = Color(0xFFFFD700),
                         fontWeight = FontWeight.Bold
@@ -168,7 +177,7 @@ fun ShopMainScreen(
                     )
 
                     Text(
-                        "Silver: ₹${formatNumber(metalPrices.silverPricePerGram)}/g",
+                        "Silver: ₹${formatNumber(metalRates.silverRates.rate999)}/g",
                         fontSize = 11.sp,
                         color = Color(0xFFC0C0C0),
                         fontWeight = FontWeight.Bold
@@ -243,11 +252,13 @@ fun ShopMainScreen(
 
     // Price editor dialog
     if (showPriceEditor) {
+        val metalRates by MetalRatesManager.metalRates
         PriceEditorDialog(
-            goldPrice = metalPrices.goldPricePerGram,
-            silverPrice = metalPrices.silverPricePerGram,
+            goldPrice = metalRates.goldRates.rate24k,
+            silverPrice = metalRates.silverRates.rate999,
             onPricesUpdated = { gold, silver ->
-                cartViewModel.updateMetalPrices(gold, silver)
+                MetalRatesManager.updateGoldRates(gold)
+                MetalRatesManager.updateSilverRates(silver)
                 showPriceEditor = false
             },
             onDismiss = { showPriceEditor = false }
@@ -280,11 +291,18 @@ fun CartBuildingScreen(
                 coroutineScope.launch {
                     val imageUrl = product.images.first()
                     val imageBytes = imageLoader.loadImage(imageUrl)
-                    imageBytes?.let {
-                        val bitmap = withContext(Dispatchers.IO) {
-                            Image.makeFromEncoded(it).toComposeImageBitmap()
+                    if (imageBytes != null && imageBytes.isNotEmpty()) {
+                        try {
+                            val bitmap = withContext(Dispatchers.IO) {
+                                Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
+                            }
+                            productImages = productImages + (product.id to bitmap)
+                        } catch (e: Exception) {
+                            println("Failed to decode image: $imageUrl - ${e.message}")
+                            // Keep null to show placeholder
                         }
-                        productImages = productImages + (product.id to bitmap)
+                    } else {
+                        println("Failed to load image: $imageUrl - no data or empty data")
                     }
                 }
             }
@@ -372,8 +390,6 @@ fun CartBuildingScreen(
                         image = productImages[product.id],
                         categoryName = productsViewModel.getCategoryName(product.categoryId),
                         materialName = productsViewModel.getMaterialName(product.materialId),
-                        goldPrice = cartViewModel.metalPrices.value.goldPricePerGram,
-                        silverPrice = cartViewModel.metalPrices.value.silverPricePerGram,
                         isInCart = cartItemIds.contains(product.id),
                         cartQuantity = cart.items.find { it.productId == product.id }?.quantity ?: 0,
                         onCardClick = {
@@ -437,18 +453,19 @@ fun ProductCard(
     image: ImageBitmap?,
     categoryName: String,
     materialName: String,
-    goldPrice: Double,
-    silverPrice: Double,
     isInCart: Boolean,
     cartQuantity: Int,
     onCardClick: () -> Unit,
     onUpdateQuantity: (Int) -> Unit
 ) {
+    val metalRates by MetalRatesManager.metalRates
     val weight = parseWeight(product.weight)
     val pricePerGram = when {
-        product.materialType.contains("gold", ignoreCase = true) -> goldPrice
-        product.materialType.contains("silver", ignoreCase = true) -> silverPrice
-        else -> goldPrice
+        product.materialType.contains("gold", ignoreCase = true) -> 
+            metalRates.getGoldRateForKarat(product.karat)
+        product.materialType.contains("silver", ignoreCase = true) -> 
+            metalRates.getSilverRateForPurity(999) // Default to 999 purity
+        else -> metalRates.getGoldRateForKarat(22) // Default to 22k gold
     }
     val calculatedPrice = weight * pricePerGram
     val availableToAdd = product.quantity - cartQuantity
@@ -725,16 +742,17 @@ private fun parseWeight(weightStr: String): Double {
 fun CartItemCard(
     cartItem: CartItem,
     image: ImageBitmap?,
-    goldPrice: Double,
-    silverPrice: Double,
     onUpdateQuantity: (Int) -> Unit,
     onUpdateWeight: (Double) -> Unit,
     onRemove: () -> Unit
 ) {
+    val metalRates by MetalRatesManager.metalRates
     val pricePerGram = when {
-        cartItem.product.materialType.contains("gold", ignoreCase = true) -> goldPrice
-        cartItem.product.materialType.contains("silver", ignoreCase = true) -> silverPrice
-        else -> goldPrice
+        cartItem.product.materialType.contains("gold", ignoreCase = true) -> 
+            metalRates.getGoldRateForKarat(cartItem.product.karat)
+        cartItem.product.materialType.contains("silver", ignoreCase = true) -> 
+            metalRates.getSilverRateForPurity(999) // Default to 999 purity
+        else -> metalRates.getGoldRateForKarat(22) // Default to 22k gold
     }
 
     val productWeight = parseWeight(cartItem.product.weight)
@@ -912,7 +930,6 @@ fun CartScreen(
 ) {
     val cart by cartViewModel.cart
     val cartImages by cartViewModel.cartImages
-    val metalPrices by cartViewModel.metalPrices
     val isLoading by cartViewModel.loading
 
     LaunchedEffect(Unit) {
@@ -954,7 +971,6 @@ fun CartScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
             // Header
@@ -965,30 +981,26 @@ fun CartScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             )
 
-            // Cart items
-            cart.items.forEach { cartItem ->
-                CartItemCard(
-                    cartItem = cartItem,
-                    image = cartImages[cartItem.productId],
-                    goldPrice = metalPrices.goldPricePerGram,
-                    silverPrice = metalPrices.silverPricePerGram,
-                    onUpdateQuantity = { newQuantity ->
-                        cartViewModel.updateQuantity(cartItem.productId, newQuantity)
-                    },
-                    onUpdateWeight = { newWeight ->
-                        cartViewModel.updateWeight(cartItem.productId, newWeight)
-                    },
-                    onRemove = {
-                        cartViewModel.removeFromCart(cartItem.productId)
-                    }
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-            }
+            // Cart items table with flexible height
+            CartTable(
+                cartItems = cart.items,
+                onItemUpdate = { index, updatedItem ->
+                    cartViewModel.updateCartItem(index, updatedItem)
+                },
+                onItemRemove = { index ->
+                    val itemToRemove = cart.items[index]
+                    cartViewModel.removeFromCart(itemToRemove.productId)
+                },
+                cartImages = cartImages,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(bottom = 16.dp)
+            )
 
-            // Cart summary
+            // Cart summary - now fully visible
             CartSummary(
                 subtotal = cartViewModel.getSubtotal(),
-                gst = cartViewModel.getGST(),
                 total = cartViewModel.getFinalTotal(),
                 onClearCart = { cartViewModel.clearCart() },
                 onProceedToPayment = onProceedToPayment
@@ -1000,40 +1012,25 @@ fun CartScreen(
 @Composable
 fun CartSummary(
     subtotal: Double,
-    gst: Double,
     total: Double,
     onClearCart: () -> Unit,
     onProceedToPayment: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        elevation = 4.dp,
-        shape = RoundedCornerShape(8.dp)
+        elevation = 2.dp,
+        shape = RoundedCornerShape(6.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .padding(12.dp)
         ) {
             Text(
                 "Order Summary",
-                fontSize = 18.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Subtotal:", fontSize = 16.sp)
-                Text(
-                    "₹${String.format("%.0f", subtotal)}",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -1041,15 +1038,15 @@ fun CartSummary(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("GST (18.0%):", fontSize = 16.sp)
+                Text("Subtotal (GST included):", fontSize = 14.sp)
                 Text(
-                    "₹${String.format("%.0f", gst)}",
-                    fontSize = 16.sp,
+                    "₹${String.format("%.0f", subtotal)}",
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
                 )
             }
 
-            Divider(modifier = Modifier.padding(vertical = 12.dp))
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1057,39 +1054,44 @@ fun CartSummary(
             ) {
                 Text(
                     "Total:",
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     "₹${String.format("%.0f", total)}",
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colors.primary
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(
                     onClick = onClearCart,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp)
                 ) {
-                    Text("Clear Cart")
+                    Text("Clear Cart", fontSize = 12.sp)
                 }
 
                 Button(
                     onClick = onProceedToPayment,
-                    modifier = Modifier.weight(2f),
+                    modifier = Modifier
+                        .weight(2f)
+                        .height(36.dp),
                     colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary)
                 ) {
                     Text(
                         "Proceed to Payment",
                         color = Color.White,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
                     )
                 }
             }

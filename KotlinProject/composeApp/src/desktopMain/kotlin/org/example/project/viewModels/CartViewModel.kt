@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 import org.example.project.data.Cart
 import org.example.project.data.CartItem
 import org.example.project.data.CartRepository
-import org.example.project.data.MetalPrices
+import org.example.project.data.MetalRatesManager
 import org.example.project.data.Product
 import org.example.project.data.ProductRepository
 import org.example.project.utils.ImageLoader
@@ -27,13 +27,11 @@ class CartViewModel(
 ) {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+
     // Cart state
     private val _cart = mutableStateOf(Cart())
     val cart: State<Cart> = _cart
 
-    // Metal prices state
-    private val _metalPrices = mutableStateOf(MetalPrices())
-    val metalPrices: State<MetalPrices> = _metalPrices
 
     // Loading state
     private val _loading = mutableStateOf(false)
@@ -50,19 +48,6 @@ class CartViewModel(
     private val _cartImages = mutableStateOf<Map<String, ImageBitmap>>(emptyMap())
     val cartImages: State<Map<String, ImageBitmap>> = _cartImages
 
-    init {
-        loadMetalPrices()
-    }
-
-    private fun loadMetalPrices() {
-        viewModelScope.launch {
-            try {
-                _metalPrices.value = cartRepository.getMetalPrices()
-            } catch (e: Exception) {
-                _error.value = "Failed to load metal prices: ${e.message}"
-            }
-        }
-    }
 
     fun addToCart(product: Product) {
         val currentCart = _cart.value
@@ -87,11 +72,21 @@ class CartViewModel(
         } else {
             // Add new item with product's fixed weight from Firestore
             val productWeight = parseWeight(product.weight)
+            val currentGoldRate = MetalRatesManager.metalRates.value.getGoldRateForKarat(product.karat)
             currentCart.items + CartItem(
                 productId = product.id,
                 product = product,
                 quantity = 1,
-                selectedWeight = productWeight
+                metal = "${product.karat}K", // Set metal from product karat
+                customGoldRate = currentGoldRate, // Initialize with current gold rate
+                selectedWeight = productWeight,
+                grossWeight = productWeight, // Set gross weight to product weight initially
+                lessWeight = 0.0, // Default to 0
+                makingCharges = 650.0, // Default making charges per gram
+                cwWeight = 0.0, // Default carat weight
+                stoneRate = 0.0, // Default stone rate
+                va = 0.0, // Default value addition
+                discountPercent = 0.0 // Default discount percentage
             )
         }
 
@@ -185,32 +180,205 @@ class CartViewModel(
         _cartImages.value = emptyMap()
     }
 
-    // Calculate subtotal (before GST)
+    fun updateCartItem(index: Int, updatedItem: CartItem) {
+        val currentCart = _cart.value
+        val updatedItems = currentCart.items.toMutableList()
+        if (index in updatedItems.indices) {
+            updatedItems[index] = updatedItem
+            _cart.value = currentCart.copy(
+                items = updatedItems,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+    }
+
+    // Update existing cart items to have current gold rate if not set
+    fun updateExistingCartItemsWithGoldRate() {
+        // Safety check to prevent null pointer exception
+        if (_cart.value.items.isEmpty()) return
+        
+        val currentCart = _cart.value
+        val metalRates = MetalRatesManager.metalRates.value
+        val updatedItems = currentCart.items.map { item ->
+            if (item.customGoldRate <= 0) {
+                // Extract karat from metal field or fallback to product karat
+                val metalKarat = if (item.metal.isNotEmpty()) {
+                    item.metal.replace("K", "").toIntOrNull() ?: item.product.karat
+                } else {
+                    item.product.karat
+                }
+                val currentGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                item.copy(customGoldRate = currentGoldRate)
+            } else {
+                item
+            }
+        }
+        
+        if (updatedItems != currentCart.items) {
+            _cart.value = currentCart.copy(
+                items = updatedItems,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+    }
+
+    // Update specific fields for real-time calculation
+    fun updateCartItemField(index: Int, field: String, value: String) {
+        val currentCart = _cart.value
+        val updatedItems = currentCart.items.toMutableList()
+        if (index in updatedItems.indices) {
+            val currentItem = updatedItems[index]
+            val updatedItem = when (field) {
+                "metal" -> currentItem.copy(metal = value)
+                "customGoldRate" -> currentItem.copy(customGoldRate = value.toDoubleOrNull() ?: currentItem.customGoldRate)
+                "size" -> currentItem.copy(selectedWeight = value.toDoubleOrNull() ?: currentItem.selectedWeight)
+                "qty" -> currentItem.copy(quantity = value.toIntOrNull() ?: currentItem.quantity)
+                "grossWeight" -> currentItem.copy(grossWeight = value.toDoubleOrNull() ?: currentItem.grossWeight)
+                "lessWeight" -> currentItem.copy(lessWeight = value.toDoubleOrNull() ?: currentItem.lessWeight)
+                "netWeight" -> currentItem.copy(netWeight = value.toDoubleOrNull() ?: currentItem.netWeight)
+                "makingRate" -> currentItem.copy(makingCharges = value.toDoubleOrNull() ?: currentItem.makingCharges)
+                "cwWeight" -> currentItem.copy(cwWeight = value.toDoubleOrNull() ?: currentItem.cwWeight)
+                "stoneRate" -> currentItem.copy(stoneRate = value.toDoubleOrNull() ?: currentItem.stoneRate)
+                "vaCharges" -> currentItem.copy(va = value.toDoubleOrNull() ?: currentItem.va)
+                "discountPercent" -> currentItem.copy(discountPercent = value.toDoubleOrNull() ?: currentItem.discountPercent)
+                else -> currentItem
+            }
+            updatedItems[index] = updatedItem
+            _cart.value = currentCart.copy(
+                items = updatedItems,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+    }
+
+    // Calculate subtotal as sum of final amounts from all products (GST already included)
     fun getSubtotal(): Double {
-        return _cart.value.calculateTotalPrice(
-            _metalPrices.value.goldPricePerGram,
-            _metalPrices.value.silverPricePerGram
-        )
+        val metalRates = MetalRatesManager.metalRates.value
+        return _cart.value.items.sumOf { cartItem ->
+            calculateItemFinalAmount(cartItem, metalRates)
+        }
     }
 
-    // Calculate 18% GST (updated from 3%)
+    // GST is already included in each product's final amount, so return 0
     fun getGST(): Double {
-        return getSubtotal() * 0.18 // 18% GST
+        return 0.0 // GST is already included in subtotal
     }
 
-    // Calculate final total (subtotal + 18% GST)
+    // Final total is the same as subtotal since GST is already included
     fun getFinalTotal(): Double {
-        return getSubtotal() + getGST()
+        return getSubtotal()
+    }
+
+    // Calculate individual item final amount using jewelry calculation logic
+    fun calculateItemFinalAmount(cartItem: CartItem, metalRates: org.example.project.data.MetalRates): Double {
+        // Extract karat from metal field or fallback to product karat
+        val metalKarat = if (cartItem.metal.isNotEmpty()) {
+            cartItem.metal.replace("K", "").toIntOrNull() ?: cartItem.product.karat
+        } else {
+            cartItem.product.karat
+        }
+        
+        val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else metalRates.getGoldRateForKarat(metalKarat)
+        val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
+
+        // MANUAL INPUT FIELDS (from CartItem)
+        val grossWeight = cartItem.grossWeight
+        val lessWeight = cartItem.lessWeight
+        val quantity = cartItem.quantity
+        val makingChargesPerGram = cartItem.makingCharges
+        val cwWeight = cartItem.cwWeight
+        val stoneRate = cartItem.stoneRate
+        val vaCharges = cartItem.va
+        val discountPercent = cartItem.discountPercent
+
+        // AUTO-CALCULATED FIELDS
+        
+        // 1. NT_WT (Net Weight) = GS_WT - LESS_WT
+        val netWeight = grossWeight - lessWeight
+
+        // 2. AMOUNT (Gold Value) = NT_WT × GOLD_RATE × QTY
+        val baseAmount = when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> netWeight * goldRate * quantity
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> netWeight * silverRate * quantity
+            else -> netWeight * goldRate * quantity // Default to gold rate
+        }
+
+        // 3. MKG (Making Charges) = NT_WT × MAKING_RATE × QTY
+        val makingCharges = netWeight * makingChargesPerGram * quantity
+
+        // 4. Stone Charges = CW_WT × STONE_RATE × QTY
+        val stoneAmount = cwWeight * stoneRate * quantity
+
+        // 5. T_CHARGES (Total Charges) = AMOUNT + MKG + STONE_AMOUNT + VA_CHARGES
+        val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+
+        // 6. D_AMT (Discount Amount) = T_CHARGES × (D_PERCENT ÷ 100)
+        val discountAmount = totalCharges * (discountPercent / 100.0)
+
+        // 7. TAXABLE_AMOUNT = T_CHARGES - D_AMT
+        val taxableAmount = totalCharges - discountAmount
+
+        // 8. CGST = TAXABLE_AMOUNT × 1.5%
+        val cgst = taxableAmount * 0.015
+
+        // 9. SGST = TAXABLE_AMOUNT × 1.5%
+        val sgst = taxableAmount * 0.015
+
+        // 10. IGST = TAXABLE_AMOUNT × 3% (alternative to CGST+SGST)
+        val igst = taxableAmount * 0.03
+
+        // 11. TOTAL GST = CGST + SGST (for intrastate) or IGST (for interstate)
+        val totalGst = cgst + sgst // Using intrastate calculation
+
+        // 12. FINAL AMOUNT = TAXABLE_AMOUNT + TOTAL_TAX
+        return taxableAmount + totalGst
+    }
+
+    // Calculate individual item subtotal using jewelry calculation logic
+    private fun calculateItemSubtotal(cartItem: CartItem, metalRates: org.example.project.data.MetalRates): Double {
+        val netWeight = if (cartItem.netWeight > 0) cartItem.netWeight else cartItem.selectedWeight
+        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.selectedWeight
+        val lessWeight = cartItem.lessWeight
+        val actualNetWeight = if (netWeight > 0) netWeight else (grossWeight - lessWeight)
+
+        // Step 1: Base Gold/Silver Value
+        val goldRate = metalRates.getGoldRateForKarat(cartItem.product.karat)
+        val silverRate = metalRates.getSilverRateForPurity(999)
+        val baseAmount = when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> actualNetWeight * goldRate
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> actualNetWeight * silverRate
+            else -> actualNetWeight * goldRate
+        }
+
+        // Step 2: Making Charges (₹650 per gram)
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 650.0
+        val makingCharges = makingChargesPerGram * actualNetWeight
+
+        // Step 3: Value Addition
+        val valueAddition = if (cartItem.va > 0) cartItem.va else 0.0
+
+        // Step 4: Total Charges (Before Discount & Tax)
+        val totalCharges = baseAmount + makingCharges + valueAddition
+
+        // Step 5: Discount Application
+        val discountAmount = totalCharges * (cartItem.discountPercent / 100)
+        val amountAfterDiscount = totalCharges - discountAmount
+
+        // Step 6: GST Calculation (3% total: 1.5% CGST + 1.5% SGST)
+        val gst = amountAfterDiscount * 0.03
+
+        // Final Amount (After Discount + GST)
+        return amountAfterDiscount + gst
     }
 
     // Legacy method with custom GST rate (deprecated)
-    @Deprecated("Use getGST() instead - GST is now fixed at 18%")
+    @Deprecated("Use getGST() instead - GST is now fixed at 3% for jewelry")
     fun getGST(gstRate: Double): Double {
         return getSubtotal() * (gstRate / 100)
     }
 
     // Legacy method with custom GST rate (deprecated)
-    @Deprecated("Use getFinalTotal() instead - GST is now fixed at 18%")
+    @Deprecated("Use getFinalTotal() instead - GST is now fixed at 3% for jewelry")
     fun getFinalTotal(gstRate: Double): Double {
         return getSubtotal() + getGST(gstRate)
     }
@@ -259,30 +427,6 @@ class CartViewModel(
         }
     }
 
-    // Update metal prices (admin functionality)
-    fun updateMetalPrices(goldPrice: Double, silverPrice: Double) {
-        viewModelScope.launch {
-            _loading.value = true
-            try {
-                val newPrices = MetalPrices(
-                    goldPricePerGram = goldPrice,
-                    silverPricePerGram = silverPrice
-                )
-
-                val success = cartRepository.updateMetalPrices(newPrices)
-                if (success) {
-                    _metalPrices.value = newPrices
-                    _error.value = null
-                } else {
-                    _error.value = "Failed to update metal prices"
-                }
-            } catch (e: Exception) {
-                _error.value = "Error updating metal prices: ${e.message}"
-            } finally {
-                _loading.value = false
-            }
-        }
-    }
 
     // Clean up resources
     fun onCleared() {

@@ -15,12 +15,23 @@ import org.example.project.data.FirestorePaymentRepository
 import org.example.project.data.FirestoreProductRepository
 import org.example.project.data.PaymentRepository
 import org.example.project.data.ProductRepository
+import org.example.project.data.GoldRateRepository
+import org.example.project.data.FirestoreGoldRateRepository
+import org.example.project.data.MetalRatesRepository
+import org.example.project.data.FirestoreMetalRatesRepository
+import org.example.project.data.MetalRatesManager
+import org.example.project.data.MetalRateRepository
+import org.example.project.data.FirestoreMetalRateRepository
+import org.example.project.data.StonesRepository
+import org.example.project.data.FirestoreStonesRepository
 import org.example.project.utils.ImageLoader
 import org.example.project.utils.StorageService
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.CustomerViewModel
 import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.ProductsViewModel
+import org.example.project.viewModels.GoldRateViewModel
+import org.example.project.viewModels.MetalRateViewModel
 import java.io.FileInputStream
 import java.nio.file.Path
 
@@ -47,6 +58,11 @@ object JewelryAppInitializer {
     private var cartViewModel: CartViewModel? = null
     private var paymentRepository: PaymentRepository? = null
     private var paymentViewModel: PaymentViewModel? = null
+    private var goldRateRepository: GoldRateRepository? = null
+    private var goldRateViewModel: GoldRateViewModel? = null
+    private var metalRatesRepository: MetalRatesRepository? = null
+    private var metalRateRepository: MetalRateRepository? = null
+    private var metalRateViewModel: MetalRateViewModel? = null
 
 
     /**
@@ -96,7 +112,8 @@ object JewelryAppInitializer {
 
             // Create dependencies
             repository = FirestoreProductRepository(firestore, storage)
-            viewModel = ProductsViewModel(repository!!)
+            val stonesRepository: StonesRepository = FirestoreStonesRepository(firestore)
+            viewModel = ProductsViewModel(repository!!, stonesRepository)
             imageLoader = ImageLoader(repository!!)
             customerRepository = FirestoreCustomerRepository(firestore)
             customerViewModel = CustomerViewModel(customerRepository!!)
@@ -104,7 +121,12 @@ object JewelryAppInitializer {
             cartViewModel = CartViewModel(repository!!, cartRepository!!, imageLoader!!)
             paymentRepository = FirestorePaymentRepository(firestore)
             paymentViewModel = PaymentViewModel(paymentRepository!!)
-
+            goldRateRepository = FirestoreGoldRateRepository(firestore)
+            goldRateViewModel = GoldRateViewModel(goldRateRepository!!)
+            metalRatesRepository = FirestoreMetalRatesRepository(firestore)
+            MetalRatesManager.initialize(metalRatesRepository!!)
+            metalRateRepository = FirestoreMetalRateRepository(firestore)
+            metalRateViewModel = MetalRateViewModel(metalRateRepository!!)
 
             initialized = true
             println("Firebase initialized successfully with project ID: $projectId")
@@ -126,6 +148,16 @@ object JewelryAppInitializer {
     fun getPaymentViewModel(): PaymentViewModel {
         checkInitialized()
         return paymentViewModel!!
+    }
+
+    fun getGoldRateViewModel(): GoldRateViewModel {
+        checkInitialized()
+        return goldRateViewModel!!
+    }
+
+    fun getMetalRateViewModel(): MetalRateViewModel {
+        checkInitialized()
+        return metalRateViewModel!!
     }
 
     /**

@@ -82,16 +82,23 @@ fun ProductDetailScreen(
                 p.images.forEachIndexed { index, imageUrl ->
                     coroutineScope.launch {
                         val imageBytes = imageLoader.loadImage(imageUrl)
-                        imageBytes?.let {
-                            val image = withContext(Dispatchers.IO) {
-                                Image.makeFromEncoded(it).toComposeImageBitmap()
+                        if (imageBytes != null && imageBytes.isNotEmpty()) {
+                            try {
+                                val image = withContext(Dispatchers.IO) {
+                                    Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
+                                }
+                                // Update just this image in the list
+                                val updatedList = productImages.toMutableList()
+                                if (index < updatedList.size) {
+                                    updatedList[index] = imageUrl to image
+                                    productImages = updatedList
+                                }
+                            } catch (e: Exception) {
+                                println("Failed to decode image: $imageUrl - ${e.message}")
+                                // Keep the null image to show placeholder
                             }
-                            // Update just this image in the list
-                            val updatedList = productImages.toMutableList()
-                            if (index < updatedList.size) {
-                                updatedList[index] = imageUrl to image
-                                productImages = updatedList
-                            }
+                        } else {
+                            println("Failed to load image: $imageUrl - no data or empty data")
                         }
                     }
                 }

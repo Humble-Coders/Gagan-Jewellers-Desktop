@@ -58,8 +58,6 @@ fun PaymentScreen(
     onPaymentComplete: () -> Unit,
     productsViewModel: ProductsViewModel
 ) {
-    var showPaymentSplit by remember { mutableStateOf(false) }
-    var paymentSplit by remember { mutableStateOf<PaymentSplit?>(null) }
     var showExchangeGold by remember { mutableStateOf(false) }
     var exchangeGold by remember { mutableStateOf<ExchangeGold?>(null) }
     val cart by cartViewModel.cart
@@ -67,21 +65,80 @@ fun PaymentScreen(
     val selectedPaymentMethod by paymentViewModel.selectedPaymentMethod
     val discountType by paymentViewModel.discountType
     val discountValue by paymentViewModel.discountValue
-    val calculatedDiscountAmount = paymentViewModel.calculateDiscountAmount(cartViewModel.getSubtotal())
     val exchangeGoldValue = exchangeGold?.value ?: 0.0
     val isProcessing by paymentViewModel.isProcessing
     val errorMessage by paymentViewModel.errorMessage
     val selectedCustomer by customerViewModel.selectedCustomer
+
+    // Payment split state - always visible by default
+    var cashAmount by remember { mutableStateOf("") }
+    var cardAmount by remember { mutableStateOf("") }
+    var bankAmount by remember { mutableStateOf("") }
+    var onlineAmount by remember { mutableStateOf("") }
+    var dueAmount by remember { mutableStateOf("") }
+    var paymentSplit by remember { mutableStateOf<PaymentSplit?>(null) }
     
-    // Calculate if there's a payment split warning (due amount becomes negative after discount)
+    // GST radio button state - 0%, 5%, 18%
+    var selectedGstRate by remember { mutableStateOf(0.18) } // Default to 18%
+
+    // Calculate GST amount based on selected rate
+    val gstAmount = cartViewModel.getTotalCharges() * selectedGstRate
+    
+    // Calculate discount amount using the new method that includes GST
+    val calculatedDiscountAmount = if (discountValue.isNotEmpty()) {
+        paymentViewModel.calculateDiscountAmount(cartViewModel.getTotalCharges(), gstAmount)
+    } else {
+        0.0
+    }
+    
+    // Calculate total amount for payment split
+    val totalAmountForSplit = cartViewModel.getTotalCharges() + gstAmount - calculatedDiscountAmount - exchangeGoldValue
+
+    // Calculate due amount automatically
+    val calculatedDueAmount = remember(cashAmount, cardAmount, bankAmount, onlineAmount, totalAmountForSplit) {
+        val paidAmount = (cashAmount.toDoubleOrNull() ?: 0.0) +
+                (cardAmount.toDoubleOrNull() ?: 0.0) +
+                (bankAmount.toDoubleOrNull() ?: 0.0) +
+                (onlineAmount.toDoubleOrNull() ?: 0.0)
+        val due = totalAmountForSplit - paidAmount
+        if (due > 0) due else 0.0
+    }
+
+    // Update due amount when other amounts change
+    LaunchedEffect(calculatedDueAmount) {
+        dueAmount = calculatedDueAmount.toString()
+    }
+
+    // Update payment split when amounts change
+    LaunchedEffect(cashAmount, cardAmount, bankAmount, onlineAmount, calculatedDueAmount) {
+        val cash = cashAmount.toDoubleOrNull() ?: 0.0
+        val card = cardAmount.toDoubleOrNull() ?: 0.0
+        val bank = bankAmount.toDoubleOrNull() ?: 0.0
+        val online = onlineAmount.toDoubleOrNull() ?: 0.0
+
+        // Only create payment split if at least one amount is entered
+        if (cash > 0 || card > 0 || bank > 0 || online > 0 || calculatedDueAmount > 0) {
+            paymentSplit = PaymentSplit(
+                cashAmount = cash,
+                cardAmount = card,
+                bankAmount = bank,
+                onlineAmount = online,
+                dueAmount = calculatedDueAmount,
+                totalAmount = totalAmountForSplit
+            )
+        } else {
+            paymentSplit = null
+        }
+    }
+
+    // Calculate if there's a payment split warning
     val hasPaymentSplitWarning = paymentSplit?.let { split ->
         val adjustedDueAmount = split.dueAmount - calculatedDiscountAmount
         adjustedDueAmount < 0
     } ?: false
 
-    // Define confirm order function that can be reused
+    // Define confirm order function
     val onConfirmOrder = {
-        // Validate stock before proceeding
         paymentViewModel.validateStockBeforeOrder(
             cart = cart,
             products = productsViewModel.products.value,
@@ -91,13 +148,12 @@ fun PaymentScreen(
                         cart = cart,
                         subtotal = cartViewModel.getSubtotal(),
                         discountAmount = calculatedDiscountAmount,
-                        gst = cartViewModel.getGST(),
-                        finalTotal = cartViewModel.getFinalTotal() - calculatedDiscountAmount - exchangeGoldValue,
+                        gst = gstAmount,
+                        finalTotal = cartViewModel.getTotalCharges() + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
                         paymentSplit = paymentSplit,
                         onSuccess = onPaymentComplete
                     )
                 } else {
-                    // Show error dialog or snackbar with stock issues
                     paymentViewModel.setErrorMessage(
                         "Stock validation failed:\n${errors.joinToString("\n")}"
                     )
@@ -130,18 +186,27 @@ fun PaymentScreen(
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
 
-                // Payment Options Section
+                // Payment Options Section with Integrated Split Payment (Always Visible)
                 PaymentOptionsSection(
                     selectedPaymentMethod = selectedPaymentMethod,
                     onPaymentMethodSelected = { paymentViewModel.setPaymentMethod(it) },
-                    onPaymentSplit = { 
-                        showPaymentSplit = true 
-                    },
                     onExchangeGold = {
                         showExchangeGold = true
                     },
                     hasPaymentSplitWarning = hasPaymentSplitWarning,
-                    exchangeGoldValue = exchangeGoldValue
+                    exchangeGoldValue = exchangeGoldValue,
+                    paymentSplit = paymentSplit,
+                    totalAmount = totalAmountForSplit,
+                    discountAmount = calculatedDiscountAmount,
+                    cashAmount = cashAmount,
+                    cardAmount = cardAmount,
+                    bankAmount = bankAmount,
+                    onlineAmount = onlineAmount,
+                    dueAmount = dueAmount,
+                    onCashAmountChange = { cashAmount = it },
+                    onCardAmountChange = { cardAmount = it },
+                    onBankAmountChange = { bankAmount = it },
+                    onOnlineAmountChange = { onlineAmount = it }
                 )
 
                 // Discount Section
@@ -161,13 +226,15 @@ fun PaymentScreen(
                 modifier = Modifier.weight(0.4f),
                 cartItems = cart.items,
                 cartImages = cartImages,
-                subtotal = cartViewModel.getSubtotal(),
+                subtotal = cartViewModel.getTotalCharges(),
                 discountAmount = calculatedDiscountAmount,
-                gst = cartViewModel.getGST(),
-                total = cartViewModel.getFinalTotal() - calculatedDiscountAmount - exchangeGoldValue,
+                gst = gstAmount,
+                total = cartViewModel.getTotalCharges() + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
                 paymentSplit = paymentSplit,
                 exchangeGoldValue = exchangeGoldValue,
                 cartViewModel = cartViewModel,
+                selectedGstRate = selectedGstRate,
+                onGstRateChange = { selectedGstRate = it },
                 onConfirmOrder = onConfirmOrder,
                 isProcessing = isProcessing,
                 paymentMethodSelected = selectedPaymentMethod != null || paymentSplit != null
@@ -184,31 +251,6 @@ fun PaymentScreen(
                 onBack = { showExchangeGold = false }
             )
         }
-
-        // Payment Split Screen
-        if (showPaymentSplit) {
-            Dialog(onDismissRequest = { showPaymentSplit = false }) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth(0.9f)
-                        .fillMaxHeight(0.8f),
-                    shape = RoundedCornerShape(16.dp),
-                    elevation = 8.dp
-                ) {
-                    PaymentSplitScreen(
-                        totalAmount = cartViewModel.getFinalTotal() - calculatedDiscountAmount - exchangeGoldValue,
-                        initialPaymentSplit = paymentSplit,
-                        onPaymentSplitComplete = { split ->
-                            paymentSplit = split
-                            showPaymentSplit = false
-                            // Automatically proceed to payment completion when split payment is confirmed
-                            onConfirmOrder()
-                        },
-                        onBack = { showPaymentSplit = false }
-                    )
-                }
-            }
-        }
     }
 }
 
@@ -219,21 +261,21 @@ private fun PaymentHeader(onBack: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp), // reduced from 80.dp
-        elevation = 2.dp, // slightly reduced elevation
+            .height(56.dp),
+        elevation = 2.dp,
         shape = RoundedCornerShape(0.dp),
         backgroundColor = Color.White
     ) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp), // reduced horizontal padding
+                .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
                 onClick = onBack,
                 modifier = Modifier
-                    .size(36.dp) // reduced size
+                    .size(36.dp)
                     .background(Color(0xFFF5F5F5), RoundedCornerShape(10.dp))
             ) {
                 Icon(
@@ -248,7 +290,7 @@ private fun PaymentHeader(onBack: () -> Unit) {
 
             Text(
                 "Complete Your Purchase",
-                fontSize = 18.sp, // reduced from 24.sp
+                fontSize = 18.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFF2E2E2E)
             )
@@ -257,7 +299,7 @@ private fun PaymentHeader(onBack: () -> Unit) {
 
             Text(
                 "PREMIUM JEWELRY",
-                fontSize = 12.sp, // reduced from 14.sp
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 color = Color(0xFFB8973D),
                 letterSpacing = 1.sp
@@ -455,10 +497,21 @@ private fun DiscountTypeOption(
 private fun PaymentOptionsSection(
     selectedPaymentMethod: PaymentMethod?,
     onPaymentMethodSelected: (PaymentMethod) -> Unit,
-    onPaymentSplit: () -> Unit,
     onExchangeGold: () -> Unit,
     hasPaymentSplitWarning: Boolean = false,
-    exchangeGoldValue: Double = 0.0
+    exchangeGoldValue: Double = 0.0,
+    paymentSplit: PaymentSplit?,
+    totalAmount: Double,
+    discountAmount: Double,
+    cashAmount: String,
+    cardAmount: String,
+    bankAmount: String,
+    onlineAmount: String,
+    dueAmount: String,
+    onCashAmountChange: (String) -> Unit,
+    onCardAmountChange: (String) -> Unit,
+    onBankAmountChange: (String) -> Unit,
+    onOnlineAmountChange: (String) -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -469,159 +522,293 @@ private fun PaymentOptionsSection(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(horizontal = 16.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Text(
                 "Payment Method",
-                fontSize = 18.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF2E2E2E)
             )
-            Spacer(modifier = Modifier.height(6.dp))
 
-            Column(
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            // Payment Split Form (Always Visible)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = 2.dp,
+                shape = RoundedCornerShape(12.dp),
+                backgroundColor = Color(0xFFF5F5F5)
             ) {
-                listOf(
-                    PaymentMethod.CASH to "Cash",
-                    PaymentMethod.CARD to "Credit/Debit Card",
-                    PaymentMethod.UPI to "UPI",
-                    PaymentMethod.NET_BANKING to "Net Banking",
-                    PaymentMethod.BANK_TRANSFER to "Bank Transfer",
-                    PaymentMethod.DUE to "Due Payment"
-                ).forEach { (method, label) ->
-                    PaymentMethodCard(
-                        paymentMethod = method,
-                        icon = when (method) {
-                            PaymentMethod.CASH -> Icons.Default.AccountBox
-                            PaymentMethod.CARD -> Icons.Default.AccountBox
-                            PaymentMethod.UPI -> Icons.Default.AccountBox
-                            PaymentMethod.NET_BANKING -> Icons.Default.AccountBox
-                            PaymentMethod.BANK_TRANSFER -> Icons.Default.AccountBox
-                            PaymentMethod.CASH_ON_DELIVERY -> Icons.Default.AccountBox
-                            PaymentMethod.DUE -> Icons.Default.AccountBox
-                        },
-                        title = label,
-                        isSelected = selectedPaymentMethod == method,
-                        onClick = { onPaymentMethodSelected(method) },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                // Payment Split Option
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Button(
-                    onClick = onPaymentSplit,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = if (hasPaymentSplitWarning) Color(0xFFD32F2F) else Color(0xFFB8973D),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Icon(
-                        if (hasPaymentSplitWarning) Icons.Default.Warning else Icons.Default.AccountBox,
-                        contentDescription = "Split Payment",
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (hasPaymentSplitWarning) "Split Payment Again (Warning!)" else "Split Payment (Cash + Card + Bank + Due)",
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+                    // Total Amount Display
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevation = 2.dp,
+                        shape = RoundedCornerShape(10.dp),
+                        backgroundColor = Color.White
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                "Total Amount to Split",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF666666)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "₹${formatCurrency(totalAmount)}",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFB8973D)
+                            )
+                        }
+                    }
 
-                // Exchange Gold Option
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Button(
-                    onClick = onExchangeGold,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = if (exchangeGoldValue > 0) Color(0xFF4CAF50) else Color(0xFFB8973D),
-                        contentColor = Color.White
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(
-                        Icons.Default.AccountBox,
-                        contentDescription = "Exchange Gold",
-                        modifier = Modifier.size(18.dp)
+                    // Payment Input Fields
+                    PaymentInputField(
+                        label = "Cash Amount",
+                        value = cashAmount,
+                        onValueChange = onCashAmountChange,
+                        icon = Icons.Default.AccountBox,
+                        iconColor = Color(0xFF4CAF50)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (exchangeGoldValue > 0) "Exchange Gold Added (₹${formatCurrency(exchangeGoldValue)})" else "Exchange Gold (Old Gold Exchange)",
-                        fontWeight = FontWeight.Medium
+
+                    PaymentInputField(
+                        label = "Card Amount",
+                        value = cardAmount,
+                        onValueChange = onCardAmountChange,
+                        icon = Icons.Default.AccountBox,
+                        iconColor = Color(0xFF2196F3)
                     )
+
+                    PaymentInputField(
+                        label = "Bank Transfer Amount",
+                        value = bankAmount,
+                        onValueChange = onBankAmountChange,
+                        icon = Icons.Default.AccountBox,
+                        iconColor = Color(0xFF9C27B0)
+                    )
+
+                    PaymentInputField(
+                        label = "Online Amount",
+                        value = onlineAmount,
+                        onValueChange = onOnlineAmountChange,
+                        icon = Icons.Default.AccountBox,
+                        iconColor = Color(0xFF00BCD4)
+                    )
+
+                    PaymentInputField(
+                        label = "Due Amount ",
+                        value = dueAmount,
+                        onValueChange = {},
+                        icon = Icons.Default.AccountBox,
+                        iconColor = Color(0xFFFF9800),
+                        enabled = false
+                    )
+
+                    // Payment Summary
+                    if (paymentSplit != null) {
+                        Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+
+                        PaymentSplitSummaryCompact(
+                            paymentSplit = paymentSplit,
+                            totalAmount = totalAmount
+                        )
+                    }
                 }
+            }
+
+            Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+
+            // Exchange Gold Option
+            Button(
+                onClick = onExchangeGold,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = if (exchangeGoldValue > 0) Color(0xFF4CAF50) else Color(0xFFB8973D),
+                    contentColor = Color.White
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(
+                    Icons.Default.Star,
+                    contentDescription = "Exchange Gold",
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    if (exchangeGoldValue > 0) "Exchange Gold Added (₹${formatCurrency(exchangeGoldValue)})" else "Exchange Gold (Old Gold Exchange)",
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp
+                )
             }
         }
     }
 }
 
-
 @Composable
-private fun PaymentMethodCard(
-    paymentMethod: PaymentMethod,
-    icon: ImageVector,
-    title: String,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
+private fun PaymentInputField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconColor: Color,
+    enabled: Boolean = true
 ) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-
-    val primaryColor = MaterialTheme.colors.primary
-    val lightPrimary = primaryColor.copy(alpha = 0.1f)
-
-    val backgroundColor = if (isSelected) lightPrimary else Color.White
-    val borderColor = if (isSelected) primaryColor else Color(0xFFE5E5E5)
-    val iconBgColor = if (isSelected) primaryColor else Color(0xFFFFE9E4)
-    val iconTint = if (isSelected) Color.White else Color(0xFF5E4034)
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .wrapContentHeight() // ✅ Shrinks vertically to wrap content
-            .clip(RoundedCornerShape(12.dp))
-            .background(backgroundColor)
-            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
-            .clickable(interactionSource, indication = null) { onClick() }
-            .hoverable(interactionSource)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        // Icon with circular background
-        Box(
-            modifier = Modifier
-                .size(35.dp)
-                .clip(CircleShape)
-                .background(iconBgColor),
-            contentAlignment = Alignment.Center
-        ) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { input ->
+            if (input.isEmpty() || input.matches(Regex("^\\d*\\.?\\d*\$"))) {
+                onValueChange(input)
+            }
+        },
+        label = { Text(label, fontSize = 13.sp) },
+        leadingIcon = {
             Icon(
                 imageVector = icon,
-                contentDescription = title,
-                tint = iconTint,
+                contentDescription = label,
+                tint = iconColor,
                 modifier = Modifier.size(18.dp)
+            )
+        },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        modifier = Modifier.fillMaxWidth().height(56.dp),
+        singleLine = true,
+        enabled = enabled,
+        textStyle = androidx.compose.ui.text.TextStyle(
+            fontSize = 14.sp,
+            color = Color(0xFF2E2E2E)
+        ),
+        colors = TextFieldDefaults.outlinedTextFieldColors(
+            focusedBorderColor = if (enabled) Color(0xFFB8973D) else Color(0xFFE0E0E0),
+            cursorColor = if (enabled) Color(0xFFB8973D) else Color(0xFFE0E0E0),
+            disabledTextColor = Color(0xFF666666),
+            disabledBorderColor = Color(0xFFE0E0E0),
+            disabledLabelColor = Color(0xFF666666)
+        ),
+        shape = RoundedCornerShape(10.dp)
+    )
+}
+
+@Composable
+private fun PaymentSplitSummaryCompact(
+    paymentSplit: PaymentSplit,
+    totalAmount: Double
+) {
+    val isValid = paymentSplit.isValid()
+    val totalPaid = paymentSplit.cashAmount + paymentSplit.cardAmount +
+            paymentSplit.bankAmount + paymentSplit.onlineAmount + paymentSplit.dueAmount
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            "Payment Summary",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF2E2E2E)
+        )
+
+        if (paymentSplit.cashAmount > 0) {
+            PaymentSplitRowCompact("Cash", paymentSplit.cashAmount, Color(0xFF4CAF50))
+        }
+        if (paymentSplit.cardAmount > 0) {
+            PaymentSplitRowCompact("Card", paymentSplit.cardAmount, Color(0xFF2196F3))
+        }
+        if (paymentSplit.bankAmount > 0) {
+            PaymentSplitRowCompact("Bank", paymentSplit.bankAmount, Color(0xFF9C27B0))
+        }
+        if (paymentSplit.onlineAmount > 0) {
+            PaymentSplitRowCompact("Online", paymentSplit.onlineAmount, Color(0xFF00BCD4))
+        }
+        if (paymentSplit.dueAmount > 0) {
+            PaymentSplitRowCompact("Due", paymentSplit.dueAmount, Color(0xFFFF9800))
+        }
+
+        Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Total",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF2E2E2E)
+            )
+            Text(
+                "₹${formatCurrency(totalPaid)}",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isValid) Color(0xFF4CAF50) else Color(0xFFD32F2F)
             )
         }
 
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Text(
-            text = title,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Medium,
-            color = Color(0xFF2E2E2E)
-        )
+        // Validation Status
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    if (isValid) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
+                    RoundedCornerShape(8.dp)
+                )
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (isValid) Icons.Default.CheckCircle else Icons.Default.Warning,
+                contentDescription = if (isValid) "Valid" else "Invalid",
+                tint = if (isValid) Color(0xFF4CAF50) else Color(0xFFD32F2F),
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                if (isValid) "Payment amounts match total" else "Amounts don't match total",
+                fontSize = 12.sp,
+                color = if (isValid) Color(0xFF4CAF50) else Color(0xFFD32F2F),
+                fontWeight = FontWeight.Medium
+            )
+        }
     }
 }
 
-
+@Composable
+private fun PaymentSplitRowCompact(
+    label: String,
+    amount: Double,
+    color: Color
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = Color(0xFF666666)
+        )
+        Text(
+            "₹${formatCurrency(amount)}",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = color
+        )
+    }
+}
 
 
 @Composable
@@ -635,10 +822,12 @@ private fun OrderSummarySection(
     total: Double,
     paymentSplit: PaymentSplit?,
     exchangeGoldValue: Double,
+    cartViewModel: CartViewModel,
+    selectedGstRate: Double,
+    onGstRateChange: (Double) -> Unit,
     onConfirmOrder: () -> Unit,
     isProcessing: Boolean,
-    paymentMethodSelected: Boolean,
-    cartViewModel: CartViewModel
+    paymentMethodSelected: Boolean
 ) {
     Card(
         modifier = modifier.fillMaxHeight(),
@@ -649,6 +838,7 @@ private fun OrderSummarySection(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp)
         ) {
             Text(
@@ -661,11 +851,10 @@ private fun OrderSummarySection(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Cart Items List
-            LazyColumn(
-                modifier = Modifier.weight(1f),
+            Column(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(cartItems) { cartItem ->
+                cartItems.forEach { cartItem ->
                     OrderSummaryItem(
                         cartItem = cartItem,
                         image = cartImages[cartItem.productId],
@@ -685,37 +874,38 @@ private fun OrderSummarySection(
                 subtotal = subtotal,
                 discountAmount = discountAmount,
                 gst = gst,
-                total = total
+                total = total,
+                selectedGstRate = selectedGstRate,
+                onGstRateChange = onGstRateChange
             )
 
             // Payment Split Information
             if (paymentSplit != null) {
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 PaymentSplitSummary(
-                    paymentSplit = paymentSplit,
-                    discountAmount = discountAmount
+                    paymentSplit = paymentSplit
                 )
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
             // Exchange Gold Information
             if (exchangeGoldValue > 0) {
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 ExchangeGoldSummary(
                     exchangeGoldValue = exchangeGoldValue
                 )
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
@@ -727,7 +917,7 @@ private fun OrderSummarySection(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp),
-                enabled = (paymentMethodSelected || paymentSplit != null) && !isProcessing,
+                enabled = (paymentMethodSelected || paymentSplit != null) && !isProcessing && (paymentSplit?.isValid() != false),
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = Color(0xFFB8973D),
                     contentColor = Color.White,
@@ -814,11 +1004,11 @@ private fun OrderSummaryItem(
             )
         }
 
-        // Price - using final amount from cart screen calculation
+        // Price (base amount without GST to match subtotal)
         val metalRates = MetalRatesManager.metalRates.value
-        val finalAmount = cartViewModel.calculateItemFinalAmount(cartItem, metalRates)
+        val baseAmount = cartViewModel.calculateItemTotalCharges(cartItem, metalRates)
         Text(
-            "₹${formatCurrency(finalAmount)}",
+            "₹${formatCurrency(baseAmount)}",
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFFB8973D)
@@ -832,7 +1022,9 @@ private fun PriceBreakdown(
     subtotal: Double,
     discountAmount: Double,
     gst: Double,
-    total: Double
+    total: Double,
+    selectedGstRate: Double,
+    onGstRateChange: (Double) -> Unit
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -850,6 +1042,93 @@ private fun PriceBreakdown(
                 isDiscount = true,
                 isTotal = false
             )
+        }
+
+        // GST Radio Buttons and Amount
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "GST Rate",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF666666)
+            )
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedGstRate == 0.0,
+                            onClick = { onGstRateChange(0.0) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = Color(0xFFB8973D),
+                                unselectedColor = Color(0xFFE0E0E0)
+                            )
+                        )
+                        Text(
+                            text = "0%",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF666666)
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedGstRate == 0.05,
+                            onClick = { onGstRateChange(0.05) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = Color(0xFFB8973D),
+                                unselectedColor = Color(0xFFE0E0E0)
+                            )
+                        )
+                        Text(
+                            text = "5%",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF666666)
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = selectedGstRate == 0.18,
+                            onClick = { onGstRateChange(0.18) },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = Color(0xFFB8973D),
+                                unselectedColor = Color(0xFFE0E0E0)
+                            )
+                        )
+                        Text(
+                            text = "18%",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF666666)
+                        )
+                    }
+                }
+                
+                if (selectedGstRate > 0) {
+                    Text(
+                        text = "₹${formatCurrency(gst)}",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF2E2E2E)
+                    )
+                }
+            }
         }
 
         Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
@@ -896,13 +1175,11 @@ private fun PriceRow(
 
 @Composable
 private fun PaymentSplitSummary(
-    paymentSplit: PaymentSplit,
-    discountAmount: Double = 0.0
+    paymentSplit: PaymentSplit
 ) {
-    // Calculate adjusted due amount after discount
-    val adjustedDueAmount = paymentSplit.dueAmount - discountAmount
-    val isDueAmountNegative = adjustedDueAmount < 0
-    val totalPayment = paymentSplit.cashAmount + paymentSplit.cardAmount + paymentSplit.bankAmount + paymentSplit.onlineAmount + adjustedDueAmount
+    val dueAmount = paymentSplit.dueAmount
+    val isDueAmountNegative = dueAmount < 0
+    val totalPayment = paymentSplit.cashAmount + paymentSplit.cardAmount + paymentSplit.bankAmount + paymentSplit.onlineAmount + dueAmount
 
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -926,17 +1203,12 @@ private fun PaymentSplitSummary(
         if (paymentSplit.onlineAmount > 0) {
             PaymentSplitRow("Online", paymentSplit.onlineAmount, Color(0xFF00BCD4))
         }
-        
-        // Show discount if applied
-        if (discountAmount > 0) {
-            PaymentSplitRow("Discount Applied", -discountAmount, Color(0xFF4CAF50))
-        }
-        
-        // Show due amount (adjusted for discount)
-        if (adjustedDueAmount > 0) {
-            PaymentSplitRow("Due", adjustedDueAmount, Color(0xFFFF9800))
-        } else if (adjustedDueAmount < 0) {
-            PaymentSplitRow("Due (Overpaid)", adjustedDueAmount, Color(0xFFD32F2F))
+
+
+        if (dueAmount > 0) {
+            PaymentSplitRow("Due", dueAmount, Color(0xFFFF9800))
+        } else if (dueAmount < 0) {
+            PaymentSplitRow("Due (Overpaid)", dueAmount, Color(0xFFD32F2F))
         }
 
         Divider(color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFFE0E0E0), thickness = 1.dp)
@@ -960,7 +1232,6 @@ private fun PaymentSplitSummary(
             )
         }
 
-        // Warning message when due amount is negative
         if (isDueAmountNegative) {
             Row(
                 modifier = Modifier
@@ -977,7 +1248,7 @@ private fun PaymentSplitSummary(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    "Due amount is negative! Please split payment again to adjust amounts.",
+                    "Due amount is negative! Please adjust payment split amounts.",
                     fontSize = 12.sp,
                     color = Color(0xFFD32F2F),
                     fontWeight = FontWeight.Medium
@@ -1024,9 +1295,9 @@ private fun ExchangeGoldSummary(
             fontWeight = FontWeight.Bold,
             color = Color(0xFF2E2E2E)
         )
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1037,7 +1308,7 @@ private fun ExchangeGoldSummary(
                 fontSize = 14.sp,
                 color = Color(0xFF666666)
             )
-            
+
             Text(
                 "-₹${formatCurrency(exchangeGoldValue)}",
                 fontSize = 14.sp,

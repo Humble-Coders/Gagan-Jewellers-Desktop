@@ -60,22 +60,22 @@ fun BillingScreen(
     cartViewModel: CartViewModel = JewelryAppInitializer.getCartViewModel(),
     productsViewModel: ProductsViewModel = JewelryAppInitializer.getViewModel(),
     imageLoader: ImageLoader = JewelryAppInitializer.getImageLoader(),
-    paymentViewModel: PaymentViewModel = JewelryAppInitializer.getPaymentViewModel() // Add this parameter
+    paymentViewModel: PaymentViewModel = JewelryAppInitializer.getPaymentViewModel()
 ) {
     var currentStep by remember { mutableStateOf(BillingStep.CUSTOMER) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(8.dp)  // Reduced from 16dp
+            .padding(8.dp)
     ) {
-        // Compact Step indicator in a single line
+        // Compact Step indicator without card
         CompactStepIndicator(
             currentStep = currentStep,
             onStepSelected = { currentStep = it }
         )
 
-        Spacer(modifier = Modifier.height(12.dp))  // Reduced from 24dp
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Content based on current step
         Card(
@@ -86,7 +86,7 @@ fun BillingScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(12.dp)  // Reduced from 24dp
+                    .padding(12.dp)
             ) {
                 when (currentStep) {
                     BillingStep.CUSTOMER -> CustomerSelectionStep(
@@ -103,7 +103,7 @@ fun BillingScreen(
                             productsViewModel = productsViewModel,
                             cartViewModel = cartViewModel,
                             imageLoader = imageLoader,
-                            onProceedToPayment = { currentStep = BillingStep.PAYMENT } // Navigate to payment step
+                            onProceedToPayment = { currentStep = BillingStep.PAYMENT }
                         )
                     }
                     BillingStep.PAYMENT -> PaymentScreen(
@@ -135,7 +135,8 @@ fun BillingScreen(
                             customerViewModel.clearSelectedCustomer()
                             cartViewModel.clearCart()
                             currentStep = BillingStep.CUSTOMER
-                        }
+                        },
+                        productsViewModel = productsViewModel
                     )
                 }
             }
@@ -150,45 +151,42 @@ fun CompactStepIndicator(
 ) {
     val steps = listOf("Customer", "Cart", "Payment", "Receipt")
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = 2.dp,
-        shape = RoundedCornerShape(6.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            steps.forEachIndexed { index, stepName ->
-                // Step button with rounded background
-                Button(
-                    onClick = { onStepSelected(BillingStep.values()[index]) },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        backgroundColor = when {
-                            index == currentStep.ordinal -> MaterialTheme.colors.primary
-                            index < currentStep.ordinal -> MaterialTheme.colors.primary.copy(alpha = 0.7f)
-                            else -> Color.LightGray
-                        }
-                    ),
-                    shape = RoundedCornerShape(20.dp),
-                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 12.dp)
-                ) {
-                    Text(
-                        text = stepName,
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        fontWeight = if (index == currentStep.ordinal) FontWeight.Bold else FontWeight.Normal
-                    )
-                }
+        steps.forEachIndexed { index, stepName ->
+            // Step button with rounded background
+            Button(
+                onClick = { onStepSelected(BillingStep.values()[index]) },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = when {
+                        index == currentStep.ordinal -> MaterialTheme.colors.primary
+                        index < currentStep.ordinal -> MaterialTheme.colors.primary.copy(alpha = 0.7f)
+                        else -> Color.LightGray
+                    }
+                ),
+                shape = RoundedCornerShape(20.dp),
+                contentPadding = PaddingValues(vertical = 8.dp, horizontal = 12.dp),
+                elevation = ButtonDefaults.elevation(
+                    defaultElevation = if (index == currentStep.ordinal) 4.dp else 2.dp
+                )
+            ) {
+                Text(
+                    text = stepName,
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = if (index == currentStep.ordinal) FontWeight.Bold else FontWeight.Normal
+                )
+            }
 
-                // Add spacing between buttons except for the last one
-                if (index < steps.size - 1) {
-                    Spacer(modifier = Modifier.width(8.dp))
-                }
+            // Add spacing between buttons except for the last one
+            if (index < steps.size - 1) {
+                Spacer(modifier = Modifier.width(6.dp))
             }
         }
     }

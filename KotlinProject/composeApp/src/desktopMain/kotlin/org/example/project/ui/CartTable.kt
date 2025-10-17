@@ -17,6 +17,7 @@ import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,22 +42,24 @@ import androidx.compose.ui.unit.sp
 import org.example.project.data.CartItem
 import org.example.project.data.MetalRatesManager
 import org.example.project.data.Product
+import org.example.project.data.extractKaratFromMaterialType
+import org.example.project.viewModels.ProductsViewModel
 import java.text.DecimalFormat
 
-// Color Palette
-private val GoldPrimary = Color(0xFFFFD700)
-private val GoldDark = Color(0xFFDAA520)
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import org.example.project.JewelryAppInitializer
+
+
+// Color Palette - Updated to match theme
+private val GoldPrimary = Color(0xFFB2935A)
+private val GoldDark = Color(0xFF8B7355)
 private val GoldLight = Color(0xFFFFF8DC)
-private val DarkGreen = Color(0xFF1B5E20)
-private val MediumGreen = Color(0xFF2E7D32)
-private val LightGreen = Color(0xFF4CAF50)
 private val BackgroundGray = Color(0xFFF5F5F5)
 private val CardWhite = Color(0xFFFFFFFF)
 private val TextPrimary = Color(0xFF212121)
 private val TextSecondary = Color(0xFF757575)
-private val AccentOrange = Color(0xFFFF6F00)
-private val AccentBlue = Color(0xFF1976D2)
-private val AccentPurple = Color(0xFF6A1B9A)
 private val ErrorRed = Color(0xFFD32F2F)
 
 @Composable
@@ -64,16 +67,26 @@ fun CartTable(
     cartItems: List<CartItem>,
     onItemUpdate: (Int, CartItem) -> Unit,
     onItemRemove: (Int) -> Unit,
+    productsViewModel: ProductsViewModel,
     cartImages: Map<String, androidx.compose.ui.graphics.ImageBitmap> = emptyMap(),
     modifier: Modifier = Modifier
 ) {
+    println("🛒 CART TABLE RENDER START - ${cartItems.size} items")
+    cartItems.forEachIndexed { index, item ->
+        println("   Item $index: ${item.product.name} (qty=${item.quantity}, metal=${item.metal})")
+    }
+    
     val metalRates by MetalRatesManager.metalRates
     var selectedItemIndex by remember { mutableStateOf<Int?>(null) }
     var editingField by remember { mutableStateOf<String?>(null) }
     var fieldValues by remember { mutableStateOf<Map<String, TextFieldValue>>(emptyMap()) }
+    var fetchedProduct by remember { mutableStateOf<Product?>(null) }
+    var isLoadingProduct by remember { mutableStateOf(false) }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val coroutineScope = rememberCoroutineScope()
 
     fun onEditingFieldChange(newField: String?) {
+        println("🔄 EDITING FIELD CHANGE: $editingField -> $newField")
         editingField?.let { currentField ->
             if (currentField != newField) {
                 val currentValue = fieldValues[currentField]?.text ?: ""
@@ -83,11 +96,49 @@ fun CartTable(
         editingField = newField
         newField?.let { field ->
             if (!fieldValues.containsKey(field)) {
-                val currentValue = getCurrentFieldValue(field, cartItems)
+                val currentValue = getCurrentFieldValue(field, cartItems, fetchedProduct)
                 fieldValues = fieldValues + (field to TextFieldValue(
                     text = currentValue,
                     selection = TextRange(0, currentValue.length)
                 ))
+            }
+        }
+    }
+
+    fun onItemSelected(index: Int) {
+        selectedItemIndex = index
+        val cartItem = cartItems[index]
+        isLoadingProduct = true
+        fetchedProduct = null
+
+        val barcodeId = cartItem.product.barcodeIds.firstOrNull()
+        if (barcodeId != null) {
+            coroutineScope.launch {
+                try {
+                    val product = productsViewModel.getProductByBarcodeId(barcodeId)
+                    fetchedProduct = product
+                } catch (e: Exception) {
+                    println("Failed to fetch product by barcode ID: $barcodeId - ${e.message}")
+                    try {
+                        val product = productsViewModel.repository.getProductById(cartItem.productId)
+                        fetchedProduct = product
+                    } catch (e2: Exception) {
+                        println("Failed to fetch product by ID: ${cartItem.productId} - ${e2.message}")
+                    }
+                } finally {
+                    isLoadingProduct = false
+                }
+            }
+        } else {
+            coroutineScope.launch {
+                try {
+                    val product = productsViewModel.repository.getProductById(cartItem.productId)
+                    fetchedProduct = product
+                } catch (e: Exception) {
+                    println("Failed to fetch product by ID: ${cartItem.productId} - ${e.message}")
+                } finally {
+                    isLoadingProduct = false
+                }
             }
         }
     }
@@ -115,8 +166,8 @@ fun CartTable(
                     }
                 )
             },
-        shape = RoundedCornerShape(16.dp),
-        elevation = 12.dp,
+        shape = RoundedCornerShape(12.dp),
+        elevation = 8.dp,
         backgroundColor = BackgroundGray
     ) {
         if (cartItems.isEmpty()) {
@@ -127,7 +178,7 @@ fun CartTable(
                 CartItemsList(
                     cartItems = cartItems,
                     selectedIndex = selectedItemIndex,
-                    onItemSelected = { index -> selectedItemIndex = index },
+                    onItemSelected = ::onItemSelected,
                     onItemRemove = { index ->
                         saveAndCloseEditing()
                         onItemRemove(index)
@@ -137,25 +188,18 @@ fun CartTable(
                     },
                     cartImages = cartImages,
                     metalRates = metalRates,
+                    fetchedProduct = fetchedProduct,
                     modifier = Modifier
                         .weight(0.6f)
                         .fillMaxHeight()
                 )
 
-                // Elegant Divider
+                // Divider
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .width(3.dp)
-                        .background(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    GoldLight.copy(alpha = 0.3f),
-                                    GoldPrimary.copy(alpha = 0.5f),
-                                    GoldLight.copy(alpha = 0.3f)
-                                )
-                            )
-                        )
+                        .width(2.dp)
+                        .background(GoldPrimary.copy(alpha = 0.3f))
                 )
 
                 // Right Side: Detail Panel
@@ -164,6 +208,9 @@ fun CartTable(
                         item = cartItems[selectedItemIndex!!],
                         index = selectedItemIndex!!,
                         metalRates = metalRates,
+                        productsViewModel = productsViewModel,
+                        fetchedProduct = fetchedProduct,
+                        isLoadingProduct = isLoadingProduct,
                         editingField = editingField,
                         fieldValues = fieldValues,
                         onEditingFieldChange = ::onEditingFieldChange,
@@ -172,7 +219,11 @@ fun CartTable(
                         },
                         onSaveAndCloseEditing = ::saveAndCloseEditing,
                         onItemUpdate = onItemUpdate,
-                        onClose = { selectedItemIndex = null },
+                        onClose = {
+                            selectedItemIndex = null
+                            fetchedProduct = null
+                            isLoadingProduct = false
+                        },
                         cartImage = cartImages[cartItems[selectedItemIndex!!].productId],
                         modifier = Modifier
                             .weight(0.4f)
@@ -198,19 +249,17 @@ private fun CartItemsList(
     onItemRemove: (Int) -> Unit,
     cartImages: Map<String, androidx.compose.ui.graphics.ImageBitmap>,
     metalRates: org.example.project.data.MetalRates,
+    fetchedProduct: Product?,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
-        // Enhanced Header with Golden Gradient
+        // Compact Header - Fixed height 48dp
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(GoldDark, GoldPrimary)
-                    )
-                )
-                .padding(12.dp)
+                .height(48.dp)
+                .background(GoldPrimary)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -220,32 +269,32 @@ private fun CartItemsList(
                 Column {
                     Text(
                         "Shopping Cart",
-                        fontSize = 18.sp,
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
-                        color = DarkGreen
+                        color = Color.White
                     )
                     Text(
                         "${cartItems.size} ${if (cartItems.size == 1) "item" else "items"}",
-                        fontSize = 12.sp,
-                        color = DarkGreen.copy(alpha = 0.8f),
+                        fontSize = 10.sp,
+                        color = Color.White.copy(alpha = 0.9f),
                         fontWeight = FontWeight.Medium
                     )
                 }
                 Icon(
                     Icons.Default.ShoppingCart,
                     contentDescription = null,
-                    tint = DarkGreen,
-                    modifier = Modifier.size(26.dp)
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
 
-        // List with padding
+        // List with minimal padding
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             itemsIndexed(cartItems) { index, item ->
                 CompactCartItem(
@@ -255,7 +304,8 @@ private fun CartItemsList(
                     onClick = { onItemSelected(index) },
                     onRemove = { onItemRemove(index) },
                     cartImage = cartImages[item.productId],
-                    metalRates = metalRates
+                    metalRates = metalRates,
+                    fetchedProduct = if (selectedIndex == index) fetchedProduct else null
                 )
             }
         }
@@ -270,32 +320,70 @@ private fun CompactCartItem(
     onClick: () -> Unit,
     onRemove: () -> Unit,
     cartImage: androidx.compose.ui.graphics.ImageBitmap?,
-    metalRates: org.example.project.data.MetalRates
+    metalRates: org.example.project.data.MetalRates,
+    fetchedProduct: Product?
 ) {
+    val currentProduct = fetchedProduct ?: item.product
     val metalKarat = if (item.metal.isNotEmpty()) {
-        item.metal.replace("K", "").toIntOrNull() ?: item.product.karat
+        item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
     } else {
-        item.product.karat
+        extractKaratFromMaterialType(currentProduct.materialType)
     }
 
     val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
     val goldRate = if (item.customGoldRate > 0) item.customGoldRate else defaultGoldRate
-    val silverRate = metalRates.getSilverRateForPurity(999)
+    val silverPurity = extractSilverPurityFromMaterialType(currentProduct.materialType)
+    val silverRate = metalRates.getSilverRateForPurity(silverPurity)
 
-    val finalAmount = remember(item, metalRates, metalKarat) {
-        val netWeight = item.grossWeight - item.lessWeight
-        val baseAmount = when {
-            item.product.materialType.contains("gold", ignoreCase = true) -> netWeight * goldRate * item.quantity
-            item.product.materialType.contains("silver", ignoreCase = true) -> netWeight * silverRate * item.quantity
-            else -> netWeight * goldRate * item.quantity
+    val displayAmount = remember(item, metalRates, metalKarat, currentProduct) {
+        println("🛒 CART CALCULATION START - CompactCartItem for ${currentProduct.name}")
+        
+        val grossWeight = if (item.grossWeight > 0) item.grossWeight else currentProduct.totalWeight
+        val lessWeight = if (item.lessWeight > 0) item.lessWeight else currentProduct.lessWeight
+        val netWeight = grossWeight - lessWeight
+        
+        println("📊 Weight Details: grossWeight=$grossWeight, lessWeight=$lessWeight, netWeight=$netWeight")
+
+        val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+        val karatForRate = if (item.metal.isNotEmpty()) {
+            item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
+        } else {
+            extractKaratFromMaterialType(currentProduct.materialType)
         }
-        val makingCharges = netWeight * item.makingCharges * item.quantity
-        val stoneAmount = item.cwWeight * item.stoneRate * item.quantity
-        val totalCharges = baseAmount + makingCharges + stoneAmount + item.va
-        val discountAmount = totalCharges * (item.discountPercent / 100)
-        val taxableAmount = totalCharges - discountAmount
-        val totalGst = taxableAmount * 0.03
-        taxableAmount + totalGst
+        val collectionRate = try {
+            ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, karatForRate)
+        } catch (e: Exception) { 0.0 }
+        val metalRate = if (collectionRate > 0) collectionRate else when {
+            currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
+            currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
+            else -> goldRate
+        }
+        
+        println("💰 Rate Details: karatForRate=$karatForRate, collectionRate=$collectionRate, metalRate=$metalRate")
+
+        val baseAmount = netWeight * metalRate * item.quantity
+        val makingChargesPerGram = if (item.makingCharges > 0) item.makingCharges else currentProduct.defaultMakingRate
+        val cwWeight = if (item.cwWeight > 0) item.cwWeight else currentProduct.cwWeight
+        val stoneRate = if (item.stoneRate > 0) item.stoneRate else currentProduct.stoneRate
+        val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else currentProduct.stoneQuantity
+        val vaCharges = if (item.va > 0) item.va else currentProduct.vaCharges
+
+        val makingCharges = netWeight * makingChargesPerGram * item.quantity
+        val stoneAmount = stoneRate * stoneQuantity * cwWeight
+        
+        println("🔍 Stone Calculation Debug (Compact): stoneRate=$stoneRate, stoneQuantity=$stoneQuantity, cwWeight=$cwWeight, stoneAmount=$stoneAmount")
+        
+        val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+        
+        println("💵 Amount Breakdown:")
+        println("   Base Amount: $baseAmount (netWeight=$netWeight * metalRate=$metalRate * quantity=${item.quantity})")
+        println("   Making Charges: $makingCharges (netWeight=$netWeight * makingRate=$makingChargesPerGram * quantity=${item.quantity})")
+        println("   Stone Amount: $stoneAmount (stoneRate=$stoneRate * stoneQuantity=$stoneQuantity * cwWeight=$cwWeight)")
+        println("   VA Charges: $vaCharges")
+        println("   TOTAL CHARGES: $totalCharges")
+        println("🛒 CART CALCULATION END - CompactCartItem")
+        
+        totalCharges
     }
 
     Card(
@@ -303,22 +391,17 @@ private fun CompactCartItem(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .animateContentSize(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = if (isSelected) 8.dp else 3.dp,
+        shape = RoundedCornerShape(10.dp),
+        elevation = if (isSelected) 6.dp else 2.dp,
         backgroundColor = if (isSelected) GoldLight else CardWhite
     ) {
         Box {
-            // Selected indicator stripe
             if (isSelected) {
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
-                        .width(5.dp)
-                        .background(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(GoldPrimary, GoldDark)
-                            )
-                        )
+                        .width(4.dp)
+                        .background(GoldPrimary)
                         .align(Alignment.CenterStart)
                 )
             }
@@ -326,20 +409,20 @@ private fun CompactCartItem(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = if (isSelected) 20.dp else 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
+                    .padding(start = if (isSelected) 16.dp else 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Enhanced Product Image
+                // Product Image
                 Box(
                     modifier = Modifier
-                        .size(70.dp)
-                        .shadow(4.dp, RoundedCornerShape(12.dp))
-                        .clip(RoundedCornerShape(12.dp))
+                        .size(60.dp)
+                        .shadow(3.dp, RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(10.dp))
                         .background(BackgroundGray)
                         .border(
                             width = if (isSelected) 2.dp else 1.dp,
                             color = if (isSelected) GoldPrimary else Color(0xFFE0E0E0),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(10.dp)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -355,95 +438,75 @@ private fun CompactCartItem(
                             Icons.Default.CheckCircle,
                             contentDescription = null,
                             tint = Color(0xFFBDBDBD),
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
                 // Product Info
                 Column(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        item.product.name,
-                        fontSize = 16.sp,
+                        currentProduct.name,
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = TextPrimary,
                         maxLines = 1
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MediumGreen.copy(alpha = 0.1f)
-                        ) {
-                            Text(
-                                "ID: ${item.product.id}",
-                                fontSize = 11.sp,
-                                color = MediumGreen,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Icon(
-                            Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = GoldPrimary,
-                            modifier = Modifier.size(4.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             "${item.quantity}x",
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            color = AccentOrange
+                            color = GoldPrimary
                         )
                         Text(
-                            " • ${item.metal.ifEmpty { "${item.product.karat}K" }}",
-                            fontSize = 12.sp,
+                            " • ${item.metal.ifEmpty { "${extractKaratFromMaterialType(currentProduct.materialType)}K" }}",
+                            fontSize = 11.sp,
                             color = TextSecondary
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                    // Price with elegant styling
+                    // Price
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             "₹",
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MediumGreen
+                            color = GoldPrimary
                         )
                         Text(
-                            formatCurrencyNumber(finalAmount),
-                            fontSize = 18.sp,
+                            formatCurrencyNumber(displayAmount),
+                            fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MediumGreen
+                            color = GoldPrimary
                         )
                     }
                 }
 
-                // Remove Button with better design
+                // Remove Button
                 IconButton(
                     onClick = { onRemove() },
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(36.dp)
                         .background(ErrorRed.copy(alpha = 0.1f), CircleShape)
                 ) {
                     Icon(
-                        Icons.Default.CheckCircle,
+                        Icons.Default.Delete,
                         contentDescription = "Remove",
                         tint = ErrorRed,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -456,6 +519,9 @@ private fun DetailPanel(
     item: CartItem,
     index: Int,
     metalRates: org.example.project.data.MetalRates,
+    productsViewModel: ProductsViewModel,
+    fetchedProduct: Product?,
+    isLoadingProduct: Boolean,
     editingField: String?,
     fieldValues: Map<String, TextFieldValue>,
     onEditingFieldChange: (String?) -> Unit,
@@ -466,34 +532,56 @@ private fun DetailPanel(
     cartImage: androidx.compose.ui.graphics.ImageBitmap?,
     modifier: Modifier = Modifier
 ) {
+    val currentProduct = fetchedProduct ?: item.product
     val metalKarat = if (item.metal.isNotEmpty()) {
-        item.metal.replace("K", "").toIntOrNull() ?: item.product.karat
+        item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
     } else {
-        item.product.karat
+        extractKaratFromMaterialType(currentProduct.materialType)
     }
 
     val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
     val goldRate = if (item.customGoldRate > 0) item.customGoldRate else defaultGoldRate
-    val silverRate = metalRates.getSilverRateForPurity(999)
+    val silverPurity = extractSilverPurityFromMaterialType(currentProduct.materialType)
+    val silverRate = metalRates.getSilverRateForPurity(silverPurity)
 
-    val calculatedValues = remember(item, metalRates, metalKarat) {
-        val grossWeight = item.grossWeight
-        val lessWeight = item.lessWeight
+    val calculatedValues = remember(item, metalRates, metalKarat, currentProduct, item.stoneRate, item.stoneQuantity, item.cwWeight) {
+        println("🔍 DETAIL PANEL CALCULATION START - ${currentProduct.name}")
+        
+        val grossWeight = if (item.grossWeight > 0) item.grossWeight else currentProduct.totalWeight
+        val lessWeight = if (item.lessWeight > 0) item.lessWeight else currentProduct.lessWeight
         val quantity = item.quantity
-        val makingChargesPerGram = item.makingCharges
-        val cwWeight = item.cwWeight
-        val stoneRate = item.stoneRate
-        val vaCharges = item.va
+        val makingChargesPerGram = if (item.makingCharges > 0) item.makingCharges else currentProduct.defaultMakingRate
+        val cwWeight = if (item.cwWeight > 0) item.cwWeight else currentProduct.cwWeight
+        val stoneRate = if (item.stoneRate > 0) item.stoneRate else currentProduct.stoneRate
+        val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else currentProduct.stoneQuantity
+        val vaCharges = if (item.va > 0) item.va else currentProduct.vaCharges
         val discountPercent = item.discountPercent
 
         val netWeight = grossWeight - lessWeight
-        val baseAmount = when {
-            item.product.materialType.contains("gold", ignoreCase = true) -> netWeight * goldRate * quantity
-            item.product.materialType.contains("silver", ignoreCase = true) -> netWeight * silverRate * quantity
-            else -> netWeight * goldRate * quantity
+        println("📊 Detail Panel Weight Details: grossWeight=$grossWeight, lessWeight=$lessWeight, netWeight=$netWeight, quantity=$quantity")
+        
+        val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+        val karatForRate = if (item.metal.isNotEmpty()) {
+            item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
+        } else {
+            extractKaratFromMaterialType(currentProduct.materialType)
         }
+        val collectionRate = try {
+            ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, karatForRate)
+        } catch (e: Exception) { 0.0 }
+        val metalRate = if (collectionRate > 0) collectionRate else when {
+            currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
+            currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
+            else -> goldRate
+        }
+        
+        println("💰 Detail Panel Rate Details: karatForRate=$karatForRate, collectionRate=$collectionRate, metalRate=$metalRate")
+        
+        val baseAmount = netWeight * metalRate * quantity
         val makingCharges = netWeight * makingChargesPerGram * quantity
-        val stoneAmount = cwWeight * stoneRate * quantity
+        val stoneAmount = stoneRate * stoneQuantity * cwWeight
+        println("🔍 Stone Calculation Debug: stoneRate=$stoneRate, stoneQuantity=$stoneQuantity, cwWeight=$cwWeight, stoneAmount=$stoneAmount")
+        
         val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
         val discountAmount = totalCharges * (discountPercent / 100)
         val taxableAmount = totalCharges - discountAmount
@@ -501,6 +589,20 @@ private fun DetailPanel(
         val sgst = taxableAmount * 0.015
         val totalGst = cgst + sgst
         val finalAmount = taxableAmount + totalGst
+
+        println("💵 Detail Panel Amount Breakdown:")
+        println("   Base Amount: $baseAmount (netWeight=$netWeight * metalRate=$metalRate * quantity=$quantity)")
+        println("   Making Charges: $makingCharges (netWeight=$netWeight * makingRate=$makingChargesPerGram * quantity=$quantity)")
+        println("   Stone Amount: $stoneAmount (stoneRate=$stoneRate * stoneQuantity=$stoneQuantity * cwWeight=$cwWeight)")
+        println("   VA Charges: $vaCharges")
+        println("   Total Charges: $totalCharges")
+        println("   Discount Amount: $discountAmount (${discountPercent}%)")
+        println("   Taxable Amount: $taxableAmount")
+        println("   CGST: $cgst (1.5%)")
+        println("   SGST: $sgst (1.5%)")
+        println("   Total GST: $totalGst")
+        println("   Final Amount: $finalAmount")
+        println("🔍 DETAIL PANEL CALCULATION END")
 
         mapOf(
             "grossWeight" to grossWeight,
@@ -522,7 +624,7 @@ private fun DetailPanel(
             "sgst" to sgst,
             "totalGst" to totalGst,
             "finalAmount" to finalAmount,
-            "goldRate" to goldRate
+            "metalRate" to metalRate
         )
     }
 
@@ -530,16 +632,13 @@ private fun DetailPanel(
         modifier = modifier
             .background(CardWhite)
     ) {
-        // Enhanced Header with Golden Gradient
+        // Compact Header - Fixed height 48dp
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(GoldDark, GoldPrimary)
-                    )
-                )
-                .padding(12.dp)
+                .height(48.dp)
+                .background(GoldPrimary)
+                .padding(horizontal = 12.dp, vertical = 10.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -550,48 +649,49 @@ private fun DetailPanel(
                     Icon(
                         Icons.Default.Info,
                         contentDescription = null,
-                        tint = DarkGreen,
-                        modifier = Modifier.size(20.dp)
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         "Item Details",
-                        fontSize = 18.sp,
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
-                        color = DarkGreen
+                        color = Color.White
                     )
                 }
                 IconButton(
                     onClick = onClose,
                     modifier = Modifier
-                        .size(32.dp)
-                        .background(DarkGreen.copy(alpha = 0.15f), CircleShape)
+                        .size(28.dp)
+                        .background(Color.White.copy(alpha = 0.2f), CircleShape)
                 ) {
                     Icon(
                         Icons.Default.Close,
                         contentDescription = "Close",
-                        tint = DarkGreen
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
         }
 
-        // Scrollable Content
+        // Scrollable Content with reduced padding
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Product Image (Large) with elegant styling
+            // Product Image - Compact
             if (cartImage != null) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(220.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    elevation = 6.dp
+                        .height(160.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = 4.dp
                 ) {
                     Box(
                         modifier = Modifier
@@ -609,18 +709,28 @@ private fun DetailPanel(
                 }
             }
 
-            // Product Info Card with modern design
+            // Product Info Card - Compact
             ElegantInfoCard(
                 icon = Icons.Default.CheckCircle,
                 title = "Product Information"
             ) {
-                InfoRow("Product Name", item.product.name, Icons.Default.CheckCircle)
-                Spacer(modifier = Modifier.height(8.dp))
-                InfoRow("Item ID", item.product.id, Icons.Default.CheckCircle)
-                Spacer(modifier = Modifier.height(8.dp))
-                InfoRow("Category", item.product.categoryId, Icons.Default.CheckCircle)
-                Spacer(modifier = Modifier.height(8.dp))
-                InfoRow("Material", item.product.materialType, Icons.Default.CheckCircle)
+                if (isLoadingProduct) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = MaterialTheme.colors.primary
+                        )
+                    }
+                } else {
+                    InfoRow("Product Name", currentProduct.name, Icons.Default.CheckCircle)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    InfoRow("Category", productsViewModel.getCategoryName(currentProduct.categoryId), Icons.Default.CheckCircle)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    InfoRow("Barcode ID", currentProduct.barcodeIds.joinToString(", "), Icons.Default.Code)
+                }
             }
 
             // Basic Information Section
@@ -628,23 +738,24 @@ private fun DetailPanel(
                 icon = Icons.Default.Edit,
                 title = "Basic Information"
             ) {
-                EditableDetailField(
-                    label = "Metal Type",
-                    fieldKey = "metal_$index",
-                    currentValue = item.metal.ifEmpty { "${item.product.karat}K" },
-                    editingField = editingField,
-                    fieldValues = fieldValues,
-                    onEditingFieldChange = onEditingFieldChange,
-                    onFieldValueChange = onFieldValueChange,
-                    onSaveAndCloseEditing = onSaveAndCloseEditing,
-                    keyboardType = KeyboardType.Text,
-                    icon = Icons.Default.Edit
-                )
-                Spacer(modifier = Modifier.height(16.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        EditableDetailField(
+                            label = "Metal Type",
+                            fieldKey = "metal_$index",
+                            currentValue = item.metal.ifEmpty { "${extractKaratFromMaterialType(currentProduct.materialType)}K" },
+                            editingField = editingField,
+                            fieldValues = fieldValues,
+                            onEditingFieldChange = onEditingFieldChange,
+                            onFieldValueChange = onFieldValueChange,
+                            onSaveAndCloseEditing = onSaveAndCloseEditing,
+                            keyboardType = KeyboardType.Text,
+                            icon = Icons.Default.Edit
+                        )
+                    }
                     Box(modifier = Modifier.weight(1f)) {
                         EditableDetailField(
                             label = "Quantity",
@@ -659,20 +770,6 @@ private fun DetailPanel(
                             icon = Icons.Default.Add
                         )
                     }
-                    Box(modifier = Modifier.weight(1f)) {
-                        EditableDetailField(
-                            label = "Size/Weight",
-                            fieldKey = "size_$index",
-                            currentValue = "${item.selectedWeight}g",
-                            editingField = editingField,
-                            fieldValues = fieldValues,
-                            onEditingFieldChange = onEditingFieldChange,
-                            onFieldValueChange = onFieldValueChange,
-                            onSaveAndCloseEditing = onSaveAndCloseEditing,
-                            keyboardType = KeyboardType.Decimal,
-                            icon = Icons.Default.Edit
-                        )
-                    }
                 }
             }
 
@@ -684,7 +781,7 @@ private fun DetailPanel(
                 EditableDetailField(
                     label = "Gross Weight (g)",
                     fieldKey = "grossWeight_$index",
-                    currentValue = item.grossWeight.toString(),
+                    currentValue = if (item.grossWeight > 0) item.grossWeight.toString() else currentProduct.totalWeight.toString(),
                     editingField = editingField,
                     fieldValues = fieldValues,
                     onEditingFieldChange = onEditingFieldChange,
@@ -692,11 +789,11 @@ private fun DetailPanel(
                     onSaveAndCloseEditing = onSaveAndCloseEditing,
                     keyboardType = KeyboardType.Decimal
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 EditableDetailField(
                     label = "Less Weight (g)",
                     fieldKey = "lessWeight_$index",
-                    currentValue = item.lessWeight.toString(),
+                    currentValue = if (item.lessWeight > 0) item.lessWeight.toString() else currentProduct.lessWeight.toString(),
                     editingField = editingField,
                     fieldValues = fieldValues,
                     onEditingFieldChange = onEditingFieldChange,
@@ -704,32 +801,32 @@ private fun DetailPanel(
                     onSaveAndCloseEditing = onSaveAndCloseEditing,
                     keyboardType = KeyboardType.Decimal
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 CalculatedValueRow(
                     label = "Net Weight",
                     value = formatWeight(calculatedValues["netWeight"] ?: 0.0),
-                    color = MediumGreen,
+                    color = GoldPrimary,
                     icon = Icons.Default.Done
                 )
             }
 
-            // Rates Section with premium design
+            // Rates Section
             EditableSection(
                 icon = Icons.Default.CheckCircle,
                 title = "Rates & Charges"
             ) {
                 CalculatedValueRow(
-                    label = "Gold Rate",
-                    value = formatCurrency(calculatedValues["goldRate"] ?: 0.0),
-                    color = GoldDark,
+                    label = "Metal Rate",
+                    value = formatCurrency(calculatedValues["metalRate"] ?: 0.0),
+                    color = GoldPrimary,
                     icon = Icons.Default.Edit,
                     isLarge = true
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 EditableDetailField(
                     label = "Making Rate (per gram)",
                     fieldKey = "makingRate_$index",
-                    currentValue = item.makingCharges.toString(),
+                    currentValue = if (item.makingCharges > 0) item.makingCharges.toString() else if (currentProduct.makingRate > 0) currentProduct.makingRate.toString() else currentProduct.defaultMakingRate.toString(),
                     editingField = editingField,
                     fieldValues = fieldValues,
                     onEditingFieldChange = onEditingFieldChange,
@@ -737,184 +834,117 @@ private fun DetailPanel(
                     onSaveAndCloseEditing = onSaveAndCloseEditing,
                     keyboardType = KeyboardType.Decimal
                 )
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        EditableDetailField(
-                            label = "CW Weight",
-                            fieldKey = "cwWeight_$index",
-                            currentValue = item.cwWeight.toString(),
-                            editingField = editingField,
-                            fieldValues = fieldValues,
-                            onEditingFieldChange = onEditingFieldChange,
-                            onFieldValueChange = onFieldValueChange,
-                            onSaveAndCloseEditing = onSaveAndCloseEditing,
-                            keyboardType = KeyboardType.Decimal
-                        )
-                    }
-                    Box(modifier = Modifier.weight(1f)) {
-                        EditableDetailField(
-                            label = "Stone Rate",
-                            fieldKey = "stoneRate_$index",
-                            currentValue = item.stoneRate.toString(),
-                            editingField = editingField,
-                            fieldValues = fieldValues,
-                            onEditingFieldChange = onEditingFieldChange,
-                            onFieldValueChange = onFieldValueChange,
-                            onSaveAndCloseEditing = onSaveAndCloseEditing,
-                            keyboardType = KeyboardType.Decimal,
-                            icon = Icons.Default.Edit
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        EditableDetailField(
-                            label = "VA Charges",
-                            fieldKey = "vaCharges_$index",
-                            currentValue = item.va.toString(),
-                            editingField = editingField,
-                            fieldValues = fieldValues,
-                            onEditingFieldChange = onEditingFieldChange,
-                            onFieldValueChange = onFieldValueChange,
-                            onSaveAndCloseEditing = onSaveAndCloseEditing,
-                            keyboardType = KeyboardType.Decimal
-                        )
-                    }
-                    Box(modifier = Modifier.weight(1f)) {
-                        EditableDetailField(
-                            label = "Discount %",
-                            fieldKey = "discountPercent_$index",
-                            currentValue = item.discountPercent.toString(),
-                            editingField = editingField,
-                            fieldValues = fieldValues,
-                            onEditingFieldChange = onEditingFieldChange,
-                            onFieldValueChange = onFieldValueChange,
-                            onSaveAndCloseEditing = onSaveAndCloseEditing,
-                            keyboardType = KeyboardType.Decimal,
-                            icon = Icons.Default.CheckCircle
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.height(8.dp))
+                EditableDetailField(
+                    label = "VA Charges",
+                    fieldKey = "vaCharges_$index",
+                    currentValue = if (item.va > 0) item.va.toString() else currentProduct.vaCharges.toString(),
+                    editingField = editingField,
+                    fieldValues = fieldValues,
+                    onEditingFieldChange = onEditingFieldChange,
+                    onFieldValueChange = onFieldValueChange,
+                    onSaveAndCloseEditing = onSaveAndCloseEditing,
+                    keyboardType = KeyboardType.Decimal
+                )
             }
 
-            // Calculated Amounts Section
-            ElegantInfoCard(
-                icon = Icons.Default.Edit,
-                title = "Calculated Amounts",
-                accentColor = AccentBlue
-            ) {
-                AmountRow("Base Amount", calculatedValues["baseAmount"] ?: 0.0, MediumGreen)
-                Spacer(modifier = Modifier.height(8.dp))
-                AmountRow("Making Charges", calculatedValues["makingCharges"] ?: 0.0, AccentBlue)
-                Spacer(modifier = Modifier.height(8.dp))
-                AmountRow("Stone Amount", calculatedValues["stoneAmount"] ?: 0.0, AccentPurple)
-                Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(12.dp))
-                AmountRow("Total Charges", calculatedValues["totalCharges"] ?: 0.0, AccentBlue, isBold = true)
-                Spacer(modifier = Modifier.height(8.dp))
-                AmountRow("Discount Amount", calculatedValues["discountAmount"] ?: 0.0, ErrorRed)
-                Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(12.dp))
-                AmountRow("Taxable Amount", calculatedValues["taxableAmount"] ?: 0.0, AccentOrange, isBold = true)
-            }
-
-            // Tax Details Section
-            ElegantInfoCard(
-                icon = Icons.Default.Edit,
-                title = "Tax Details",
-                accentColor = AccentPurple
-            ) {
-                AmountRow("CGST (1.5%)", calculatedValues["cgst"] ?: 0.0, AccentPurple)
-                Spacer(modifier = Modifier.height(8.dp))
-                AmountRow("SGST (1.5%)", calculatedValues["sgst"] ?: 0.0, AccentPurple)
-                Spacer(modifier = Modifier.height(12.dp))
-                Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
-                Spacer(modifier = Modifier.height(12.dp))
-                AmountRow("Total GST", calculatedValues["totalGst"] ?: 0.0, AccentPurple, isBold = true)
-            }
-
-            // Final Amount Highlight - Premium Design
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                elevation = 8.dp
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(
-                                    AccentOrange.copy(alpha = 0.1f),
-                                    GoldLight.copy(alpha = 0.3f)
-                                )
-                            )
-                        )
-                        .border(
-                            width = 2.dp,
-                            brush = Brush.horizontalGradient(
-                                colors = listOf(AccentOrange, GoldPrimary)
-                            ),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-                        .padding(24.dp)
+            // Stone Details Section (if applicable)
+            if (currentProduct.hasStones) {
+                EditableSection(
+                    icon = Icons.Default.Diamond,
+                    title = "Stone Details"
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.Default.Star,
-                                    contentDescription = null,
-                                    tint = GoldPrimary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    "FINAL AMOUNT",
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = AccentOrange
-                                )
-                            }
-                            Text(
-                                "Including all taxes",
-                                fontSize = 12.sp,
-                                color = TextSecondary,
-                                modifier = Modifier.padding(start = 28.dp)
+                        Box(modifier = Modifier.weight(1f)) {
+                            EditableDetailField(
+                                label = "Stone Name",
+                                fieldKey = "stoneName_$index",
+                                currentValue = currentProduct.stoneName,
+                                editingField = editingField,
+                                fieldValues = fieldValues,
+                                onEditingFieldChange = onEditingFieldChange,
+                                onFieldValueChange = onFieldValueChange,
+                                onSaveAndCloseEditing = onSaveAndCloseEditing,
+                                keyboardType = KeyboardType.Text,
+                                icon = Icons.Default.Diamond
                             )
                         }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    "₹",
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = AccentOrange
-                                )
-                                Text(
-                                    formatCurrencyNumber(calculatedValues["finalAmount"] ?: 0.0),
-                                    fontSize = 26.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = AccentOrange
-                                )
-                            }
+                        Box(modifier = Modifier.weight(1f)) {
+                            EditableDetailField(
+                                label = "Stone Quantity",
+                                fieldKey = "stoneQuantity_$index",
+                                currentValue = if (item.stoneQuantity > 0) item.stoneQuantity.toString() else currentProduct.stoneQuantity.toString(),
+                                editingField = editingField,
+                                fieldValues = fieldValues,
+                                onEditingFieldChange = onEditingFieldChange,
+                                onFieldValueChange = onFieldValueChange,
+                                onSaveAndCloseEditing = onSaveAndCloseEditing,
+                                keyboardType = KeyboardType.Decimal,
+                                icon = Icons.Default.Add
+                            )
                         }
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
+                            EditableDetailField(
+                                label = "CW Weight",
+                                fieldKey = "cwWeight_$index",
+                                currentValue = if (item.cwWeight > 0) item.cwWeight.toString() else currentProduct.cwWeight.toString(),
+                                editingField = editingField,
+                                fieldValues = fieldValues,
+                                onEditingFieldChange = onEditingFieldChange,
+                                onFieldValueChange = onFieldValueChange,
+                                onSaveAndCloseEditing = onSaveAndCloseEditing,
+                                keyboardType = KeyboardType.Decimal
+                            )
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
+                            EditableDetailField(
+                                label = "Stone Rate",
+                                fieldKey = "stoneRate_$index",
+                                currentValue = if (item.stoneRate > 0) item.stoneRate.toString() else currentProduct.stoneRate.toString(),
+                                editingField = editingField,
+                                fieldValues = fieldValues,
+                                onEditingFieldChange = onEditingFieldChange,
+                                onFieldValueChange = onFieldValueChange,
+                                onSaveAndCloseEditing = onSaveAndCloseEditing,
+                                keyboardType = KeyboardType.Decimal,
+                                icon = Icons.Default.Edit
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    CalculatedValueRow(
+                        label = "Stone Amount",
+                        value = formatCurrency(calculatedValues["stoneAmount"] ?: 0.0),
+                        color = GoldPrimary,
+                        icon = Icons.Default.CheckCircle
+                    )
                 }
+            }
+
+            // Calculated Amounts Section - Compact
+            ElegantInfoCard(
+                icon = Icons.Default.Edit,
+                title = "Calculated Amounts",
+                accentColor = GoldPrimary
+            ) {
+                AmountRow("Base Amount", calculatedValues["baseAmount"] ?: 0.0, GoldPrimary)
+                Spacer(modifier = Modifier.height(4.dp))
+                AmountRow("Making Charges", calculatedValues["makingCharges"] ?: 0.0, GoldPrimary)
+                Spacer(modifier = Modifier.height(4.dp))
+                AmountRow("Stone Amount", calculatedValues["stoneAmount"] ?: 0.0, GoldPrimary)
+                Spacer(modifier = Modifier.height(6.dp))
+                Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                Spacer(modifier = Modifier.height(6.dp))
+                AmountRow("Total Charges", calculatedValues["totalCharges"] ?: 0.0, GoldPrimary, isBold = true)
             }
         }
     }
@@ -932,38 +962,38 @@ private fun NoSelectionPlaceholder(modifier: Modifier = Modifier) {
                     )
                 )
             )
-            .padding(32.dp),
+            .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(100.dp)
+                    .size(80.dp)
                     .background(GoldLight, CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     Icons.Default.CheckCircle,
                     contentDescription = null,
-                    modifier = Modifier.size(50.dp),
-                    tint = GoldDark
+                    modifier = Modifier.size(40.dp),
+                    tint = GoldPrimary
                 )
             }
             Text(
                 "Select an item",
-                fontSize = 22.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary
             )
             Text(
                 "Click on any item from the list\nto view and edit its details",
-                fontSize = 15.sp,
+                fontSize = 13.sp,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,
-                lineHeight = 22.sp
+                lineHeight = 18.sp
             )
         }
     }
@@ -973,23 +1003,23 @@ private fun NoSelectionPlaceholder(modifier: Modifier = Modifier) {
 private fun ElegantInfoCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
-    accentColor: Color = GoldDark,
+    accentColor: Color = GoldPrimary,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = 4.dp,
+        shape = RoundedCornerShape(10.dp),
+        elevation = 3.dp,
         backgroundColor = CardWhite
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 12.dp)
+                modifier = Modifier.padding(bottom = 8.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(28.dp)
                         .background(accentColor.copy(alpha = 0.15f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
@@ -997,13 +1027,13 @@ private fun ElegantInfoCard(
                         icon,
                         contentDescription = null,
                         tint = accentColor,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     title,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
                 )
@@ -1021,32 +1051,32 @@ private fun EditableSection(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = 4.dp,
+        shape = RoundedCornerShape(10.dp),
+        elevation = 3.dp,
         backgroundColor = CardWhite
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(10.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 12.dp)
+                modifier = Modifier.padding(bottom = 8.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
-                        .background(GoldDark.copy(alpha = 0.15f), CircleShape),
+                        .size(28.dp)
+                        .background(GoldPrimary.copy(alpha = 0.15f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         icon,
                         contentDescription = null,
-                        tint = GoldDark,
-                        modifier = Modifier.size(18.dp)
+                        tint = GoldPrimary,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     title,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
                 )
@@ -1066,7 +1096,7 @@ private fun InfoRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(BackgroundGray, RoundedCornerShape(8.dp))
-            .padding(12.dp),
+            .padding(10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1076,20 +1106,20 @@ private fun InfoRow(
                     icon,
                     contentDescription = null,
                     tint = TextSecondary,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(14.dp)
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
             }
             Text(
                 label,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 color = TextSecondary,
                 fontWeight = FontWeight.Medium
             )
         }
         Text(
             value,
-            fontSize = 14.sp,
+            fontSize = 13.sp,
             color = TextPrimary,
             fontWeight = FontWeight.SemiBold
         )
@@ -1110,26 +1140,26 @@ private fun AmountRow(
                 if (isBold) color.copy(alpha = 0.1f) else Color.Transparent,
                 RoundedCornerShape(8.dp)
             )
-            .padding(horizontal = if (isBold) 12.dp else 0.dp, vertical = if (isBold) 8.dp else 0.dp),
+            .padding(horizontal = if (isBold) 10.dp else 0.dp, vertical = if (isBold) 6.dp else 0.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             label,
-            fontSize = if (isBold) 15.sp else 14.sp,
+            fontSize = if (isBold) 14.sp else 13.sp,
             color = TextPrimary,
             fontWeight = if (isBold) FontWeight.Bold else FontWeight.Medium
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 "₹",
-                fontSize = if (isBold) 14.sp else 13.sp,
+                fontSize = if (isBold) 13.sp else 12.sp,
                 fontWeight = if (isBold) FontWeight.Bold else FontWeight.Medium,
                 color = color
             )
             Text(
                 formatCurrencyNumber(amount),
-                fontSize = if (isBold) 16.sp else 15.sp,
+                fontSize = if (isBold) 15.sp else 14.sp,
                 color = color,
                 fontWeight = if (isBold) FontWeight.Bold else FontWeight.SemiBold
             )
@@ -1148,8 +1178,8 @@ private fun CalculatedValueRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(color.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
-            .padding(14.dp),
+            .background(color.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+            .padding(10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1159,20 +1189,20 @@ private fun CalculatedValueRow(
                     icon,
                     contentDescription = null,
                     tint = color,
-                    modifier = Modifier.size(if (isLarge) 22.dp else 18.dp)
+                    modifier = Modifier.size(if (isLarge) 18.dp else 16.dp)
                 )
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(8.dp))
             }
             Text(
                 label,
-                fontSize = if (isLarge) 15.sp else 14.sp,
+                fontSize = if (isLarge) 14.sp else 13.sp,
                 color = TextPrimary,
                 fontWeight = FontWeight.Medium
             )
         }
         Text(
             value,
-            fontSize = if (isLarge) 17.sp else 15.sp,
+            fontSize = if (isLarge) 15.sp else 14.sp,
             color = color,
             fontWeight = FontWeight.Bold
         )
@@ -1201,14 +1231,14 @@ private fun EditableDetailField(
                 Icon(
                     icon,
                     contentDescription = null,
-                    tint = GoldDark,
-                    modifier = Modifier.size(14.dp)
+                    tint = GoldPrimary,
+                    modifier = Modifier.size(12.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
             }
             Text(
                 label,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 color = TextSecondary,
                 fontWeight = FontWeight.SemiBold
             )
@@ -1228,7 +1258,7 @@ private fun EditableDetailField(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .heightIn(min = 48.dp, max = 60.dp)
                     .focusRequester(focusRequester),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = keyboardType,
@@ -1240,14 +1270,15 @@ private fun EditableDetailField(
                     }
                 ),
                 colors = TextFieldDefaults.outlinedTextFieldColors(
-                    focusedBorderColor = GoldDark,
-                    unfocusedBorderColor = GoldDark,
-                    cursorColor = GoldDark,
+                    focusedBorderColor = GoldPrimary,
+                    unfocusedBorderColor = GoldPrimary,
+                    cursorColor = GoldPrimary,
                     backgroundColor = GoldLight.copy(alpha = 0.2f)
                 ),
-                shape = RoundedCornerShape(8.dp),
+                shape = RoundedCornerShape(6.dp),
                 singleLine = true,
-                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp)
+                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                maxLines = 1
             )
 
             LaunchedEffect(Unit) {
@@ -1257,17 +1288,19 @@ private fun EditableDetailField(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .heightIn(min = 48.dp, max = 60.dp)
                     .clickable { onEditingFieldChange(fieldKey) }
-                    .border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(8.dp))
-                    .background(BackgroundGray, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(6.dp))
+                    .background(BackgroundGray, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 12.dp, vertical = 12.dp)
             ) {
                 Text(
                     currentValue,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     color = TextPrimary,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                 )
             }
         }
@@ -1287,16 +1320,16 @@ private fun EmptyCartMessage() {
                     )
                 )
             )
-            .padding(32.dp),
+            .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(24.dp)
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(120.dp)
+                    .size(100.dp)
                     .background(
                         brush = Brush.radialGradient(
                             colors = listOf(GoldLight, GoldLight.copy(alpha = 0.3f))
@@ -1308,19 +1341,19 @@ private fun EmptyCartMessage() {
                 Icon(
                     Icons.Default.ShoppingCart,
                     contentDescription = "Empty Cart",
-                    modifier = Modifier.size(60.dp),
-                    tint = GoldDark
+                    modifier = Modifier.size(50.dp),
+                    tint = GoldPrimary
                 )
             }
             Text(
                 "Your cart is empty",
-                fontSize = 24.sp,
+                fontSize = 22.sp,
                 color = TextPrimary,
                 fontWeight = FontWeight.Bold
             )
             Text(
                 "Add products to start building your order",
-                fontSize = 16.sp,
+                fontSize = 14.sp,
                 color = TextSecondary,
                 textAlign = TextAlign.Center
             )
@@ -1329,7 +1362,7 @@ private fun EmptyCartMessage() {
 }
 
 // Helper functions
-private fun getCurrentFieldValue(fieldKey: String, cartItems: List<CartItem>): String {
+private fun getCurrentFieldValue(fieldKey: String, cartItems: List<CartItem>, currentProduct: Product?): String {
     val parts = fieldKey.split("_")
     if (parts.size < 2) return ""
     val index = parts[1].toIntOrNull() ?: return ""
@@ -1337,20 +1370,23 @@ private fun getCurrentFieldValue(fieldKey: String, cartItems: List<CartItem>): S
 
     val item = cartItems[index]
     val fieldName = parts[0]
+    val product = currentProduct ?: item.product
 
     return when (fieldName) {
-        "metal" -> item.metal.ifEmpty { "${item.product.karat}K" }
+        "metal" -> item.metal.ifEmpty { "${extractKaratFromMaterialType(product.materialType)}K" }
         "customGoldRate" -> if (item.customGoldRate > 0) item.customGoldRate.toString() else ""
         "size" -> "${item.selectedWeight}"
         "qty" -> item.quantity.toString()
-        "grossWeight" -> item.grossWeight.toString()
-        "lessWeight" -> item.lessWeight.toString()
+        "grossWeight" -> if (item.grossWeight > 0) item.grossWeight.toString() else product.totalWeight.toString()
+        "lessWeight" -> if (item.lessWeight > 0) item.lessWeight.toString() else product.lessWeight.toString()
         "netWeight" -> item.netWeight.toString()
-        "makingRate" -> item.makingCharges.toString()
-        "cwWeight" -> item.cwWeight.toString()
-        "stoneRate" -> item.stoneRate.toString()
-        "vaCharges" -> item.va.toString()
+        "makingRate" -> if (item.makingCharges > 0) item.makingCharges.toString() else if (product.makingRate > 0) product.makingRate.toString() else product.defaultMakingRate.toString()
+        "cwWeight" -> if (item.cwWeight > 0) item.cwWeight.toString() else product.cwWeight.toString()
+        "stoneRate" -> if (item.stoneRate > 0) item.stoneRate.toString() else product.stoneRate.toString()
+        "vaCharges" -> if (item.va > 0) item.va.toString() else product.vaCharges.toString()
         "discountPercent" -> item.discountPercent.toString()
+        "stoneName" -> product.stoneName
+        "stoneQuantity" -> if (item.stoneQuantity > 0) item.stoneQuantity.toString() else product.stoneQuantity.toString()
         else -> ""
     }
 }
@@ -1361,6 +1397,7 @@ private fun saveFieldValue(
     cartItems: List<CartItem>,
     onItemUpdate: (Int, CartItem) -> Unit
 ) {
+    println("💾 SAVING FIELD VALUE: $fieldKey = $value")
     val parts = fieldKey.split("_")
     if (parts.size < 2) return
 
@@ -1373,20 +1410,24 @@ private fun saveFieldValue(
     try {
         when (fieldName) {
             "metal" -> {
+                println("   Updating metal: ${item.metal} -> $value")
                 onItemUpdate(index, item.copy(metal = value.trim()))
             }
             "customGoldRate" -> {
                 val cleanValue = value.replace("₹", "").replace(",", "").trim()
                 val rate = if (cleanValue.isNotEmpty()) cleanValue.toDoubleOrNull() ?: 0.0 else 0.0
+                println("   Updating custom gold rate: ${item.customGoldRate} -> $rate")
                 onItemUpdate(index, item.copy(customGoldRate = rate))
             }
             "size" -> {
                 val cleanValue = value.replace("g", "").trim()
                 val weight = if (cleanValue.isNotEmpty()) cleanValue.toDoubleOrNull() ?: item.selectedWeight else item.selectedWeight
+                println("   Updating size: ${item.selectedWeight} -> $weight")
                 onItemUpdate(index, item.copy(selectedWeight = weight))
             }
             "qty" -> {
                 val qty = if (value.trim().isNotEmpty()) value.trim().toIntOrNull() ?: item.quantity else item.quantity
+                println("   Updating quantity: ${item.quantity} -> $qty")
                 onItemUpdate(index, item.copy(quantity = qty))
             }
             "grossWeight" -> {
@@ -1395,6 +1436,7 @@ private fun saveFieldValue(
                     grossWeight = weight,
                     netWeight = weight - item.lessWeight
                 )
+                println("   Updating gross weight: ${item.grossWeight} -> $weight, net weight: ${item.netWeight} -> ${updatedItem.netWeight}")
                 onItemUpdate(index, updatedItem)
             }
             "lessWeight" -> {
@@ -1403,35 +1445,47 @@ private fun saveFieldValue(
                     lessWeight = weight,
                     netWeight = item.grossWeight - weight
                 )
+                println("   Updating less weight: ${item.lessWeight} -> $weight, net weight: ${item.netWeight} -> ${updatedItem.netWeight}")
                 onItemUpdate(index, updatedItem)
             }
             "netWeight" -> {
                 val weight = if (value.trim().isNotEmpty()) value.trim().toDoubleOrNull() ?: item.netWeight else item.netWeight
+                println("   Updating net weight: ${item.netWeight} -> $weight")
                 onItemUpdate(index, item.copy(netWeight = weight))
             }
             "makingRate" -> {
                 val rate = if (value.trim().isNotEmpty()) value.trim().toDoubleOrNull() ?: item.makingCharges else item.makingCharges
+                println("   Updating making rate: ${item.makingCharges} -> $rate")
                 onItemUpdate(index, item.copy(makingCharges = rate))
             }
             "cwWeight" -> {
                 val weight = if (value.trim().isNotEmpty()) value.trim().toDoubleOrNull() ?: item.cwWeight else item.cwWeight
+                println("   Updating CW weight: ${item.cwWeight} -> $weight")
                 onItemUpdate(index, item.copy(cwWeight = weight))
             }
             "stoneRate" -> {
                 val rate = if (value.trim().isNotEmpty()) value.trim().toDoubleOrNull() ?: item.stoneRate else item.stoneRate
+                println("   Updating stone rate: ${item.stoneRate} -> $rate")
                 onItemUpdate(index, item.copy(stoneRate = rate))
             }
             "vaCharges" -> {
                 val va = if (value.trim().isNotEmpty()) value.trim().toDoubleOrNull() ?: item.va else item.va
+                println("   Updating VA charges: ${item.va} -> $va")
                 onItemUpdate(index, item.copy(va = va))
             }
             "discountPercent" -> {
                 val percent = if (value.trim().isNotEmpty()) value.trim().toDoubleOrNull() ?: item.discountPercent else item.discountPercent
+                println("   Updating discount percent: ${item.discountPercent} -> $percent")
                 onItemUpdate(index, item.copy(discountPercent = percent))
+            }
+            "stoneQuantity" -> {
+                val quantity = if (value.trim().isNotEmpty()) value.trim().toDoubleOrNull() ?: item.stoneQuantity else item.stoneQuantity
+                println("   Updating stone quantity: ${item.stoneQuantity} -> $quantity")
+                onItemUpdate(index, item.copy(stoneQuantity = quantity))
             }
         }
     } catch (e: Exception) {
-        println("Error saving field $fieldKey with value $value: ${e.message}")
+        println("❌ Error saving field $fieldKey with value $value: ${e.message}")
     }
 }
 
@@ -1448,4 +1502,14 @@ private fun formatCurrencyNumber(amount: Double): String {
 private fun formatWeight(weight: Double): String {
     val formatter = DecimalFormat("#,##0.000")
     return "${formatter.format(weight)}g"
+}
+
+private fun extractSilverPurityFromMaterialType(materialType: String): Int {
+    val s = materialType.lowercase()
+    if (s.contains("999")) return 999
+    if (s.contains("925") || s.contains("92.5")) return 925
+    if (s.contains("900") || s.contains("90.0")) return 900
+    val threeDigits = Regex("(\\d{3})").find(s)?.groupValues?.getOrNull(1)?.toIntOrNull()
+    if (threeDigits != null && threeDigits in listOf(900, 925, 999)) return threeDigits
+    return 999
 }

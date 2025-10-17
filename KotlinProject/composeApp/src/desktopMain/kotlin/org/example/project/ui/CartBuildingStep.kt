@@ -46,14 +46,19 @@ import kotlinx.coroutines.withContext
 import org.example.project.data.Category
 import org.example.project.data.Product
 import org.example.project.data.CartItem
+import org.example.project.data.GroupedProduct
 import org.example.project.data.MetalRatesManager
+import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.ui.CartTable
 import org.example.project.utils.ImageLoader
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.ProductsViewModel
+import org.example.project.JewelryAppInitializer
+
 import org.jetbrains.skia.Image
 import java.text.NumberFormat
 import java.util.Locale
+
 
 // Utility function to format numbers with commas
 private fun formatNumber(number: Double): String {
@@ -74,7 +79,6 @@ fun ShopMainScreen(
 ) {
     var selectedTabIndex by remember { mutableStateOf(0) }
     val cart by cartViewModel.cart
-    var showPriceEditor by remember { mutableStateOf(false) }
 
     // Update existing cart items with current gold rate when cart is loaded
     LaunchedEffect(Unit) {
@@ -149,56 +153,6 @@ fun ShopMainScreen(
                 }
             }
 
-            // Metal prices in a row with edit button
-            Card(
-                shape = RoundedCornerShape(6.dp),
-                elevation = 2.dp,
-                modifier = Modifier.padding(end = 8.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
-                ) {
-                    val metalRates by MetalRatesManager.metalRates
-                    
-                    Text(
-                        "Gold: ₹${formatNumber(metalRates.goldRates.rate24k)}/g",
-                        fontSize = 11.sp,
-                        color = Color(0xFFFFD700),
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Divider(
-                        modifier = Modifier
-                            .height(12.dp)
-                            .width(1.dp),
-                        color = Color.LightGray
-                    )
-
-                    Text(
-                        "Silver: ₹${formatNumber(metalRates.silverRates.rate999)}/g",
-                        fontSize = 11.sp,
-                        color = Color(0xFFC0C0C0),
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Button(
-                        onClick = { showPriceEditor = true },
-                        modifier = Modifier.size(24.dp),
-                        colors = ButtonDefaults.buttonColors(backgroundColor = MaterialTheme.colors.primary),
-                        shape = RoundedCornerShape(4.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Edit,
-                            contentDescription = "Edit prices",
-                            modifier = Modifier.size(12.dp),
-                            tint = Color.White
-                        )
-                    }
-                }
-            }
         }
 
         // Content based on selected tab
@@ -211,6 +165,7 @@ fun ShopMainScreen(
                 )
                 1 -> CartScreen(
                     cartViewModel = cartViewModel,
+                    productsViewModel = productsViewModel,
                     onProceedToPayment = {
                         onProceedToPayment?.invoke() // Navigate to BillingStep.PAYMENT
                     },
@@ -249,21 +204,6 @@ fun ShopMainScreen(
             }
         }
     }
-
-    // Price editor dialog
-    if (showPriceEditor) {
-        val metalRates by MetalRatesManager.metalRates
-        PriceEditorDialog(
-            goldPrice = metalRates.goldRates.rate24k,
-            silverPrice = metalRates.silverRates.rate999,
-            onPricesUpdated = { gold, silver ->
-                MetalRatesManager.updateGoldRates(gold)
-                MetalRatesManager.updateSilverRates(silver)
-                showPriceEditor = false
-            },
-            onDismiss = { showPriceEditor = false }
-        )
-    }
 }
 
 @Composable
@@ -277,12 +217,53 @@ fun CartBuildingScreen(
     val coroutineScope = rememberCoroutineScope()
     val cart by cartViewModel.cart
 
+    // Add comprehensive logging for debugging
+    println("🏪 DEBUG: CartBuildingScreen initialized")
+    println("   - Total products count: ${products.size}")
+    println("   - Categories count: ${categories.size}")
+    println("   - Cart items count: ${cart.items.size}")
+    println("   - Cart item IDs: ${cart.items.map { it.productId }}")
+
+    // Log all products to see what's available
+    products.forEach { product ->
+        println("   📦 Product: ${product.name} (ID: ${product.id})")
+        println("      - Category: ${product.categoryId}")
+        println("      - Available: ${product.available}")
+        println("      - Quantity: ${product.quantity}")
+        println("      - Material Type: ${product.materialType}")
+    }
+
+    // Log categories
+    categories.forEach { category ->
+        println("   📂 Category: ${category.name} (ID: ${category.id})")
+    }
+
+    // Force recalculation when cart screen opens by updating existing cart items with current rates
+    LaunchedEffect(Unit) {
+        cartViewModel.updateExistingCartItemsWithGoldRate()
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategoryId by remember { mutableStateOf("") }
     var productImages by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
 
+    // Get grouped products like dashboard
+    val groupedProducts = remember(products) { productsViewModel.getGroupedProducts() }
+
+    // Log grouped products
+    println("📊 DEBUG: Grouped products count: ${groupedProducts.size}")
+    groupedProducts.forEach { groupedProduct ->
+        println("   📦 Grouped Product: ${groupedProduct.baseProduct.name}")
+        println("      - Base Product ID: ${groupedProduct.baseProduct.id}")
+        println("      - Grouped Quantity: ${groupedProduct.quantity}")
+        println("      - Individual Products Count: ${groupedProduct.individualProducts.size}")
+        println("      - Barcode IDs: ${groupedProduct.barcodeIds}")
+        println("      - Common ID: ${groupedProduct.commonId}")
+    }
+
     // Track cart items for selection state
     val cartItemIds = cart.items.map { it.productId }.toSet()
+    println("🛒 DEBUG: Cart item IDs: $cartItemIds")
 
     // Load product images
     LaunchedEffect(products) {
@@ -351,22 +332,70 @@ fun CartBuildingScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        // Products grid
-        val filteredProducts = products.filter { product ->
+        // Products grid - using grouped products like dashboard
+        val filteredGroupedProducts = groupedProducts.filter { groupedProduct ->
+            val product = groupedProduct.baseProduct
+
+            // Add comprehensive logging for debugging
+            println("🔍 DEBUG: Checking product: ${product.name}")
+            println("   - Product ID: ${product.id}")
+            println("   - Category ID: ${product.categoryId}")
+            println("   - Category Name: ${productsViewModel.getCategoryName(product.categoryId)}")
+            println("   - Available: ${product.available}")
+            println("   - Grouped Quantity: ${groupedProduct.quantity}")
+            println("   - Material Type: ${product.materialType}")
+            println("   - Description: ${product.description}")
+
             val matchesSearch = if (searchQuery.isEmpty()) true else {
-                product.name.contains(searchQuery, ignoreCase = true) ||
-                        product.description.contains(searchQuery, ignoreCase = true) ||
-                        productsViewModel.getCategoryName(product.categoryId).contains(searchQuery, ignoreCase = true) ||
-                        productsViewModel.getMaterialName(product.materialId).contains(searchQuery, ignoreCase = true)
+                val nameMatch = product.name.contains(searchQuery, ignoreCase = true)
+                val descMatch = product.description.contains(searchQuery, ignoreCase = true)
+                val categoryMatch = productsViewModel.getCategoryName(product.categoryId).contains(searchQuery, ignoreCase = true)
+                val materialMatch = productsViewModel.getMaterialName(product.materialId).contains(searchQuery, ignoreCase = true)
+
+                println("   - Search Query: '$searchQuery'")
+                println("   - Name Match: $nameMatch")
+                println("   - Description Match: $descMatch")
+                println("   - Category Match: $categoryMatch")
+                println("   - Material Match: $materialMatch")
+
+                nameMatch || descMatch || categoryMatch || materialMatch
             }
+
             val matchesCategory = if (selectedCategoryId.isEmpty()) true else {
-                product.categoryId == selectedCategoryId
+                val categoryMatch = product.categoryId == selectedCategoryId
+                println("   - Selected Category ID: '$selectedCategoryId'")
+                println("   - Category Match: $categoryMatch")
+                categoryMatch
             }
+
             // Add inventory check - only show products with quantity > 0
-            matchesSearch && matchesCategory && product.available && product.quantity > 0
+            val finalResult = matchesSearch && matchesCategory && product.available && groupedProduct.quantity > 0
+
+            println("   - Final Filter Result: $finalResult")
+            println("   - Matches Search: $matchesSearch")
+            println("   - Matches Category: $matchesCategory")
+            println("   - Product Available: ${product.available}")
+            println("   - Quantity > 0: ${groupedProduct.quantity > 0}")
+            if (groupedProduct.quantity == 0) {
+                println("   - ⚠️ Product filtered out due to 0 quantity (correct behavior for CartBuildingStep)")
+            }
+            println("   ==========================================")
+
+            finalResult
         }
 
-        if (filteredProducts.isEmpty()) {
+        // Log filtered results
+        println("🔍 DEBUG: Filtered grouped products count: ${filteredGroupedProducts.size}")
+        filteredGroupedProducts.forEach { groupedProduct ->
+            println("   ✅ Filtered Product: ${groupedProduct.baseProduct.name}")
+            println("      - Product ID: ${groupedProduct.baseProduct.id}")
+            println("      - Category: ${productsViewModel.getCategoryName(groupedProduct.baseProduct.categoryId)}")
+            println("      - Available: ${groupedProduct.baseProduct.available}")
+            println("      - Quantity: ${groupedProduct.quantity}")
+        }
+
+        if (filteredGroupedProducts.isEmpty()) {
+            println("❌ DEBUG: No products found after filtering")
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -380,43 +409,340 @@ fun CartBuildingScreen(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(190.dp),
-                contentPadding = PaddingValues(bottom = 40.dp),
+                contentPadding = PaddingValues(bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(filteredProducts) { product ->
-                    ProductCard(
-                        product = product,
-                        image = productImages[product.id],
-                        categoryName = productsViewModel.getCategoryName(product.categoryId),
-                        materialName = productsViewModel.getMaterialName(product.materialId),
-                        isInCart = cartItemIds.contains(product.id),
-                        cartQuantity = cart.items.find { it.productId == product.id }?.quantity ?: 0,
+                items(filteredGroupedProducts) { groupedProduct ->
+                    val currentItem = cart.items.find { it.productId == groupedProduct.baseProduct.id }
+                    GroupedProductCard(
+                        groupedProduct = groupedProduct,
+                        image = productImages[groupedProduct.baseProduct.id],
+                        categoryName = productsViewModel.getCategoryName(groupedProduct.baseProduct.categoryId),
+                        materialName = productsViewModel.getMaterialName(groupedProduct.baseProduct.materialId),
+                        isInCart = cartItemIds.contains(groupedProduct.baseProduct.id),
+                        cartQuantity = cart.items.find { it.productId == groupedProduct.baseProduct.id }?.quantity ?: 0,
+                        cartItem = currentItem,
+                        cartItems = cart.items,
                         onCardClick = {
+                            // Add logging for card click
+                            println("🖱️ DEBUG: Card clicked for product: ${groupedProduct.baseProduct.name}")
+                            println("   - Product ID: ${groupedProduct.baseProduct.id}")
+                            println("   - Is in cart: ${cartItemIds.contains(groupedProduct.baseProduct.id)}")
+                            println("   - Cart item IDs: $cartItemIds")
+
                             // Toggle cart selection
-                            if (cartItemIds.contains(product.id)) {
-                                cartViewModel.removeFromCart(product.id)
+                            if (cartItemIds.contains(groupedProduct.baseProduct.id)) {
+                                println("   - Removing from cart")
+                                cartViewModel.removeFromCart(groupedProduct.baseProduct.id)
                             } else {
-                                cartViewModel.addToCart(product)
+                                println("   - Adding to cart")
+                                cartViewModel.addToCart(groupedProduct.baseProduct)
                             }
                         },
                         onUpdateQuantity = { newQuantity ->
                             if (newQuantity > 0) {
-                                val currentItem = cart.items.find { it.productId == product.id }
+                                val currentItem = cart.items.find { it.productId == groupedProduct.baseProduct.id }
                                 if (currentItem != null) {
-                                    cartViewModel.updateQuantity(product.id, newQuantity)
+                                    cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
                                 } else {
                                     // Add to cart first, then update quantity
-                                    cartViewModel.addToCart(product)
+                                    cartViewModel.addToCart(groupedProduct.baseProduct)
                                     if (newQuantity > 1) {
-                                        cartViewModel.updateQuantity(product.id, newQuantity)
+                                        cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
                                     }
                                 }
                             } else {
-                                cartViewModel.removeFromCart(product.id)
+                                cartViewModel.removeFromCart(groupedProduct.baseProduct.id)
                             }
                         }
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GroupedProductCard(
+    groupedProduct: GroupedProduct,
+    image: ImageBitmap?,
+    categoryName: String,
+    materialName: String,
+    isInCart: Boolean,
+    cartQuantity: Int,
+    cartItem: CartItem?,
+    cartItems: List<CartItem>,
+    onCardClick: () -> Unit,
+    onUpdateQuantity: (Int) -> Unit
+) {
+    val product = groupedProduct.baseProduct
+
+    // If item is already in cart, show the same total as cart (Total Charges)
+    val displayPrice = remember(cartItems, product, cartItem) {
+        if (cartItem != null) {
+            // Match cart item left card: use preferred metal rate and item fields
+            val karat = if (cartItem.metal.isNotEmpty()) {
+                cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(product.materialType)
+            } else extractKaratFromMaterialType(product.materialType)
+            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+            val collectionRate = try {
+                ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
+            } catch (e: Exception) { 0.0 }
+            val metalRates = MetalRatesManager.metalRates.value
+            val metalRate = if (collectionRate > 0) collectionRate else metalRates.getGoldRateForKarat(karat)
+
+            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
+            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else product.lessWeight
+            val netWeight = grossWeight - lessWeight
+            val makingPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else product.defaultMakingRate
+            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else product.cwWeight
+            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else product.stoneRate
+            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else product.stoneQuantity
+            val vaCharges = if (cartItem.va > 0) cartItem.va else product.vaCharges
+
+            val baseAmount = netWeight * metalRate * cartItem.quantity
+            val makingCharges = netWeight * makingPerGram * cartItem.quantity
+            val stoneAmount = stoneRate * stoneQuantity * cwWeight
+            baseAmount + makingCharges + stoneAmount + vaCharges
+        } else {
+            // Not in cart: use per-item total charges calculated from product defaults
+            if (product.hasCustomPrice) {
+                product.customPrice
+            } else if (product.totalProductCost > 0) {
+                product.totalProductCost
+            } else {
+                calculateProductTotalCost(product)
+            }
+        }
+    }
+
+    // For grouped products, use the grouped quantity instead of individual product quantity
+    val availableToAdd = groupedProduct.quantity - cartQuantity
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(250.dp)
+            .clickable { onCardClick() },
+        elevation = if (isInCart) 6.dp else 2.dp,
+        shape = RoundedCornerShape(8.dp),
+        border = if (isInCart) BorderStroke(2.dp, MaterialTheme.colors.primary) else null
+    ) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Product image
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp)
+                        .background(Color(0xFFF5F5F5))
+                ) {
+                    if (image != null) {
+                        Image(
+                            bitmap = image,
+                            contentDescription = product.name,
+                            modifier = Modifier.fillMaxSize().height(140.dp) // Explicit height to avoid aspect ratio mismatch
+                                .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxSize().height(130.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        }
+                    }
+
+                    if (product.featured) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(6.dp)
+                                .background(Color(0xFFFFA000), RoundedCornerShape(3.dp))
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "Featured",
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Show quantity badge for grouped products
+                    if (groupedProduct.quantity > 1) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(6.dp)
+                                .background(Color(0xFF4CAF50), RoundedCornerShape(3.dp))
+                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                "Qty: ${groupedProduct.quantity}",
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                // Product details with reduced padding
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 8.dp, vertical = 2.dp), // Reduced from 8.dp
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = product.name,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(modifier = Modifier.height(0.3.dp)) // Reduced spacing
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = categoryName,
+                                color = Color.Gray,
+                                fontSize = 12.sp, // Reduced font size
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = product.weight,
+                                color = Color.Gray,
+                                fontSize = 12.sp, // Reduced font size
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(0.3.dp)) // Reduced spacing
+
+                        // Material and stock indicator row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = materialName,
+                                color = MaterialTheme.colors.primary,
+                                fontSize = 12.sp, // Reduced font size
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            // Stock indicator - use grouped quantity
+                            if (groupedProduct.quantity <= 5) {
+                                Text(
+                                    text = if (groupedProduct.quantity == 0) "Out of Stock" else "Only ${groupedProduct.quantity} left",
+                                    fontSize = 10.sp,
+                                    color = if (groupedProduct.quantity == 0) Color.Red else Color.Red,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    // Price and quantity controls in the same row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Price
+                        Text(
+                            text = "₹${formatCurrency(displayPrice)}",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colors.primary
+                        )
+
+                        Card(
+                            elevation = 1.dp,
+                            shape = RoundedCornerShape(20.dp),
+                            backgroundColor = Color.White,
+                            modifier = Modifier
+                                .padding(2.dp)
+                                .height(28.dp)
+                                .wrapContentWidth()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center,
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                    .defaultMinSize(minWidth = 64.dp)
+                            ) {
+                                // Decrease button
+                                IconButton(
+                                    onClick = {
+                                        if (cartQuantity > 0) onUpdateQuantity(cartQuantity - 1)
+                                    },
+                                    modifier = Modifier.size(22.dp),
+                                    enabled = cartQuantity > 0
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "−",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (cartQuantity > 0) Color.Gray else Color.LightGray
+                                        )
+                                    }
+                                }
+
+                                // Quantity display
+                                Text(
+                                    text = cartQuantity.toString(),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.widthIn(min = 24.dp),
+                                    textAlign = TextAlign.Center
+                                )
+
+                                // Increase button - Updated with stock limit (use grouped quantity)
+                                IconButton(
+                                    onClick = {
+                                        if (cartQuantity < groupedProduct.quantity) {
+                                            onUpdateQuantity(cartQuantity + 1)
+                                        }
+                                    },
+                                    modifier = Modifier.size(22.dp),
+                                    enabled = cartQuantity < groupedProduct.quantity // Limit to grouped quantity
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        Text(
+                                            text = "+",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (cartQuantity < groupedProduct.quantity) Color(0xFFB2935A) else Color.LightGray
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -458,9 +784,11 @@ fun ProductCard(
     onCardClick: () -> Unit,
     onUpdateQuantity: (Int) -> Unit
 ) {
-    // Use the same price logic as dashboard: check hasCustomPrice first
+    // Use the same price logic as dashboard: customPrice > totalProductCost > calculated
     val displayPrice = if (product.hasCustomPrice) {
         product.customPrice
+    } else if (product.totalProductCost > 0) {
+        product.totalProductCost
     } else {
         calculateProductTotalCost(product)
     }
@@ -695,7 +1023,7 @@ fun PriceEditorDialog(
                 OutlinedTextField(
                     value = goldPriceText,
                     onValueChange = { goldPriceText = it },
-                    label = { Text("Gold Price per gram") },
+                    label = { Text("Metal Rate per gram") },
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
@@ -744,9 +1072,9 @@ fun CartItemCard(
 ) {
     val metalRates by MetalRatesManager.metalRates
     val pricePerGram = when {
-        cartItem.product.materialType.contains("gold", ignoreCase = true) -> 
-            metalRates.getGoldRateForKarat(cartItem.product.karat)
-        cartItem.product.materialType.contains("silver", ignoreCase = true) -> 
+        cartItem.product.materialType.contains("gold", ignoreCase = true) ->
+            metalRates.getGoldRateForKarat(extractKaratFromMaterialType(cartItem.product.materialType))
+        cartItem.product.materialType.contains("silver", ignoreCase = true) ->
             metalRates.getSilverRateForPurity(999) // Default to 999 purity
         else -> metalRates.getGoldRateForKarat(22) // Default to 22k gold
     }
@@ -921,6 +1249,7 @@ fun CartItemCard(
 @Composable
 fun CartScreen(
     cartViewModel: CartViewModel,
+    productsViewModel: ProductsViewModel,
     onProceedToPayment: () -> Unit = {},
     onContinueShopping: () -> Unit = {}
 ) {
@@ -969,38 +1298,89 @@ fun CartScreen(
                 .fillMaxSize()
                 .padding(16.dp)
         ) {
-            // Header
-            Text(
-                "Your Cart (${cart.totalItems} Items)",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+            // Header with Cart Title, Total, and Payment Button
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Left side - Cart Title
+                Text(
+                    "Your Cart (${cart.totalItems} Items)",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.Bold
+                )
 
-            // Cart items table with flexible height
-            CartTable(
-                cartItems = cart.items,
-                onItemUpdate = { index, updatedItem ->
-                    cartViewModel.updateCartItem(index, updatedItem)
-                },
-                onItemRemove = { index ->
-                    val itemToRemove = cart.items[index]
-                    cartViewModel.removeFromCart(itemToRemove.productId)
-                },
-                cartImages = cartImages,
+                // Right side - Total and Payment Button
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Total Amount
+                    Column(
+                        horizontalAlignment = Alignment.End
+                    ) {
+                        Text(
+                            "Total",
+                            fontSize = 14.sp,
+                            color = Color.Gray,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "₹${String.format("%.0f", cartViewModel.getTotalCharges())}",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colors.primary
+                        )
+                    }
+
+                    // Proceed to Payment Button
+                    Button(
+                        onClick = onProceedToPayment,
+                        modifier = Modifier.height(40.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = MaterialTheme.colors.primary
+                        )
+                    ) {
+                        Text(
+                            "Proceed to Payment",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "Proceed",
+                            modifier = Modifier.size(18.dp),
+                            tint = Color.White
+                        )
+                    }
+                }
+            }
+
+            // Cart items table
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .padding(bottom = 16.dp)
-            )
-
-            // Cart summary - now fully visible
-            CartSummary(
-                subtotal = cartViewModel.getSubtotal(),
-                total = cartViewModel.getFinalTotal(),
-                onClearCart = { cartViewModel.clearCart() },
-                onProceedToPayment = onProceedToPayment
-            )
+            ) {
+                CartTable(
+                    cartItems = cart.items,
+                    onItemUpdate = { index, updatedItem ->
+                        cartViewModel.updateCartItem(index, updatedItem)
+                    },
+                    onItemRemove = { index ->
+                        val itemToRemove = cart.items[index]
+                        cartViewModel.removeFromCart(itemToRemove.productId)
+                    },
+                    productsViewModel = productsViewModel,
+                    cartImages = cartImages,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
     }
 }
@@ -1028,21 +1408,7 @@ fun CartSummary(
                 fontWeight = FontWeight.Bold
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Subtotal (GST included):", fontSize = 14.sp)
-                Text(
-                    "₹${String.format("%.0f", subtotal)}",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
-            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1107,23 +1473,25 @@ private fun formatCurrency(amount: Double): String {
 private fun calculateProductTotalCost(product: Product): Double {
     // Calculate net weight (total weight - less weight)
     val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
-    
-    // Material cost (net weight × material rate)
+    // Always show per-item price in inventory
+    val qty = 1
+
+    // Material cost (net weight × material rate × 1)
     val materialRate = getMaterialRateForProduct(product)
-    val materialCost = netWeight * materialRate
-    
-    // Making charges (net weight × making rate)
-    val makingCharges = netWeight * product.defaultMakingRate
-    
-    // Stone amount (if has stones)
+    val baseAmount = netWeight * materialRate * qty
+
+    // Making charges (net weight × making rate × 1)
+    val makingCharges = netWeight * product.defaultMakingRate * qty
+
+    // Stone amount (if has stones) - STONE_RATE × STONE_QUANTITY × CW_WT
     val stoneAmount = if (product.hasStones) {
-        if (product.cwWeight > 0 && product.stoneRate > 0 && product.stoneQuantity > 0) {
-            product.cwWeight * product.stoneRate * product.stoneQuantity
+        if (product.cwWeight > 0 && product.stoneRate > 0) {
+            product.stoneRate * (product.stoneQuantity.takeIf { it > 0 } ?: 1.0) * product.cwWeight
         } else 0.0
     } else 0.0
-    
-    // Total = Material Cost + Making Charges + Stone Amount + VA Charges
-    return materialCost + makingCharges + stoneAmount + product.vaCharges
+
+    // Total Charges = Base Amount + Making Charges + Stone Amount + VA Charges
+    return baseAmount + makingCharges + stoneAmount + product.vaCharges
 }
 
 /**
@@ -1132,29 +1500,18 @@ private fun calculateProductTotalCost(product: Product): Double {
  */
 private fun getMaterialRateForProduct(product: Product): Double {
     val metalRates = MetalRatesManager.metalRates.value
-    
-    return when {
-        product.materialType.contains("gold", ignoreCase = true) -> {
-            // Extract karat and use appropriate gold rate
-            val karat = extractKaratFromMaterialTypeString(product.materialType)
-            metalRates.getGoldRateForKarat(karat)
-        }
-        product.materialType.contains("silver", ignoreCase = true) -> {
-            // Use silver rate
-            metalRates.getSilverRateForPurity(999) // Default to 999 purity
-        }
-        else -> {
-            // Fallback to a reasonable rate
-            metalRates.getGoldRateForKarat(22) // Default to 22K gold rate
-        }
-    }
-}
+    // Prefer collection rate from rate view model (same as cart detail)
+    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+    val karat = extractKaratFromMaterialType(product.materialType)
+    val collectionRate = try {
+        ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
+    } catch (e: Exception) { 0.0 }
 
-/**
- * Extract karat from material type string (e.g., "18K Gold" -> 18)
- */
-private fun extractKaratFromMaterialTypeString(materialType: String): Int {
-    val karatRegex = Regex("""(\d+)K""", RegexOption.IGNORE_CASE)
-    val match = karatRegex.find(materialType)
-    return match?.groupValues?.get(1)?.toIntOrNull() ?: 22 // Default to 22K
+    if (collectionRate > 0) return collectionRate
+
+    return when {
+        product.materialType.contains("gold", ignoreCase = true) -> metalRates.getGoldRateForKarat(karat)
+        product.materialType.contains("silver", ignoreCase = true) -> metalRates.getSilverRateForPurity(999)
+        else -> metalRates.getGoldRateForKarat(22)
+    }
 }

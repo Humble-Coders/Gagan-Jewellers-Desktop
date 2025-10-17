@@ -11,6 +11,7 @@ import java.net.URL
 interface ProductRepository {
     suspend fun getAllProducts(): List<Product>
     suspend fun getProductById(id: String): Product?
+    suspend fun getProductByBarcodeId(barcodeId: String): Product?
     suspend fun addProduct(product: Product): String
     suspend fun updateProduct(product: Product): Boolean
     suspend fun deleteProduct(id: String): Boolean
@@ -51,7 +52,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 categoryId = data["category_id"] as? String ?: "",
                 materialId = data["material_id"] as? String ?: "",
                 materialType = data["material_type"] as? String ?: "",
-                karat = (data["karat"] as? String)?.toIntOrNull() ?: 22,
                 quantity = (data["quantity"] as? String)?.toIntOrNull() ?: 0,
                 totalWeight = (data["total_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
                 defaultMakingRate = (data["default_making_rate"] as? String)?.toDoubleOrNull() ?: 0.0,
@@ -73,7 +73,7 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 stoneAmount = (data["stone_amount"] as? String)?.toDoubleOrNull() ?: 0.0,
                 vaCharges = (data["va_charges"] as? String)?.toDoubleOrNull() ?: 0.0,
                 netWeight = (data["net_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
-                totalProductCost = 0.0, // Not stored in Firestore
+                totalProductCost = (data["total_product_cost"] as? String)?.toDoubleOrNull() ?: 0.0,
                 hasCustomPrice = when (val value = data["has_custom_price"]) {
                     is Boolean -> value
                     is String -> value.toBoolean()
@@ -153,7 +153,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     categoryId = data?.get("category_id") as? String ?: "",
                     materialId = data?.get("material_id") as? String ?: "",
                     materialType = data?.get("material_type") as? String ?: "",
-                    karat = (data?.get("karat") as? String)?.toIntOrNull() ?: 22,
                     quantity = (data?.get("quantity") as? String)?.toIntOrNull() ?: 0,
                     totalWeight = (data?.get("total_weight") as? String)?.toDoubleOrNull() ?: 0.0,
                     defaultMakingRate = (data?.get("default_making_rate") as? String)?.toDoubleOrNull() ?: 0.0,
@@ -175,7 +174,7 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     stoneAmount = (data?.get("stone_amount") as? String)?.toDoubleOrNull() ?: 0.0,
                     vaCharges = (data?.get("va_charges") as? String)?.toDoubleOrNull() ?: 0.0,
                     netWeight = (data?.get("net_weight") as? String)?.toDoubleOrNull() ?: 0.0,
-                    totalProductCost = 0.0, // Not stored in Firestore
+                    totalProductCost = (data?.get("total_product_cost") as? String)?.toDoubleOrNull() ?: 0.0,
                     hasCustomPrice = when (val value = data?.get("has_custom_price")) {
                         is Boolean -> value
                         is String -> value.toBoolean()
@@ -234,6 +233,113 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
         }
     }
 
+    override suspend fun getProductByBarcodeId(barcodeId: String): Product? = withContext(Dispatchers.IO) {
+        try {
+            val productsCollection = firestore.collection("products")
+            val query = productsCollection.whereArrayContains("barcode_ids", barcodeId)
+            val future = query.get()
+            val snapshot = future.get()
+
+            if (!snapshot.isEmpty) {
+                val document = snapshot.documents.first()
+                val data = document.data
+                val showMap = (data?.get("show") as? Map<*, *>)?.mapValues { entry ->
+                    when (val v = entry.value) {
+                        is Boolean -> v
+                        is String -> v.toBoolean()
+                        else -> true
+                    }
+                } ?: emptyMap()
+
+                Product(
+                    id = document.id,
+                    name = data?.get("name") as? String ?: "",
+                    description = data?.get("description") as? String ?: "",
+                    price = (data?.get("price") as? String)?.toDoubleOrNull() ?: 0.0,
+                    categoryId = data?.get("category_id") as? String ?: "",
+                    materialId = data?.get("material_id") as? String ?: "",
+                    materialType = data?.get("material_type") as? String ?: "",
+                    quantity = (data?.get("quantity") as? String)?.toIntOrNull() ?: 0,
+                    totalWeight = (data?.get("total_weight") as? String)?.toDoubleOrNull() ?: 0.0,
+                    defaultMakingRate = (data?.get("default_making_rate") as? String)?.toDoubleOrNull() ?: 0.0,
+                    isOtherThanGold = when (val value = data?.get("is_other_than_gold")) {
+                        is Boolean -> value
+                        is String -> value.toBoolean()
+                        else -> false
+                    },
+                    lessWeight = (data?.get("less_weight") as? String)?.toDoubleOrNull() ?: 0.0,
+                    hasStones = when (val value = data?.get("has_stones")) {
+                        is Boolean -> value
+                        is String -> value.toBoolean()
+                        else -> false
+                    },
+                    stoneName = data?.get("stone_name") as? String ?: "",
+                    stoneQuantity = (data?.get("stone_quantity") as? String)?.toDoubleOrNull() ?: 0.0,
+                    stoneRate = (data?.get("stone_rate") as? String)?.toDoubleOrNull() ?: 0.0,
+                    cwWeight = (data?.get("cw_weight") as? String)?.toDoubleOrNull() ?: 0.0,
+                    stoneAmount = (data?.get("stone_amount") as? String)?.toDoubleOrNull() ?: 0.0,
+                    vaCharges = (data?.get("va_charges") as? String)?.toDoubleOrNull() ?: 0.0,
+                    netWeight = (data?.get("net_weight") as? String)?.toDoubleOrNull() ?: 0.0,
+                    totalProductCost = (data?.get("total_product_cost") as? String)?.toDoubleOrNull() ?: 0.0,
+                    hasCustomPrice = when (val value = data?.get("has_custom_price")) {
+                        is Boolean -> value
+                        is String -> value.toBoolean()
+                        else -> false
+                    },
+                    customPrice = (data?.get("custom_price") as? String)?.toDoubleOrNull() ?: 0.0,
+                    available = when (val value = data?.get("available")) {
+                        is Boolean -> value
+                        is String -> value.toBoolean()
+                        else -> true
+                    },
+                    featured = when (val value = data?.get("featured")) {
+                        is Boolean -> value
+                        is String -> value.toBoolean()
+                        else -> false
+                    },
+                    images = (data?.get("images") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+                    barcodeIds = (data?.get("barcode_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+                    autoGenerateId = when (val value = data?.get("auto_generate_id")) {
+                        is Boolean -> value
+                        is String -> value.toBoolean()
+                        else -> false
+                    },
+                    customProductId = data?.get("custom_product_id") as? String ?: "",
+                    commonId = data?.get("common_id") as? String,
+                    createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
+                    show = ProductShowConfig(
+                        name = showMap["name"] as? Boolean ?: true,
+                        description = showMap["description"] as? Boolean ?: true,
+                        category = showMap["category_id"] as? Boolean ?: true,
+                        material = showMap["material_id"] as? Boolean ?: true,
+                        materialType = showMap["material_type"] as? Boolean ?: true,
+                        quantity = showMap["quantity"] as? Boolean ?: true,
+                        totalWeight = showMap["total_weight"] as? Boolean ?: true,
+                        price = showMap["price"] as? Boolean ?: true,
+                        defaultMakingRate = showMap["default_making_rate"] as? Boolean ?: true,
+                        vaCharges = showMap["va_charges"] as? Boolean ?: true,
+                        isOtherThanGold = showMap["is_other_than_gold"] as? Boolean ?: true,
+                        lessWeight = showMap["less_weight"] as? Boolean ?: true,
+                        hasStones = showMap["has_stones"] as? Boolean ?: true,
+                        stoneName = showMap["stone_name"] as? Boolean ?: true,
+                        stoneQuantity = showMap["stone_quantity"] as? Boolean ?: true,
+                        stoneRate = showMap["stone_rate"] as? Boolean ?: true,
+                        cwWeight = showMap["cw_weight"] as? Boolean ?: true,
+                        stoneAmount = showMap["stone_amount"] as? Boolean ?: true,
+                        netWeight = showMap["net_weight"] as? Boolean ?: true,
+                        totalProductCost = showMap["total_product_cost"] as? Boolean ?: true,
+                        customPrice = showMap["custom_price"] as? Boolean ?: true,
+                        images = showMap["images"] as? Boolean ?: true,
+                        available = showMap["available"] as? Boolean ?: true,
+                        featured = showMap["featured"] as? Boolean ?: true
+                    )
+                )
+            } else null
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun generateRandomBarcode(digits: Int): String {
         val sb = StringBuilder(digits)
         repeat(digits) {
@@ -282,7 +388,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["category_id"] = product.categoryId.takeIf { it.isNotBlank() }
             productMap["material_id"] = product.materialId?.takeIf { it.isNotBlank() }
             productMap["material_type"] = product.materialType?.takeIf { it.isNotBlank() }
-            productMap["karat"] = if (product.karat > 0) product.karat.toString() else null
             productMap["quantity"] = if (product.quantity > 0) product.quantity.toString() else null
             productMap["total_weight"] = if (product.totalWeight > 0) product.totalWeight.toString() else null
             productMap["default_making_rate"] = if (product.defaultMakingRate > 0) product.defaultMakingRate.toString() else null
@@ -296,7 +401,8 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["stone_amount"] = if (product.stoneAmount > 0) product.stoneAmount.toString() else null
             productMap["va_charges"] = if (product.vaCharges > 0) product.vaCharges.toString() else null
             productMap["net_weight"] = if (product.netWeight > 0) product.netWeight.toString() else null
-            // total_product_cost not stored in Firestore
+            // Store total_product_cost if provided (as string for consistency with other numeric fields)
+            productMap["total_product_cost"] = if (product.totalProductCost > 0) product.totalProductCost.toString() else null
             productMap["has_custom_price"] = product.hasCustomPrice
             productMap["custom_price"] = if (product.customPrice > 0) product.customPrice.toString() else null
             productMap["available"] = product.available
@@ -404,7 +510,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["category_id"] = product.categoryId.takeIf { it.isNotBlank() }
             productMap["material_id"] = product.materialId?.takeIf { it.isNotBlank() }
             productMap["material_type"] = product.materialType?.takeIf { it.isNotBlank() }
-            productMap["karat"] = if (product.karat > 0) product.karat.toString() else null
             productMap["quantity"] = if (product.quantity > 0) product.quantity.toString() else null
             productMap["total_weight"] = if (product.totalWeight > 0) product.totalWeight.toString() else null
             productMap["default_making_rate"] = if (product.defaultMakingRate > 0) product.defaultMakingRate.toString() else null
@@ -418,7 +523,8 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["stone_amount"] = if (product.stoneAmount > 0) product.stoneAmount.toString() else null
             productMap["va_charges"] = if (product.vaCharges > 0) product.vaCharges.toString() else null
             productMap["net_weight"] = if (product.netWeight > 0) product.netWeight.toString() else null
-            // total_product_cost not stored in Firestore
+            // Store total_product_cost if provided (as string for consistency with other numeric fields)
+            productMap["total_product_cost"] = if (product.totalProductCost > 0) product.totalProductCost.toString() else null
             productMap["has_custom_price"] = product.hasCustomPrice
             productMap["custom_price"] = if (product.customPrice > 0) product.customPrice.toString() else null
             productMap["available"] = product.available

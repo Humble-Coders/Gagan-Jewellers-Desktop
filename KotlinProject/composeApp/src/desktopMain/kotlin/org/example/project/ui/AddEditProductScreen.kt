@@ -1,6 +1,7 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,6 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -33,6 +35,7 @@ import org.example.project.JewelryAppInitializer
 import org.example.project.data.Product
 import org.example.project.data.calculateRateForKarat
 import org.example.project.viewModels.ProductsViewModel
+import org.example.project.data.MetalRatesManager
 import org.example.project.viewModels.MetalRateViewModel
 import kotlinx.coroutines.launch
 
@@ -86,6 +89,7 @@ fun AddEditProductScreen(
     val imageLoader = JewelryAppInitializer.getImageLoader()
     val scope = rememberCoroutineScope()
     var isSaving by remember { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
 
     // Form state
     var autoGenerateId by remember { mutableStateOf(if (isEditing) product.barcodeIds.isNotEmpty() else true) }
@@ -221,8 +225,8 @@ fun AddEditProductScreen(
         materialCost + makingCharges + stoneAmount + va
     }
 
-    // Auto-calculate material rate when material and type are selected
-    LaunchedEffect(materialId, materialType) {
+    // Auto-calculate material rate when material/type or rates change
+    LaunchedEffect(materialId, materialType, metalRates) {
         if (materialId.isNotEmpty() && materialType.isNotEmpty()) {
             // Extract karat from material type (e.g., "18K" -> 18, "22K" -> 22)
             val karat = extractKaratFromMaterialType(materialType)
@@ -242,10 +246,27 @@ fun AddEditProductScreen(
                     materialRate = String.format("%.2f", fallbackRate)
                     println("💰 Fallback calculated material rate: $fallbackRate for $materialType ($karat K)")
                 } else {
+                    // Final fallback: use global MetalRatesManager (live gold/silver rates)
+                    val selectedMaterialName = materials.find { it.id == materialId }?.name ?: ""
+                    val globalRates = MetalRatesManager.metalRates.value
+                    val globalRate = when {
+                        selectedMaterialName.contains("gold", ignoreCase = true) || materialType.contains("K", ignoreCase = true) -> {
+                            globalRates.getGoldRateForKarat(karat)
+                        }
+                        selectedMaterialName.contains("silver", ignoreCase = true) || materialType.contains("999") -> {
+                            globalRates.getSilverRateForPurity(999)
+                        }
+                        else -> 0.0
+                    }
+                    if (globalRate > 0) {
+                        materialRate = String.format("%.2f", globalRate)
+                        println("🌐 Global rates fallback used: $globalRate for $materialType ($karat K)")
+                    } else {
                     // If no rate found, clear the field to show user needs to enter manually
                     if (materialRate.isEmpty()) {
                         materialRate = ""
                         println("⚠️ No rate found for $materialType, please enter manually")
+                    }
                     }
                 }
             }
@@ -292,7 +313,11 @@ fun AddEditProductScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(24.dp)
+                .clickable { 
+                    // Clear focus to close any open dropdowns when clicking on empty areas
+                    focusManager.clearFocus()
+                },
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             // Header Section
@@ -444,15 +469,18 @@ fun AddEditProductScreen(
                                             maxLength = 2
                                         )
                                         StyledTextField(
-                                            value = quantity.toString(),
+                                            value = if (quantity > 0) quantity.toString() else "",
                                             onValueChange = {
                                                 val digitsOnly = it.filter { ch -> ch.isDigit() }
-                                                val newQuantity = digitsOnly.toIntOrNull()
-                                                if (newQuantity != null && newQuantity >= 0) {
-                                                    quantity = newQuantity
-                                                    barcodeError = ""
-                                                } else if (digitsOnly.isEmpty()) {
+                                                if (digitsOnly.isEmpty()) {
                                                     quantity = 0
+                                                    barcodeError = ""
+                                                } else {
+                                                    val newQuantity = digitsOnly.toIntOrNull()
+                                                    if (newQuantity != null && newQuantity > 0) {
+                                                        quantity = newQuantity
+                                                        barcodeError = ""
+                                                    }
                                                 }
                                             },
                                             label = "Quantity",
@@ -687,15 +715,21 @@ fun AddEditProductScreen(
                         )
 
                         StyledTextField(
-                            value = quantity.toString(),
-                            onValueChange = {
-                                val newQuantity = it.toIntOrNull()
-                                if (newQuantity != null && newQuantity >= 0) {
-                                    quantity = newQuantity
+                            value = if (quantity > 0) quantity.toString() else "",
+                            onValueChange = { input ->
+                                // Allow only digits
+                                val digitsOnly = input.filter { char -> char.isDigit() }
+                                if (digitsOnly.isEmpty()) {
+                                    quantity = 0
+                                } else {
+                                    val newQuantity = digitsOnly.toIntOrNull()
+                                    if (newQuantity != null && newQuantity > 0) {
+                                        quantity = newQuantity
+                                    }
                                 }
                             },
                             label = "Quantity",
-                            placeholder = "0",
+                            placeholder = "1",
                             keyboardType = KeyboardType.Number,
                             modifier = Modifier.weight(1f)
                         )

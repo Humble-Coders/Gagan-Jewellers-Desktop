@@ -102,19 +102,25 @@ class MetalRateViewModel(private val metalRateRepository: MetalRateRepository) :
     
     fun calculateRateForMaterial(materialId: String, materialType: String, karat: Int): Double {
         return try {
-            val metalRate = _metalRates.value.find { 
-                it.materialId == materialId && 
-                it.materialType == materialType && 
-                it.isActive 
+            // Try exact match first
+            val exact = _metalRates.value.find { it.materialId == materialId && it.materialType.equals(materialType, true) && it.isActive }
+            if (exact != null) {
+                val rate = exact.calculateRateForKarat(karat)
+                println("💰 Calculated rate (exact) for $materialType $karat K: $rate (base: ${exact.pricePerGram} for ${exact.karat}K)")
+                return rate
             }
-            if (metalRate != null) {
-                val calculatedRate = metalRate.calculateRateForKarat(karat)
-                println("💰 Calculated rate for $materialType $karat K: $calculatedRate (base: ${metalRate.pricePerGram} for ${metalRate.karat}K)")
-                calculatedRate
-            } else {
-                println("⚠️ No metal rate found for material: $materialId, type: $materialType")
-                0.0
+
+            // Fallback: use any active rate for this material and convert to target karat
+            val anyForMaterial = _metalRates.value.filter { it.materialId == materialId && it.isActive }
+            val best = anyForMaterial.minByOrNull { kotlin.math.abs(it.karat - karat) }
+            if (best != null) {
+                val rate = best.calculateRateForKarat(karat)
+                println("🔄 Fallback rate for ${best.materialType} ${best.karat}K -> ${karat}K = $rate")
+                return rate
             }
+
+            println("⚠️ No metal rate found for material: $materialId")
+            0.0
         } catch (e: Exception) {
             println("❌ Error calculating rate: ${e.message}")
             0.0

@@ -9,9 +9,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.example.project.JewelryAppInitializer
 import org.example.project.data.*
-import org.example.project.utils.BillPDFGenerator
+import org.example.project.utils.HtmlCssBillGenerator
+import org.example.project.utils.HtmlToPdfBillGenerator
 import java.awt.Desktop
 import java.io.File
+import java.nio.file.Path
 import java.nio.file.Paths
 
 class PaymentViewModel(
@@ -19,8 +21,9 @@ class PaymentViewModel(
 ) {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    // Lazy initialization to avoid font loading at startup
-    private val pdfGenerator by lazy { BillPDFGenerator() }
+    // Lazy initialization to avoid loading at startup
+    private val htmlCssBillGenerator by lazy { HtmlCssBillGenerator() }
+    private val htmlToPdfBillGenerator by lazy { HtmlToPdfBillGenerator() }
 
     // Payment Method State
     private val _selectedPaymentMethod = mutableStateOf<PaymentMethod?>(null)
@@ -46,6 +49,9 @@ class PaymentViewModel(
 
     private val _errorMessage = mutableStateOf<String?>(null)
     val errorMessage: State<String?> = _errorMessage
+
+    private val _successMessage = mutableStateOf<String?>(null)
+    val successMessage: State<String?> = _successMessage
 
     // Transaction State
     private val _lastTransaction = mutableStateOf<PaymentTransaction?>(null)
@@ -102,19 +108,35 @@ class PaymentViewModel(
     }
 
     private suspend fun reduceStockAfterOrder(order: Order, productRepository: ProductRepository) {
+        println("📦 DEBUG: Starting stock reduction for order: ${order.id}")
+        println("   - Order items count: ${order.items.size}")
+        
         order.items.forEach { cartItem ->
             try {
+                println("   🔄 Processing item: ${cartItem.product.name}")
+                println("      - Product ID: ${cartItem.productId}")
+                println("      - Cart quantity: ${cartItem.quantity}")
+                
                 val product = productRepository.getProductById(cartItem.productId)
                 if (product != null) {
+                    println("      - Current product quantity: ${product.quantity}")
+                    val newQuantity = maxOf(0, product.quantity - cartItem.quantity)
+                    println("      - New quantity after reduction: $newQuantity")
+                    
                     val updatedProduct = product.copy(
-                        quantity = maxOf(0, product.quantity - cartItem.quantity)
+                        quantity = newQuantity
                     )
                     productRepository.updateProduct(updatedProduct)
+                    println("      - ✅ Successfully updated product quantity")
+                } else {
+                    println("      - ❌ Product not found in repository")
                 }
             } catch (e: Exception) {
-                println("Failed to reduce stock for product ${cartItem.productId}: ${e.message}")
+                println("      - ❌ Failed to reduce stock for product ${cartItem.productId}: ${e.message}")
             }
         }
+        
+        println("📦 DEBUG: Completed stock reduction for order: ${order.id}")
     }
 
     fun setDiscountValue(value: String) {
@@ -152,7 +174,7 @@ class PaymentViewModel(
         _errorMessage.value = null
     }
 
-    fun calculateDiscountAmount(subtotal: Double): Double {
+    fun calculateDiscountAmount(subtotal: Double, gstAmount: Double = 0.0): Double {
         return when (_discountType.value) {
             DiscountType.PERCENTAGE -> {
                 subtotal * (_discountAmount.value / 100)
@@ -161,9 +183,10 @@ class PaymentViewModel(
                 minOf(_discountAmount.value, subtotal)
             }
             DiscountType.TOTAL_PAYABLE -> {
-                // Calculate discount as: subtotal - totalPayable
-                // If totalPayable is greater than subtotal, return 0 (no discount)
-                maxOf(0.0, subtotal - _discountAmount.value)
+                // Calculate discount as: subtotal + GST - totalPayable
+                // If totalPayable is greater than subtotal + GST, return 0 (no discount)
+                val subtotalWithGst = subtotal + gstAmount
+                maxOf(0.0, subtotalWithGst - _discountAmount.value)
             }
         }
     }
@@ -260,60 +283,442 @@ class PaymentViewModel(
         _errorMessage.value = message
     }
 
+    fun clearSuccessMessage() {
+        _successMessage.value = null
+    }
+
     private fun generateOrderPDF(order: Order, customer: User) {
         viewModelScope.launch {
             _isGeneratingPDF.value = true
             _errorMessage.value = null // Clear any previous errors
+            
+            println("🚀 ========== PDF GENERATION STARTED ==========")
+            println("📋 Order ID: ${order.id}")
+            println("👤 Customer: ${customer.name} (ID: ${customer.id})")
+            println("💰 Order Total: ₹${String.format("%.2f", order.totalAmount)}")
+            println("📦 Items Count: ${order.items.size}")
+            println("💳 Payment Method: ${order.paymentMethod}")
+            println("⏰ Timestamp: ${java.util.Date(order.timestamp)}")
 
             try {
+                // Run system diagnostics
+                runSystemDiagnostics()
+                
+                // Validate system environment
                 val userHome = System.getProperty("user.home")
-                val billsDirectory = File(userHome, "JewelryBills")
-                if (!billsDirectory.exists()) {
-                    billsDirectory.mkdirs()
+                println("🏠 User Home Directory: $userHome")
+                
+                if (userHome.isNullOrBlank()) {
+                    throw Exception("User home directory not found")
                 }
+                
+                val billsDirectory = File(userHome, "JewelryBills")
+                println("📁 Bills Directory: ${billsDirectory.absolutePath}")
+                
+                if (!billsDirectory.exists()) {
+                    val created = billsDirectory.mkdirs()
+                    println("📁 Created bills directory: $created")
+                }
+                
+                // Check directory permissions
+                if (!billsDirectory.canWrite()) {
+                    throw Exception("Cannot write to bills directory: ${billsDirectory.absolutePath}")
+                }
+                println("✅ Directory permissions verified")
 
-                val fileName = "Invoice_${order.id}_${System.currentTimeMillis()}.pdf"
-                val outputPath = Paths.get(billsDirectory.absolutePath, fileName)
+                // First generate HTML/CSS files
+                val htmlFileName = "Invoice_${order.id}_${System.currentTimeMillis()}.html"
+                val htmlOutputPath = Paths.get(billsDirectory.absolutePath, htmlFileName)
 
-                println("Starting PDF generation for order: ${order.id}")
-                println("Output path: $outputPath")
+                println("🔄 ========== STEP 1: HTML/CSS GENERATION ==========")
+                println("📄 HTML output path: $htmlOutputPath")
+                println("🔧 Using HtmlCssBillGenerator...")
 
-                val success = pdfGenerator.generateBill(
+                // Get invoice configuration
+                val invoiceConfig = JewelryAppInitializer.getInvoiceConfigViewModel().invoiceConfig.value
+                
+                val htmlSuccess = htmlCssBillGenerator.generateHtmlBill(
                     order = order,
                     customer = customer,
-                    outputPath = outputPath
+                    outputPath = htmlOutputPath,
+                    invoiceConfig = invoiceConfig
                 )
 
-                if (success) {
-                    _pdfPath.value = outputPath.toString()
-                    println("PDF generated successfully at: $outputPath")
+                if (htmlSuccess) {
+                    println("✅ HTML/CSS generation successful")
+                    
+                    // Verify HTML file was created
+                    val htmlFile = htmlOutputPath.toFile()
+                    if (htmlFile.exists() && htmlFile.length() > 0) {
+                        println("✅ HTML file verified: ${htmlFile.length()} bytes")
+                        
+                        // Open HTML file in browser instead of generating PDF
+                        try {
+                            val desktop = java.awt.Desktop.getDesktop()
+                            if (desktop.isSupported(java.awt.Desktop.Action.BROWSE)) {
+                                desktop.browse(htmlFile.toURI())
+                                println("🌐 HTML invoice opened in browser: ${htmlFile.absolutePath}")
+                                _pdfPath.value = htmlOutputPath.toString() // Store HTML path for download
+                                _successMessage.value = "Invoice generated and opened in browser successfully!"
+                            } else {
+                                println("⚠️ Desktop browsing not supported, HTML file created at: ${htmlFile.absolutePath}")
+                                _pdfPath.value = htmlOutputPath.toString()
+                                _successMessage.value = "Invoice generated successfully! File saved at: ${htmlFile.absolutePath}"
+                            }
+                        } catch (e: Exception) {
+                            println("⚠️ Could not open browser, but HTML file created: ${e.message}")
+                            _pdfPath.value = htmlOutputPath.toString()
+                            _successMessage.value = "Invoice generated successfully! File saved at: ${htmlFile.absolutePath}"
+                        }
+                    } else {
+                        println("⚠️ HTML file verification failed")
+                        _errorMessage.value = "HTML file was not created properly"
+                    }
                 } else {
-                    _errorMessage.value = "Failed to generate PDF bill"
-                    println("PDF generation failed")
+                    println("❌ ========== HTML/CSS GENERATION FAILED ==========")
+                    _errorMessage.value = "Failed to generate invoice HTML file"
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Error generating PDF: ${e.message}"
-                println("Exception during PDF generation: ${e.message}")
+                println("❌ ========== CRITICAL ERROR IN PDF GENERATION ==========")
+                println("💥 Exception: ${e.javaClass.simpleName}")
+                println("💥 Message: ${e.message}")
+                println("💥 Stack trace:")
+                e.printStackTrace()
+                _errorMessage.value = "PDF generation failed: ${e.message}"
+            } finally {
+                _isGeneratingPDF.value = false
+                println("🏁 ========== PDF GENERATION PROCESS COMPLETED ==========")
+            }
+        }
+    }
+
+    fun runPDFDiagnostics() {
+        viewModelScope.launch {
+            _isGeneratingPDF.value = true
+            _errorMessage.value = null
+            
+            try {
+                println("🔬 Running PDF diagnostics...")
+                val diagnostics = org.example.project.utils.PDFDiagnostics.runComprehensiveDiagnostics()
+                
+                if (diagnostics) {
+                    _successMessage.value = "PDF diagnostics completed successfully. All systems are working properly."
+                } else {
+                    _errorMessage.value = "PDF diagnostics found issues. Check console logs for details."
+                }
+                
+            } catch (e: Exception) {
+                _errorMessage.value = "PDF diagnostics failed: ${e.message}"
                 e.printStackTrace()
             } finally {
                 _isGeneratingPDF.value = false
             }
         }
     }
-
-    fun openPDF() {
+    
+    fun downloadBill() {
         _pdfPath.value?.let { path ->
             try {
-                val file = File(path)
-                if (file.exists() && Desktop.isDesktopSupported()) {
-                    Desktop.getDesktop().open(file)
+                val sourceFile = File(path)
+                if (sourceFile.exists()) {
+                    // Get user's Downloads directory
+                    val userHome = System.getProperty("user.home")
+                    val downloadsDir = File(userHome, "Downloads")
+                    
+                    // Ensure Downloads directory exists
+                    if (!downloadsDir.exists()) {
+                        downloadsDir.mkdirs()
+                    }
+                    
+                    // Create destination file in Downloads folder
+                    val fileName = sourceFile.name
+                    val destinationFile = File(downloadsDir, fileName)
+                    
+                    // Copy file to Downloads directory
+                    sourceFile.copyTo(destinationFile, overwrite = true)
+                    
+                    println("✅ Bill downloaded successfully to: ${destinationFile.absolutePath}")
+                    _errorMessage.value = null
+                    
+                    // Check if it's an HTML file or PDF file
+                    val isHtmlFile = fileName.endsWith(".html", ignoreCase = true)
+                    val fileType = if (isHtmlFile) "HTML invoice" else "PDF bill"
+                    _successMessage.value = "$fileType downloaded successfully to Downloads folder"
+                    
+                    // Optionally open the Downloads folder
+                    if (Desktop.isDesktopSupported()) {
+                        Desktop.getDesktop().open(downloadsDir)
+                    }
                 } else {
-                    _errorMessage.value = "Cannot open PDF file or file does not exist"
+                    _errorMessage.value = "Bill file does not exist"
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Error opening PDF: ${e.message}"
+                _errorMessage.value = "Error downloading bill: ${e.message}"
+                println("❌ Error downloading bill: ${e.message}")
                 e.printStackTrace()
             }
+        }
+    }
+
+    private fun tryAlternativePdfGeneration(
+        order: Order,
+        customer: User,
+        outputPath: Path
+    ): Boolean {
+        return try {
+            println("🔄 ========== ALTERNATIVE PDF GENERATION ==========")
+            println("🔧 Using HtmlToPdfBillGenerator with fallback approach...")
+            
+            // Check if output directory exists and is writable
+            val outputFile = outputPath.toFile()
+            val outputDir = outputFile.parentFile
+            
+            if (!outputDir.exists()) {
+                val created = outputDir.mkdirs()
+                println("📁 Created output directory: $created")
+            }
+            
+            if (!outputDir.canWrite()) {
+                throw Exception("Cannot write to output directory: ${outputDir.absolutePath}")
+            }
+            
+            // Use the HtmlToPdfBillGenerator with simplified approach
+            val generator = HtmlToPdfBillGenerator()
+            println("🔧 Generator created successfully")
+            
+            val success = generator.generatePdfBill(order, customer, outputPath)
+            
+            if (success) {
+                println("✅ Alternative PDF generation successful")
+                
+                // Verify the generated file
+                if (outputFile.exists() && outputFile.length() > 0) {
+                    println("✅ Alternative PDF file verified: ${outputFile.length()} bytes")
+                } else {
+                    println("⚠️ Alternative PDF file verification failed")
+                }
+            } else {
+                println("❌ Alternative PDF generation failed")
+            }
+            
+            success
+        } catch (e: Exception) {
+            println("❌ ========== ALTERNATIVE PDF GENERATION EXCEPTION ==========")
+            println("💥 Exception: ${e.javaClass.simpleName}")
+            println("💥 Message: ${e.message}")
+            println("💥 Stack trace:")
+            e.printStackTrace()
+            false
+        }
+    }
+
+    private fun createSimplePdf(
+        order: Order,
+        customer: User,
+        outputPath: Path
+    ): Boolean {
+        return try {
+            println("🔄 ========== SIMPLE PDF GENERATION (LAST RESORT) ==========")
+            println("🔧 Using basic PDFBox approach...")
+            
+            // Check output directory
+            val outputFile = outputPath.toFile()
+            val outputDir = outputFile.parentFile
+            
+            if (!outputDir.exists()) {
+                val created = outputDir.mkdirs()
+                println("📁 Created output directory: $created")
+            }
+            
+            if (!outputDir.canWrite()) {
+                throw Exception("Cannot write to output directory: ${outputDir.absolutePath}")
+            }
+            
+            // Create a very basic PDF using PDFBox with error handling
+            println("📄 Creating PDDocument...")
+            val document = org.apache.pdfbox.pdmodel.PDDocument()
+            
+            try {
+                println("📄 Adding A4 page...")
+                val page = org.apache.pdfbox.pdmodel.PDPage(org.apache.pdfbox.pdmodel.common.PDRectangle.A4)
+                document.addPage(page)
+                
+                println("📄 Creating content stream...")
+                val contentStream = org.apache.pdfbox.pdmodel.PDPageContentStream(document, page)
+                
+                try {
+                    // Add basic content with safe font handling
+                    println("📝 Adding text content...")
+                    var yPosition = 750f
+                    
+                    // Use default font to avoid font loading issues
+                    contentStream.setFont(
+                        org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD), 
+                        12f
+                    )
+                    
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, yPosition)
+                    contentStream.showText("GAGAN JEWELLERS")
+                    contentStream.endText()
+                    
+                    yPosition -= 30f
+                    contentStream.setFont(
+                        org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 
+                        10f
+                    )
+                    
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, yPosition)
+                    contentStream.showText("Invoice: ${order.id}")
+                    contentStream.endText()
+                    
+                    yPosition -= 20f
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, yPosition)
+                    contentStream.showText("Customer: ${customer.name}")
+                    contentStream.endText()
+                    
+                    yPosition -= 20f
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, yPosition)
+                    contentStream.showText("Total: ₹${String.format("%.2f", order.totalAmount)}")
+                    contentStream.endText()
+                    
+                    yPosition -= 20f
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, yPosition)
+                    contentStream.showText("Items: ${order.items.size}")
+                    contentStream.endText()
+                    
+                    yPosition -= 20f
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, yPosition)
+                    contentStream.showText("Date: ${java.text.SimpleDateFormat("dd/MM/yyyy HH:mm").format(java.util.Date(order.timestamp))}")
+                    contentStream.endText()
+                    
+                    yPosition -= 20f
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, yPosition)
+                    contentStream.showText("Payment: ${order.paymentMethod}")
+                    contentStream.endText()
+                    
+                    // Add items list
+                    yPosition -= 30f
+                    contentStream.setFont(
+                        org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA_BOLD), 
+                        10f
+                    )
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, yPosition)
+                    contentStream.showText("Items:")
+                    contentStream.endText()
+                    
+                    contentStream.setFont(
+                        org.apache.pdfbox.pdmodel.font.PDType1Font(org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 
+                        9f
+                    )
+                    
+                    for (item in order.items) {
+                        yPosition -= 15f
+                        if (yPosition < 100) break // Prevent content from going off page
+                        
+                        contentStream.beginText()
+                        contentStream.newLineAtOffset(70f, yPosition)
+                        contentStream.showText("• ${item.product.name} (Qty: ${item.quantity})")
+                        contentStream.endText()
+                    }
+                    
+                } finally {
+                    println("📝 Closing content stream...")
+                    contentStream.close()
+                }
+                
+                // Save the document
+                println("💾 Saving document to: ${outputPath}")
+                document.save(outputPath.toFile())
+                
+                // Verify the file was created
+                if (outputFile.exists() && outputFile.length() > 0) {
+                    println("✅ ========== SIMPLE PDF CREATED SUCCESSFULLY ==========")
+                    println("📄 File size: ${outputFile.length()} bytes")
+                    println("📄 File path: ${outputFile.absolutePath}")
+                    true
+                } else {
+                    println("❌ Simple PDF file verification failed")
+                    false
+                }
+                
+            } finally {
+                println("📄 Closing document...")
+                document.close()
+            }
+            
+        } catch (e: Exception) {
+            println("❌ ========== SIMPLE PDF CREATION EXCEPTION ==========")
+            println("💥 Exception: ${e.javaClass.simpleName}")
+            println("💥 Message: ${e.message}")
+            println("💥 Stack trace:")
+            e.printStackTrace()
+            
+            // Try absolute minimal PDF creation
+            return tryMinimalPdfCreation(order, customer, outputPath)
+        }
+    }
+    
+    private fun tryMinimalPdfCreation(
+        order: Order,
+        customer: User,
+        outputPath: Path
+    ): Boolean {
+        return try {
+            println("🔄 ========== MINIMAL PDF CREATION (EMERGENCY FALLBACK) ==========")
+            
+            val outputFile = outputPath.toFile()
+            
+            // Create minimal PDF with just text
+            val document = org.apache.pdfbox.pdmodel.PDDocument()
+            try {
+                val page = org.apache.pdfbox.pdmodel.PDPage()
+                document.addPage(page)
+                
+                val contentStream = org.apache.pdfbox.pdmodel.PDPageContentStream(document, page)
+                try {
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, 750f)
+                    contentStream.showText("GAGAN JEWELLERS - Invoice ${order.id}")
+                    contentStream.endText()
+                    
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, 700f)
+                    contentStream.showText("Customer: ${customer.name}")
+                    contentStream.endText()
+                    
+                    contentStream.beginText()
+                    contentStream.newLineAtOffset(50f, 650f)
+                    contentStream.showText("Total: ₹${String.format("%.2f", order.totalAmount)}")
+                    contentStream.endText()
+                    
+                } finally {
+                    contentStream.close()
+                }
+                
+                document.save(outputFile)
+                
+                if (outputFile.exists() && outputFile.length() > 0) {
+                    println("✅ Minimal PDF created successfully")
+                    true
+                } else {
+                    false
+                }
+                
+            } finally {
+                document.close()
+            }
+            
+        } catch (e: Exception) {
+            println("❌ Even minimal PDF creation failed: ${e.message}")
+            false
         }
     }
 
@@ -367,7 +772,7 @@ class PaymentViewModel(
         }
 
         val gst = subtotal * 0.18
-        val discountAmount = calculateDiscountAmount(subtotal)
+        val discountAmount = calculateDiscountAmount(subtotal, gst)
         val total = subtotal + gst - discountAmount
 
         return Triple(subtotal, gst, total)
@@ -401,7 +806,7 @@ class PaymentViewModel(
             try {
                 // Calculate dynamic prices based on current metal prices
                 val (dynamicSubtotal, dynamicGst, dynamicTotal) = calculateDynamicPrices(cart, goldPrice, silverPrice)
-                val discountAmount = calculateDiscountAmount(dynamicSubtotal)
+                val discountAmount = calculateDiscountAmount(dynamicSubtotal, dynamicGst)
 
                 val order = Order(
                     id = generateOrderId(),
@@ -445,6 +850,57 @@ class PaymentViewModel(
             } finally {
                 _isProcessing.value = false
             }
+        }
+    }
+    
+    private fun runSystemDiagnostics() {
+        try {
+            println("🔍 ========== SYSTEM DIAGNOSTICS ==========")
+            
+            // Check Java version
+            val javaVersion = System.getProperty("java.version")
+            println("☕ Java Version: $javaVersion")
+            
+            // Check OS
+            val osName = System.getProperty("os.name")
+            val osVersion = System.getProperty("os.version")
+            println("💻 OS: $osName $osVersion")
+            
+            // Check available memory
+            val runtime = Runtime.getRuntime()
+            val maxMemory = runtime.maxMemory() / 1024 / 1024
+            val totalMemory = runtime.totalMemory() / 1024 / 1024
+            val freeMemory = runtime.freeMemory() / 1024 / 1024
+            println("🧠 Memory: ${freeMemory}MB free / ${totalMemory}MB total / ${maxMemory}MB max")
+            
+            // Check PDF libraries
+            try {
+                val pdfBoxClass = Class.forName("org.apache.pdfbox.pdmodel.PDDocument")
+                println("✅ PDFBox library available: ${pdfBoxClass.name}")
+            } catch (e: ClassNotFoundException) {
+                println("❌ PDFBox library not found")
+            }
+            
+            try {
+                val xhtmlClass = Class.forName("org.xhtmlrenderer.pdf.ITextRenderer")
+                println("✅ Flying Saucer library available: ${xhtmlClass.name}")
+            } catch (e: ClassNotFoundException) {
+                println("❌ Flying Saucer library not found")
+            }
+            
+            // Check file system permissions
+            val tempDir = System.getProperty("java.io.tmpdir")
+            val tempFile = File(tempDir)
+            println("📁 Temp directory: $tempDir (writable: ${tempFile.canWrite()})")
+            
+            val userHome = System.getProperty("user.home")
+            val homeFile = File(userHome)
+            println("🏠 User home: $userHome (writable: ${homeFile.canWrite()})")
+            
+            println("✅ ========== SYSTEM DIAGNOSTICS COMPLETED ==========")
+            
+        } catch (e: Exception) {
+            println("⚠️ System diagnostics failed: ${e.message}")
         }
     }
 }

@@ -72,6 +72,21 @@ import org.example.project.ui.CategoryManagementScreen
 import org.example.project.ui.InvoiceConfigScreen
 import org.example.project.ui.CustomizationScreen
 
+private fun getScreenTitle(screen: Screen): String {
+    return when (screen) {
+        Screen.DASHBOARD -> "Dashboard - Jewelry Inventory"
+        Screen.ADD_PRODUCT -> "Add Product"
+        Screen.EDIT_PRODUCT -> "Edit Product"
+        Screen.PRODUCT_DETAIL -> "Product Details"
+        Screen.BILLING -> "Billing"
+        Screen.GOLD_RATES -> "Gold Rates"
+        Screen.CATEGORIES -> "Categories"
+        Screen.INVOICE_CONFIG -> "Invoice Configuration"
+        Screen.CUSTOMIZATION -> "Customization"
+        Screen.SETTINGS -> "Settings"
+    }
+}
+
 @Composable
 fun JewelryApp(viewModel: ProductsViewModel) {
     var currentScreen by remember { mutableStateOf(Screen.DASHBOARD) }
@@ -330,7 +345,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                         .hoverable(contentInteractionSource)
                 ) {
                     TopAppBar(
-                        title = { Text("Jewelry Inventory Management") },
+                        title = { Text(getScreenTitle(currentScreen)) },
                         backgroundColor = MaterialTheme.colors.primary,
                         contentColor = Color.White,
                         navigationIcon = if (!isSidebarExpanded) {

@@ -10,7 +10,6 @@ data class Product(
     val materialType: String = "",
     val gender: String = "",
     val weight: String = "",
-    val karat: Int = 22, // New field for gold karat (22k, 20k, 18k, etc.)
     val makingCharges: Double = 0.0, // New field for making charges per gram
     val available: Boolean = true,
     val featured: Boolean = false,
@@ -37,6 +36,8 @@ data class Product(
     val totalProductCost: Double = 0.0, // Calculated total product cost
     val hasCustomPrice: Boolean = false, // Checkbox for custom price
     val customPrice: Double = 0.0, // Custom price value when hasCustomPrice is true
+    val customMetalRate: Double = 0.0, // Custom metal rate for this specific product
+    val makingRate: Double = 0.0, // Custom making rate for this specific product
     // Field-level visibility configuration
     val show: ProductShowConfig = ProductShowConfig()
 )
@@ -137,6 +138,7 @@ data class CartItem(
     val makingCharges: Double = 0.0, // Making charges per gram
     val totalMakingCharges: Double = 0.0, // Total making charges (auto-calculated)
     val cwWeight: Double = 0.0, // Carat weight
+    val stoneQuantity: Double = 0.0, // Stone quantity
     val stoneRate: Double = 0.0, // Stone rate per carat
     val stoneAmount: Double = 0.0, // Stone amount (auto-calculated)
     val va: Double = 0.0, // Value addition
@@ -178,7 +180,7 @@ data class Cart(
         return items.sumOf { item ->
             when {
                 item.product.materialType.contains("gold", ignoreCase = true) -> {
-                    val goldRate = when (item.product.karat) {
+                    val goldRate = when (extractKaratFromMaterialType(item.product.materialType)) {
                         24 -> goldRates.rate24k
                         22 -> goldRates.rate22k
                         20 -> goldRates.rate20k
@@ -389,6 +391,13 @@ data class RateHistory(
     val updatedAt: Long,
     val updatedBy: String = "system"
 )
+
+// Helper function to extract karat from materialType string
+fun extractKaratFromMaterialType(materialType: String): Int {
+    val regex = Regex("""(\d+)K""")
+    val match = regex.find(materialType)
+    return match?.groupValues?.get(1)?.toIntOrNull() ?: 22 // Default to 22K if not found
+}
 
 // Helper function to calculate rate based on karat
 fun MetalRate.calculateRateForKarat(targetKarat: Int): Double {

@@ -244,6 +244,15 @@ class ProductsViewModel(internal val repository: ProductRepository, private val 
         }
     }
 
+    suspend fun getProductByBarcodeId(barcodeId: String): Product? {
+        return try {
+            repository.getProductByBarcodeId(barcodeId)
+        } catch (e: Exception) {
+            println("Failed to get product by barcode ID: $barcodeId - ${e.message}")
+            null
+        }
+    }
+
     fun clearCurrentProduct() {
         _currentProduct.value = null
     }

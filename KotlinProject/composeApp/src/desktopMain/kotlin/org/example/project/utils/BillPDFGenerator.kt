@@ -35,39 +35,109 @@ class BillPDFGenerator {
         silverPricePerGram: Double = 75.0
     ): Boolean = withContext(Dispatchers.IO) {
         try {
+            println("🔄 ========== PDFBOX PDF GENERATION STARTED ==========")
+            println("📋 Order ID: ${order.id}")
+            println("👤 Customer: ${customer.name} (ID: ${customer.id})")
+            println("📄 Output path: $outputPath")
+            println("💰 Order total: ₹${String.format("%.2f", order.totalAmount)}")
+            println("📦 Items count: ${order.items.size}")
+            println("🏢 Company: $companyName")
+            println("🥇 Gold rate: ₹${String.format("%.2f", goldPricePerGram)}/g")
+            println("🥈 Silver rate: ₹${String.format("%.2f", silverPricePerGram)}/g")
+            
+            // Validate inputs
+            if (order.id.isBlank()) {
+                throw IllegalArgumentException("Order ID is blank")
+            }
+            if (customer.name.isBlank()) {
+                throw IllegalArgumentException("Customer name is blank")
+            }
+            if (order.items.isEmpty()) {
+                throw IllegalArgumentException("Order has no items")
+            }
+            
+            // Check output directory
+            val outputFile = outputPath.toFile()
+            val outputDir = outputFile.parentFile
+            
+            if (!outputDir.exists()) {
+                val created = outputDir.mkdirs()
+                println("📁 Created output directory: $created")
+            }
+            
+            if (!outputDir.canWrite()) {
+                throw SecurityException("Cannot write to output directory: ${outputDir.absolutePath}")
+            }
+            
+            println("✅ Output directory validated")
+            
+            println("🔧 Creating PDDocument...")
             PDDocument().use { document ->
+                println("🔧 Adding A4 page...")
                 val page = PDPage(PDRectangle.A4)
                 document.addPage(page)
+                println("✅ Page added successfully")
 
                 PDPageContentStream(document, page).use { contentStream ->
+                    println("🔧 Setting up page dimensions...")
                     val pageWidth = page.mediaBox.width
                     val pageHeight = page.mediaBox.height
                     val margin = 30f
                     var yPosition = pageHeight - margin
+                    
+                    println("📐 Page dimensions: ${pageWidth}x${pageHeight}, margin: ${margin}")
 
+                    println("🔧 Drawing border...")
                     drawBorder(contentStream, margin - 10f, pageWidth, pageHeight)
+                    println("✅ Border drawn")
 
+                    println("🔧 Drawing customer copy header...")
                     yPosition = drawCustomerCopyHeader(contentStream, margin, yPosition, pageWidth)
+                    println("✅ Customer copy header drawn, yPosition: $yPosition")
 
+                    println("🔧 Drawing main header...")
                     yPosition = drawMainHeader(contentStream, companyName, companyAddress,
                         companyPhone, gstNumber, order, customer, margin, yPosition, pageWidth)
+                    println("✅ Main header drawn, yPosition: $yPosition")
 
+                    println("🔧 Drawing gold rate info...")
                     yPosition = drawGoldRateInfo(contentStream, margin, yPosition, pageWidth, goldPricePerGram, silverPricePerGram)
+                    println("✅ Gold rate info drawn, yPosition: $yPosition")
 
+                    println("🔧 Drawing items table...")
                     yPosition = drawCorrectItemsTable(
                         contentStream, order, goldPricePerGram, silverPricePerGram, margin, yPosition, pageWidth
                     )
+                    println("✅ Items table drawn, yPosition: $yPosition")
 
+                    println("🔧 Drawing payment section...")
                     yPosition = drawPaymentSection(contentStream, order, margin, yPosition, pageWidth)
+                    println("✅ Payment section drawn, yPosition: $yPosition")
 
+                    println("🔧 Drawing amount in words...")
                     drawAmountInWords(contentStream, order.totalAmount, margin, yPosition, pageWidth)
+                    println("✅ Amount in words drawn")
                 }
-
+                
+                println("🔧 Saving document...")
                 document.save(outputPath.toFile())
-                true
+                
+                // Verify the file was created
+                if (outputFile.exists() && outputFile.length() > 0) {
+                    println("✅ ========== PDFBOX PDF GENERATION SUCCESSFUL ==========")
+                    println("📄 PDF saved at: $outputPath")
+                    println("📊 PDF file size: ${outputFile.length()} bytes")
+                    true
+                } else {
+                    println("❌ PDF file verification failed")
+                    false
+                }
             }
         } catch (e: Exception) {
-            println("Error generating PDF: ${e.message}")
+            println("❌ ========== PDFBOX PDF GENERATION FAILED ==========")
+            println("💥 Exception: ${e.javaClass.simpleName}")
+            println("💥 Message: ${e.message}")
+            println("💥 Stack trace:")
             e.printStackTrace()
             false
         }

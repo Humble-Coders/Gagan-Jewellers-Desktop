@@ -33,6 +33,10 @@ kotlin {
             implementation("com.google.cloud:google-cloud-storage:2.29.1")
             //implementation("io.coil-kt:coil:3.0.0-alpha06")
             implementation("org.apache.pdfbox:pdfbox:3.0.1")
+            implementation("org.xhtmlrenderer:flying-saucer-pdf:9.1.22")
+            implementation("org.xhtmlrenderer:flying-saucer-core:9.1.22")
+            implementation("com.itextpdf:itext7-core:7.2.5")
+            implementation("org.slf4j:slf4j-simple:1.7.36")
 
 
             // extended icons

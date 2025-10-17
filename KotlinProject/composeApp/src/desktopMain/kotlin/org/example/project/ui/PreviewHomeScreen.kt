@@ -357,7 +357,7 @@ fun PreviewRecentlyViewedItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "₹${formatCurrency(if (product.hasCustomPrice) product.customPrice else calculateProductTotalCost(product))}",
+                    "₹${formatCurrency(if (product.hasCustomPrice) product.customPrice else if (product.totalProductCost > 0) product.totalProductCost else calculateProductTotalCost(product))}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF896C6C)
@@ -527,7 +527,7 @@ fun PreviewFeaturedProductCard(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    "₹${formatCurrency(if (product.hasCustomPrice) product.customPrice else calculateProductTotalCost(product))}",
+                    "₹${formatCurrency(if (product.hasCustomPrice) product.customPrice else if (product.totalProductCost > 0) product.totalProductCost else calculateProductTotalCost(product))}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF896C6C)
@@ -835,28 +835,34 @@ private fun formatCurrency(amount: Double): String {
 }
 
 /**
- * Calculate the total product cost based on the same logic used in AddEditProductScreen
+ * Calculate the total product cost using the same logic as cart item detail screen (total charges)
+ * This returns Total Charges (without GST) to match the item detail screen display
  */
 private fun calculateProductTotalCost(product: Product): Double {
     // Calculate net weight (total weight - less weight)
     val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
     
-    // Material cost (net weight × material rate)
+    // Material cost (net weight × material rate × quantity)
     val materialRate = getMaterialRateForProduct(product)
-    val materialCost = netWeight * materialRate
+    val baseAmount = when {
+        product.materialType.contains("gold", ignoreCase = true) -> netWeight * materialRate * product.quantity
+        product.materialType.contains("silver", ignoreCase = true) -> netWeight * materialRate * product.quantity
+        else -> netWeight * materialRate * product.quantity // Default to gold rate
+    }
     
-    // Making charges (net weight × making rate)
-    val makingCharges = netWeight * product.defaultMakingRate
+    // Making charges (net weight × making rate × quantity)
+    val makingCharges = netWeight * product.defaultMakingRate * product.quantity
     
-    // Stone amount (if has stones)
+    // Stone amount (if has stones) - CW_WT × STONE_RATE × QTY
     val stoneAmount = if (product.hasStones) {
-        if (product.cwWeight > 0 && product.stoneRate > 0 && product.stoneQuantity > 0) {
-            product.cwWeight * product.stoneRate * product.stoneQuantity
+        if (product.cwWeight > 0 && product.stoneRate > 0) {
+            product.cwWeight * product.stoneRate * product.quantity
         } else 0.0
     } else 0.0
     
-    // Total = Material Cost + Making Charges + Stone Amount + VA Charges
-    return materialCost + makingCharges + stoneAmount + product.vaCharges
+    // Total Charges = Base Amount + Making Charges + Stone Amount + VA Charges
+    // This matches the "Total Charges" display in cart item detail screen
+    return baseAmount + makingCharges + stoneAmount + product.vaCharges
 }
 
 /**

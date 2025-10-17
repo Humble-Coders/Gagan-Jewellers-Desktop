@@ -32,6 +32,7 @@ import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.viewModels.GoldRateViewModel
 import org.example.project.viewModels.MetalRateViewModel
+import org.example.project.viewModels.InvoiceConfigViewModel
 import java.io.FileInputStream
 import java.nio.file.Path
 
@@ -63,6 +64,7 @@ object JewelryAppInitializer {
     private var metalRatesRepository: MetalRatesRepository? = null
     private var metalRateRepository: MetalRateRepository? = null
     private var metalRateViewModel: MetalRateViewModel? = null
+    private var invoiceConfigViewModel: InvoiceConfigViewModel? = null
 
 
     /**
@@ -127,6 +129,7 @@ object JewelryAppInitializer {
             MetalRatesManager.initialize(metalRatesRepository!!)
             metalRateRepository = FirestoreMetalRateRepository(firestore)
             metalRateViewModel = MetalRateViewModel(metalRateRepository!!)
+            invoiceConfigViewModel = InvoiceConfigViewModel()
 
             initialized = true
             println("Firebase initialized successfully with project ID: $projectId")
@@ -158,6 +161,11 @@ object JewelryAppInitializer {
     fun getMetalRateViewModel(): MetalRateViewModel {
         checkInitialized()
         return metalRateViewModel!!
+    }
+
+    fun getInvoiceConfigViewModel(): InvoiceConfigViewModel {
+        checkInitialized()
+        return invoiceConfigViewModel!!
     }
 
     /**

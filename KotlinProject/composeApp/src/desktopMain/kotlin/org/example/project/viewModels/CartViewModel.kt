@@ -16,6 +16,7 @@ import org.example.project.data.CartRepository
 import org.example.project.data.MetalRatesManager
 import org.example.project.data.Product
 import org.example.project.data.ProductRepository
+import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.utils.ImageLoader
 import org.jetbrains.skia.Image
 import java.util.concurrent.ConcurrentHashMap
@@ -28,6 +29,7 @@ class CartViewModel(
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
 
+ 
     // Cart state
     private val _cart = mutableStateOf(Cart())
     val cart: State<Cart> = _cart
@@ -50,20 +52,33 @@ class CartViewModel(
 
 
     fun addToCart(product: Product) {
+        println("🛒 DEBUG: addToCart called for product: ${product.name}")
+        println("   - Product ID: ${product.id}")
+        println("   - Product Quantity: ${product.quantity}")
+        println("   - Product Available: ${product.available}")
+        println("   - Product Category: ${product.categoryId}")
+        println("   - Product Material Type: ${product.materialType}")
+        
         val currentCart = _cart.value
         val existingItem = currentCart.items.find { it.productId == product.id }
         val currentQuantityInCart = existingItem?.quantity ?: 0
+        
+        println("   - Current quantity in cart: $currentQuantityInCart")
+        println("   - Existing item found: ${existingItem != null}")
 
         // Check if we can add more to cart
         if (currentQuantityInCart >= product.quantity) {
+            println("   - ❌ Cannot add more items. Only ${product.quantity} available in stock.")
             _error.value = "Cannot add more items. Only ${product.quantity} available in stock."
             return
         }
 
         val existingItemIndex = currentCart.items.indexOfFirst { it.productId == product.id }
+        println("   - Existing item index: $existingItemIndex")
 
         val updatedItems = if (existingItemIndex >= 0) {
             // Update existing item quantity
+            println("   - Updating existing item quantity")
             currentCart.items.toMutableList().apply {
                 this[existingItemIndex] = this[existingItemIndex].copy(
                     quantity = this[existingItemIndex].quantity + 1
@@ -71,18 +86,22 @@ class CartViewModel(
             }
         } else {
             // Add new item with product's fixed weight from Firestore
+            println("   - Adding new item to cart")
             val productWeight = parseWeight(product.weight)
-            val currentGoldRate = MetalRatesManager.metalRates.value.getGoldRateForKarat(product.karat)
+            val currentGoldRate = MetalRatesManager.metalRates.value.getGoldRateForKarat(extractKaratFromMaterialType(product.materialType))
+            println("   - Product weight: $productWeight")
+            println("   - Current gold rate: $currentGoldRate")
+            
             currentCart.items + CartItem(
                 productId = product.id,
                 product = product,
                 quantity = 1,
-                metal = "${product.karat}K", // Set metal from product karat
+                metal = "${extractKaratFromMaterialType(product.materialType)}K", // Set metal from product materialType
                 customGoldRate = currentGoldRate, // Initialize with current gold rate
                 selectedWeight = productWeight,
                 grossWeight = productWeight, // Set gross weight to product weight initially
                 lessWeight = 0.0, // Default to 0
-                makingCharges = 650.0, // Default making charges per gram
+                makingCharges = product.defaultMakingRate, // Initialize making charges per gram from product default
                 cwWeight = 0.0, // Default carat weight
                 stoneRate = 0.0, // Default stone rate
                 va = 0.0, // Default value addition
@@ -90,6 +109,7 @@ class CartViewModel(
             )
         }
 
+        println("   - Updated items count: ${updatedItems.size}")
         _cart.value = currentCart.copy(
             items = updatedItems,
             updatedAt = System.currentTimeMillis()
@@ -97,6 +117,8 @@ class CartViewModel(
 
         // Clear error if successful
         _error.value = null
+        println("   - ✅ Successfully added/updated product in cart")
+        println("   - Final cart items count: ${_cart.value.items.size}")
 
         // Load image for the added product
         loadProductImage(product)
@@ -202,11 +224,11 @@ class CartViewModel(
         val updatedItems = currentCart.items.map { item ->
             if (item.customGoldRate <= 0) {
                 // Extract karat from metal field or fallback to product karat
-                val metalKarat = if (item.metal.isNotEmpty()) {
-                    item.metal.replace("K", "").toIntOrNull() ?: item.product.karat
-                } else {
-                    item.product.karat
-                }
+        val metalKarat = if (item.metal.isNotEmpty()) {
+            item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(item.product.materialType)
+        } else {
+            extractKaratFromMaterialType(item.product.materialType)
+        }
                 val currentGoldRate = metalRates.getGoldRateForKarat(metalKarat)
                 item.copy(customGoldRate = currentGoldRate)
             } else {
@@ -238,6 +260,7 @@ class CartViewModel(
                 "netWeight" -> currentItem.copy(netWeight = value.toDoubleOrNull() ?: currentItem.netWeight)
                 "makingRate" -> currentItem.copy(makingCharges = value.toDoubleOrNull() ?: currentItem.makingCharges)
                 "cwWeight" -> currentItem.copy(cwWeight = value.toDoubleOrNull() ?: currentItem.cwWeight)
+                "stoneQuantity" -> currentItem.copy(stoneQuantity = value.toDoubleOrNull() ?: currentItem.stoneQuantity)
                 "stoneRate" -> currentItem.copy(stoneRate = value.toDoubleOrNull() ?: currentItem.stoneRate)
                 "vaCharges" -> currentItem.copy(va = value.toDoubleOrNull() ?: currentItem.va)
                 "discountPercent" -> currentItem.copy(discountPercent = value.toDoubleOrNull() ?: currentItem.discountPercent)
@@ -269,26 +292,35 @@ class CartViewModel(
         return getSubtotal()
     }
 
-    // Calculate individual item final amount using jewelry calculation logic
-    fun calculateItemFinalAmount(cartItem: CartItem, metalRates: org.example.project.data.MetalRates): Double {
+    // Calculate total by summing all total charges of each product (without GST)
+    fun getTotalCharges(): Double {
+        val metalRates = MetalRatesManager.metalRates.value
+        return _cart.value.items.sumOf { cartItem ->
+            calculateItemTotalCharges(cartItem, metalRates)
+        }
+    }
+
+    // Calculate individual item total charges (without GST)
+    fun calculateItemTotalCharges(cartItem: CartItem, metalRates: org.example.project.data.MetalRates): Double {
         // Extract karat from metal field or fallback to product karat
         val metalKarat = if (cartItem.metal.isNotEmpty()) {
-            cartItem.metal.replace("K", "").toIntOrNull() ?: cartItem.product.karat
+            cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(cartItem.product.materialType)
         } else {
-            cartItem.product.karat
+            extractKaratFromMaterialType(cartItem.product.materialType)
         }
         
         val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else metalRates.getGoldRateForKarat(metalKarat)
         val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
 
-        // MANUAL INPUT FIELDS (from CartItem)
-        val grossWeight = cartItem.grossWeight
-        val lessWeight = cartItem.lessWeight
+        // MANUAL INPUT FIELDS with sensible fallbacks to product values
+        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.product.totalWeight
+        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else cartItem.product.lessWeight
         val quantity = cartItem.quantity
-        val makingChargesPerGram = cartItem.makingCharges
-        val cwWeight = cartItem.cwWeight
-        val stoneRate = cartItem.stoneRate
-        val vaCharges = cartItem.va
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
+        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.cwWeight
+        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else cartItem.product.stoneRate
+        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else cartItem.product.stoneQuantity
+        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.vaCharges
         val discountPercent = cartItem.discountPercent
 
         // AUTO-CALCULATED FIELDS
@@ -306,8 +338,59 @@ class CartViewModel(
         // 3. MKG (Making Charges) = NT_WT × MAKING_RATE × QTY
         val makingCharges = netWeight * makingChargesPerGram * quantity
 
-        // 4. Stone Charges = CW_WT × STONE_RATE × QTY
-        val stoneAmount = cwWeight * stoneRate * quantity
+        // 4. Stone Charges = STONE_RATE × STONE_QUANTITY × CW_WT
+        val stoneAmount = stoneRate * stoneQuantity * cwWeight
+
+        // 5. T_CHARGES (Total Charges) = AMOUNT + MKG + STONE_AMOUNT + VA_CHARGES
+        val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+
+        // 6. D_AMT (Discount Amount) = T_CHARGES × (D_PERCENT ÷ 100)
+        val discountAmount = totalCharges * (discountPercent / 100.0)
+
+        // 7. TAXABLE_AMOUNT = T_CHARGES - D_AMT (this is what we return - no GST)
+        return totalCharges - discountAmount
+    }
+
+    // Calculate individual item final amount using jewelry calculation logic
+    fun calculateItemFinalAmount(cartItem: CartItem, metalRates: org.example.project.data.MetalRates): Double {
+        // Extract karat from metal field or fallback to product karat
+        val metalKarat = if (cartItem.metal.isNotEmpty()) {
+            cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(cartItem.product.materialType)
+        } else {
+            extractKaratFromMaterialType(cartItem.product.materialType)
+        }
+        
+        val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else metalRates.getGoldRateForKarat(metalKarat)
+        val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
+
+        // MANUAL INPUT FIELDS with sensible fallbacks to product values
+        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.product.totalWeight
+        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else cartItem.product.lessWeight
+        val quantity = cartItem.quantity
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
+        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.cwWeight
+        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else cartItem.product.stoneRate
+        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else cartItem.product.stoneQuantity
+        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.vaCharges
+        val discountPercent = cartItem.discountPercent
+
+        // AUTO-CALCULATED FIELDS
+        
+        // 1. NT_WT (Net Weight) = GS_WT - LESS_WT
+        val netWeight = grossWeight - lessWeight
+
+        // 2. AMOUNT (Gold Value) = NT_WT × GOLD_RATE × QTY
+        val baseAmount = when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> netWeight * goldRate * quantity
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> netWeight * silverRate * quantity
+            else -> netWeight * goldRate * quantity // Default to gold rate
+        }
+
+        // 3. MKG (Making Charges) = NT_WT × MAKING_RATE × QTY
+        val makingCharges = netWeight * makingChargesPerGram * quantity
+
+        // 4. Stone Charges = STONE_RATE × STONE_QUANTITY × CW_WT
+        val stoneAmount = stoneRate * stoneQuantity * cwWeight
 
         // 5. T_CHARGES (Total Charges) = AMOUNT + MKG + STONE_AMOUNT + VA_CHARGES
         val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
@@ -342,7 +425,7 @@ class CartViewModel(
         val actualNetWeight = if (netWeight > 0) netWeight else (grossWeight - lessWeight)
 
         // Step 1: Base Gold/Silver Value
-        val goldRate = metalRates.getGoldRateForKarat(cartItem.product.karat)
+        val goldRate = metalRates.getGoldRateForKarat(extractKaratFromMaterialType(cartItem.product.materialType))
         val silverRate = metalRates.getSilverRateForPurity(999)
         val baseAmount = when {
             cartItem.product.materialType.contains("gold", ignoreCase = true) -> actualNetWeight * goldRate
@@ -350,8 +433,8 @@ class CartViewModel(
             else -> actualNetWeight * goldRate
         }
 
-        // Step 2: Making Charges (₹650 per gram)
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 650.0
+        // Step 2: Making Charges (fallback to product default making rate)
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
         val makingCharges = makingChargesPerGram * actualNetWeight
 
         // Step 3: Value Addition

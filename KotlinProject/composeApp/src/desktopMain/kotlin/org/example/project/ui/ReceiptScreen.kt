@@ -1,7 +1,9 @@
 package org.example.project.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,12 +16,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.example.project.data.PaymentTransaction
+import org.example.project.data.CartItem
+import org.example.project.data.MetalRatesManager
 import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.CustomerViewModel
+import org.example.project.utils.ImageLoader
+import org.example.project.JewelryAppInitializer
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
@@ -29,13 +38,15 @@ fun ReceiptScreen(
     paymentViewModel: PaymentViewModel,
     customerViewModel: CustomerViewModel,
     onStartNewOrder: () -> Unit,
-    onBackToBilling: () -> Unit
+    onBackToBilling: () -> Unit,
+    productsViewModel: org.example.project.viewModels.ProductsViewModel = JewelryAppInitializer.getViewModel()
 ) {
     val lastTransaction by paymentViewModel.lastTransaction
     val isGeneratingPDF by paymentViewModel.isGeneratingPDF
     val pdfPath by paymentViewModel.pdfPath
     val selectedCustomer by customerViewModel.selectedCustomer
     val errorMessage by paymentViewModel.errorMessage
+    val successMessage by paymentViewModel.successMessage
     val isGstIncluded by paymentViewModel.isGstIncluded
 
     Column(
@@ -171,8 +182,35 @@ fun ReceiptScreen(
                         discountAmount = transaction.discountAmount,
                         gst = transaction.gstAmount,
                         total = transaction.totalAmount,
-                        isGstIncluded = transaction.isGstIncluded
+                        isGstIncluded = transaction.isGstIncluded,
+                        transaction = transaction
                     )
+
+                    // Items Details Section
+                    if (transaction.items.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Divider()
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            "Items Details",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2E2E2E)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        transaction.items.forEachIndexed { index, cartItem ->
+                            ItemDetailCard(
+                                cartItem = cartItem,
+                                index = index,
+                                productsViewModel = productsViewModel
+                            )
+                            if (index < transaction.items.size - 1) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -201,19 +239,20 @@ fun ReceiptScreen(
                             color = Color(0xFFFF9800)
                         )
                         Text(
-                            "Generating PDF Receipt...",
+                            "Generating invoice...",
                             fontSize = 16.sp,
                             color = Color(0xFF666666)
                         )
                     } else if (pdfPath != null) {
+                        val isHtmlFile = pdfPath!!.endsWith(".html", ignoreCase = true)
                         Icon(
                             Icons.Default.CheckCircle,
-                            contentDescription = "PDF Ready",
+                            contentDescription = "Invoice Ready",
                             tint = Color(0xFF4CAF50),
                             modifier = Modifier.size(24.dp)
                         )
                         Text(
-                            "PDF Receipt Generated",
+                            if (isHtmlFile) "Invoice Generated and Opened in Browser" else "PDF Generated from HTML/CSS",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color(0xFF4CAF50)
@@ -226,7 +265,7 @@ fun ReceiptScreen(
                             modifier = Modifier.size(24.dp)
                         )
                         Text(
-                            "Receipt will be generated shortly",
+                            "Invoice will be generated shortly",
                             fontSize = 16.sp,
                             color = Color(0xFF666666)
                         )
@@ -237,7 +276,7 @@ fun ReceiptScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Button(
-                        onClick = { paymentViewModel.openPDF() },
+                        onClick = { paymentViewModel.downloadBill() },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             backgroundColor = Color(0xFF2196F3)
@@ -245,13 +284,13 @@ fun ReceiptScreen(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Icon(
-                            Icons.Default.KeyboardArrowDown,
-                            contentDescription = "Open PDF",
+                            Icons.Default.Download,
+                            contentDescription = "Download Invoice",
                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            "Open PDF Receipt",
+                            text = if (pdfPath!!.endsWith(".html", ignoreCase = true)) "Download HTML Invoice" else "Download PDF Receipt",
                             color = Color.White,
                             fontWeight = FontWeight.Medium
                         )
@@ -289,7 +328,65 @@ fun ReceiptScreen(
             }
         }
 
+        // Success Message
+        successMessage?.let { success ->
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                backgroundColor = Color(0xFFE8F5E8),
+                border = BorderStroke(1.dp, Color(0xFF81C784)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = "Success",
+                        tint = Color(0xFF4CAF50),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        success,
+                        color = Color(0xFF4CAF50),
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
+
+        // Diagnostic Button (only show if there's an error)
+        if (errorMessage != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Button(
+                onClick = { paymentViewModel.runPDFDiagnostics() },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(
+                    backgroundColor = Color(0xFF2196F3)
+                ),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.Build,
+                    contentDescription = "Diagnose PDF",
+                    modifier = Modifier.size(20.dp),
+                    tint = Color.White
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Diagnose PDF Issue",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
 
         // Action Buttons
         Row(
@@ -343,7 +440,7 @@ fun ReceiptScreen(
 
         // Footer Message
         Text(
-            "Thank you for choosing Premium Jewelry Store!\nA copy of your receipt has been saved to your Documents.",
+            "Thank you for choosing Premium Jewelry Store!\nA PDF copy of your receipt has been generated from HTML/CSS.",
             fontSize = 14.sp,
             color = Color(0xFF666666),
             textAlign = TextAlign.Center,
@@ -440,13 +537,23 @@ private fun PriceBreakdown(
     discountAmount: Double,
     gst: Double,
     total: Double,
-    isGstIncluded: Boolean
+    isGstIncluded: Boolean,
+    transaction: PaymentTransaction? = null
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // Calculate stone charges and VA charges from transaction items
+        val stoneCharges = transaction?.items?.sumOf { item ->
+            item.stoneRate * item.stoneQuantity * item.cwWeight
+        } ?: 0.0
+        
+        val vaCharges = transaction?.items?.sumOf { item ->
+            item.va
+        } ?: 0.0
+
         AmountRow(
-            label = "Metal Cost",
+            label = "Subtotal",
             amount = subtotal
         )
 
@@ -454,6 +561,20 @@ private fun PriceBreakdown(
             label = "Making Charges",
             amount = makingCharges
         )
+
+        if (stoneCharges > 0) {
+            AmountRow(
+                label = "Stone Charges",
+                amount = stoneCharges
+            )
+        }
+
+        if (vaCharges > 0) {
+            AmountRow(
+                label = "VA Charges",
+                amount = vaCharges
+            )
+        }
 
         if (discountAmount > 0) {
             AmountRow(
@@ -463,9 +584,12 @@ private fun PriceBreakdown(
             )
         }
 
-        if (isGstIncluded && gst > 0) {
+        // Calculate GST percentage dynamically
+        val gstPercentage = if (subtotal > 0) (gst / subtotal * 100).toInt() else 0
+        
+        if (gst > 0) {
             AmountRow(
-                label = "GST (18%)",
+                label = "GST (${gstPercentage}%)",
                 amount = gst
             )
         }
@@ -495,10 +619,168 @@ private fun PriceBreakdown(
         // Add GST status indicator
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            if (isGstIncluded) "* GST included in total amount" else "* GST not included",
+            if (gst > 0) "* GST (${gstPercentage}%) included in total amount" else "* No GST applied",
             fontSize = 12.sp,
             color = Color(0xFF666666),
             fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+        )
+    }
+}
+
+@Composable
+private fun ItemDetailCard(
+    cartItem: CartItem,
+    index: Int,
+    productsViewModel: org.example.project.viewModels.ProductsViewModel
+) {
+    val metalRates = MetalRatesManager.metalRates.value
+    val product = cartItem.product
+    
+    // Use the same calculation logic as CartViewModel
+    val metalKarat = if (cartItem.metal.isNotEmpty()) {
+        cartItem.metal.replace("K", "").toIntOrNull() ?: org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
+    } else {
+        org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
+    }
+    
+    val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else metalRates.getGoldRateForKarat(metalKarat)
+    val silverRate = metalRates.getSilverRateForPurity(999)
+    
+    // Use product values as fallbacks if cart item values are 0
+    val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
+    val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else product.lessWeight
+    val netWeight = grossWeight - lessWeight
+    val quantity = cartItem.quantity
+    val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else product.defaultMakingRate
+    val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else product.cwWeight
+    val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else product.stoneRate
+    val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else product.stoneQuantity
+    val vaCharges = if (cartItem.va > 0) cartItem.va else product.vaCharges
+    
+    // Calculate amounts using the same logic as CartViewModel
+    val baseAmount = when {
+        product.materialType.contains("gold", ignoreCase = true) -> netWeight * goldRate * quantity
+        product.materialType.contains("silver", ignoreCase = true) -> netWeight * silverRate * quantity
+        else -> netWeight * goldRate * quantity // Default to gold rate
+    }
+    
+    val makingCharges = netWeight * makingChargesPerGram * quantity
+    val stoneAmount = stoneRate * stoneQuantity * cwWeight
+    val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = 2.dp,
+        shape = RoundedCornerShape(8.dp),
+        backgroundColor = Color(0xFFF8F9FA)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Item Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${index + 1}. ${product.name}",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF2E2E2E)
+                )
+                Text(
+                    text = "Qty: ${quantity}",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF666666)
+                )
+            }
+
+            // Material and Weight Details
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "Material: ${cartItem.metal}",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666)
+                    )
+                    Text(
+                        text = "Weight: ${String.format("%.2f", netWeight)}g",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666)
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "Rate: ₹${String.format("%.2f", if (product.materialType.contains("gold", ignoreCase = true)) goldRate else silverRate)}/g",
+                        fontSize = 12.sp,
+                        color = Color(0xFF666666)
+                    )
+                    if (makingChargesPerGram > 0) {
+                        Text(
+                            text = "Making: ₹${String.format("%.2f", makingChargesPerGram)}/g",
+                            fontSize = 12.sp,
+                            color = Color(0xFF666666)
+                        )
+                    }
+                }
+            }
+
+            // Amount Breakdown
+            Divider(thickness = 1.dp, color = Color(0xFFE0E0E0))
+            
+            ItemAmountRow(label = "Base Amount", amount = baseAmount)
+            if (makingCharges > 0) {
+                ItemAmountRow(label = "Making Charges", amount = makingCharges)
+            }
+            if (stoneAmount > 0) {
+                ItemAmountRow(label = "Stone Amount", amount = stoneAmount)
+            }
+            if (vaCharges > 0) {
+                ItemAmountRow(label = "VA Charges", amount = vaCharges)
+            }
+            
+            Divider(thickness = 1.dp, color = Color(0xFFE0E0E0))
+            
+            ItemAmountRow(
+                label = "Item Total",
+                amount = totalCharges,
+                isTotal = true
+            )
+
+            // Customization Notes (if available in CartItem)
+            // Note: CartItem doesn't have customizationNotes field, so removing this section
+        }
+    }
+}
+
+@Composable
+private fun ItemAmountRow(
+    label: String,
+    amount: Double,
+    isTotal: Boolean = false
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            fontSize = if (isTotal) 14.sp else 12.sp,
+            fontWeight = if (isTotal) FontWeight.Bold else FontWeight.Normal,
+            color = if (isTotal) Color(0xFF2E2E2E) else Color(0xFF666666)
+        )
+        Text(
+            text = "₹${String.format("%.2f", amount)}",
+            fontSize = if (isTotal) 14.sp else 12.sp,
+            fontWeight = if (isTotal) FontWeight.Bold else FontWeight.Normal,
+            color = if (isTotal) Color(0xFF4CAF50) else Color(0xFF666666)
         )
     }
 }

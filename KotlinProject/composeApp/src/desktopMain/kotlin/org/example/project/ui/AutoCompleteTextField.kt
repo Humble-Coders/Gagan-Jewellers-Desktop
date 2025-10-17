@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 
@@ -45,11 +46,23 @@ fun AutoCompleteTextField(
     var showAddOption by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
+    val focusManager = LocalFocusManager.current
 
     // Open dropdown when text field is focused
     LaunchedEffect(isFocused) {
         if (isFocused) {
             expanded = true
+        } else {
+            // Close dropdown when focus is lost
+            expanded = false
+        }
+    }
+    
+    // Close dropdown when clicking outside
+    LaunchedEffect(expanded) {
+        if (expanded) {
+            // This effect will be triggered when expanded changes
+            // The actual closing logic is handled by the focus change above
         }
     }
 
@@ -89,13 +102,19 @@ fun AutoCompleteTextField(
                             onClick = { 
                                 onValueChange("")
                                 expanded = false
+                                focusManager.clearFocus()
                             }
                         ) {
                             Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
                     }
                     IconButton(
-                        onClick = { expanded = !expanded }
+                        onClick = { 
+                            expanded = !expanded
+                            if (!expanded) {
+                                focusManager.clearFocus()
+                            }
+                        }
                     ) {
                         Icon(
                             Icons.Default.ArrowDropDown,
@@ -130,6 +149,7 @@ fun AutoCompleteTextField(
                                 onItemSelected(suggestion)
                                 onValueChange(suggestion)
                                 expanded = false
+                                focusManager.clearFocus()
                             }
                         )
                     }
@@ -142,6 +162,7 @@ fun AutoCompleteTextField(
                                 onClick = {
                                     onAddNew(value)
                                     expanded = false
+                                    focusManager.clearFocus()
                                 }
                             )
                         }

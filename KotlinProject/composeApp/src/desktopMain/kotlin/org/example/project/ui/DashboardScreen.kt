@@ -24,6 +24,8 @@ import androidx.compose.material.AlertDialog
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.Divider
+import androidx.compose.material.DropdownMenu
+import androidx.compose.material.DropdownMenuItem
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
@@ -32,6 +34,7 @@ import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
@@ -65,6 +68,7 @@ import org.example.project.viewModels.ProductsViewModel
 import org.jetbrains.skia.Image
 import java.text.NumberFormat
 import java.util.Locale
+import org.example.project.JewelryAppInitializer
 
 @Composable
 fun DashboardScreen(
@@ -77,6 +81,19 @@ fun DashboardScreen(
     val groupedProducts = remember(products) { viewModel.getGroupedProducts() }
     val showDeleteDialog = remember { mutableStateOf(false) }
     val productToDelete = remember { mutableStateOf<String?>(null) }
+    
+    // Add logging to verify dashboard shows products with 0 quantity
+    println("📊 DEBUG: Dashboard screen loaded")
+    println("   - Total products: ${products.size}")
+    println("   - Grouped products: ${groupedProducts.size}")
+    groupedProducts.forEach { groupedProduct ->
+        println("   📦 Product: ${groupedProduct.baseProduct.name}")
+        println("      - Quantity: ${groupedProduct.quantity}")
+        println("      - Available: ${groupedProduct.baseProduct.available}")
+        if (groupedProduct.quantity == 0) {
+            println("      - ⚠️ Product has 0 quantity but still displayed in dashboard")
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         // Header with title and add button
@@ -294,6 +311,8 @@ private fun GroupedProductRow(
         // Price - Show custom price if enabled, otherwise calculated total cost
         val displayPrice = if (product.hasCustomPrice) {
             product.customPrice
+        } else if (product.totalProductCost > 0) {
+            product.totalProductCost
         } else {
             calculateProductTotalCost(product)
         }
@@ -327,13 +346,58 @@ private fun GroupedProductRow(
             }
         }
 
-        // Quantity - Show grouped quantity
-        Text(
-            text = groupedProduct.quantity.toString(),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1.5f)
-        )
+        // Quantity - Show dropdown with all barcodes
+        Box(
+            modifier = Modifier.weight(1.5f),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            var expanded by remember { mutableStateOf(false) }
+            
+            Row(
+                modifier = Modifier
+                    .clickable { expanded = true }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${groupedProduct.quantity}",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    Icons.Default.ArrowDropDown,
+                    contentDescription = "Show barcodes",
+                    modifier = Modifier.size(16.dp),
+                    tint = Color.Gray
+                )
+            }
+            
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.widthIn(min = 200.dp)
+            ) {
+                Text(
+                    text = "Barcodes (${groupedProduct.barcodeIds.size})",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+                Divider()
+                groupedProduct.barcodeIds.forEach { barcode ->
+                    DropdownMenuItem(
+                        onClick = { expanded = false }
+                    ) {
+                        Text(
+                            text = barcode,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
 
         // Actions
         Box(
@@ -454,6 +518,8 @@ fun ProductRow(
         // Price - Show custom price if enabled, otherwise calculated total cost
         val displayPrice = if (product.hasCustomPrice) {
             product.customPrice
+        } else if (product.totalProductCost > 0) {
+            product.totalProductCost
         } else {
             calculateProductTotalCost(product)
         }
@@ -590,29 +656,34 @@ private fun formatCurrency(amount: Double): String {
 }
 
 /**
- * Calculate the total product cost based on the same logic used in AddEditProductScreen
+ * Calculate the total product cost using the same logic as cart item detail screen (total charges)
+ * This returns Total Charges (without GST) to match the item detail screen display
  */
 private fun calculateProductTotalCost(product: Product): Double {
     // Calculate net weight (total weight - less weight)
     val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
     
-    // Material cost (net weight × material rate)
-    // Note: We need to get the material rate from MetalRatesManager or use a fallback
-    val materialRate = getMaterialRateForProduct(product) // We'll implement this
-    val materialCost = netWeight * materialRate
+    // Material cost (net weight × material rate × quantity)
+    val materialRate = getMaterialRateForProduct(product)
+    val baseAmount = when {
+        product.materialType.contains("gold", ignoreCase = true) -> netWeight * materialRate * product.quantity
+        product.materialType.contains("silver", ignoreCase = true) -> netWeight * materialRate * product.quantity
+        else -> netWeight * materialRate * product.quantity // Default to gold rate
+    }
     
-    // Making charges (net weight × making rate)
-    val makingCharges = netWeight * product.defaultMakingRate
+    // Making charges (net weight × making rate × quantity)
+    val makingCharges = netWeight * product.defaultMakingRate * product.quantity
     
-    // Stone amount (if has stones)
+    // Stone amount (if has stones) - STONE_RATE × STONE_QUANTITY × CW_WT × QTY
     val stoneAmount = if (product.hasStones) {
-        if (product.cwWeight > 0 && product.stoneRate > 0 && product.stoneQuantity > 0) {
-            product.cwWeight * product.stoneRate * product.stoneQuantity
+        if (product.cwWeight > 0 && product.stoneRate > 0) {
+            product.stoneRate * (product.stoneQuantity.takeIf { it > 0 } ?: 1.0) * product.cwWeight * product.quantity
         } else 0.0
     } else 0.0
     
-    // Total = Material Cost + Making Charges + Stone Amount + VA Charges
-    return materialCost + makingCharges + stoneAmount + product.vaCharges
+    // Total Charges = Base Amount + Making Charges + Stone Amount + VA Charges
+    // This matches the "Total Charges" display in cart item detail screen
+    return baseAmount + makingCharges + stoneAmount + product.vaCharges
 }
 
 /**
@@ -621,21 +692,19 @@ private fun calculateProductTotalCost(product: Product): Double {
  */
 private fun getMaterialRateForProduct(product: Product): Double {
     val metalRates = MetalRatesManager.metalRates.value
-    
+    // Prefer collection rate from rate view model (same as cart detail)
+    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+    val karat = extractKaratFromMaterialTypeString(product.materialType)
+    val collectionRate = try {
+        ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
+    } catch (e: Exception) { 0.0 }
+
+    if (collectionRate > 0) return collectionRate
+
     return when {
-        product.materialType.contains("gold", ignoreCase = true) -> {
-            // Extract karat and use appropriate gold rate
-            val karat = extractKaratFromMaterialTypeString(product.materialType)
-            metalRates.getGoldRateForKarat(karat)
-        }
-        product.materialType.contains("silver", ignoreCase = true) -> {
-            // Use silver rate
-            metalRates.getSilverRateForPurity(999) // Default to 999 purity
-        }
-        else -> {
-            // Fallback to a reasonable rate
-            metalRates.getGoldRateForKarat(22) // Default to 22K gold rate
-        }
+        product.materialType.contains("gold", ignoreCase = true) -> metalRates.getGoldRateForKarat(karat)
+        product.materialType.contains("silver", ignoreCase = true) -> metalRates.getSilverRateForPurity(999)
+        else -> metalRates.getGoldRateForKarat(22)
     }
 }
 

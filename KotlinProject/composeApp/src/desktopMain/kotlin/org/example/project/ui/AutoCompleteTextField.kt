@@ -21,7 +21,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 
@@ -46,34 +45,37 @@ fun AutoCompleteTextField(
     var showAddOption by remember { mutableStateOf(false) }
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-    val focusManager = LocalFocusManager.current
 
     // Open dropdown when text field is focused
     LaunchedEffect(isFocused) {
         if (isFocused) {
             expanded = true
-        } else {
-            // Close dropdown when focus is lost
-            expanded = false
-        }
-    }
-    
-    // Close dropdown when clicking outside
-    LaunchedEffect(expanded) {
-        if (expanded) {
-            // This effect will be triggered when expanded changes
-            // The actual closing logic is handled by the focus change above
         }
     }
 
     // Filter suggestions based on input
     LaunchedEffect(value, suggestions) {
         if (value.isNotEmpty()) {
-            filteredSuggestions = suggestions.filter { 
-                it.lowercase().contains(value.lowercase()) 
-            }
-            showAddOption = !suggestions.any { 
-                it.lowercase() == value.lowercase() 
+            // Normalize the input value - handle spaces more intelligently
+            val normalizedValue = value.lowercase().trim()
+            
+            // If the normalized value is empty after trimming, show all suggestions
+            if (normalizedValue.isEmpty()) {
+                filteredSuggestions = suggestions.take(maxSuggestions)
+                showAddOption = false
+            } else {
+                filteredSuggestions = suggestions.filter { suggestion ->
+                    val normalizedSuggestion = suggestion.lowercase()
+                    // Multiple matching strategies for better space handling
+                    normalizedSuggestion.contains(normalizedValue) ||
+                    normalizedSuggestion.contains(normalizedValue.replace(" ", "")) ||
+                    normalizedSuggestion.contains(normalizedValue.replace(" ", " ")) ||
+                    // Also check if suggestion starts with the input
+                    normalizedSuggestion.startsWith(normalizedValue)
+                }
+                showAddOption = !suggestions.any { suggestion ->
+                    suggestion.lowercase().trim() == normalizedValue
+                }
             }
         } else {
             filteredSuggestions = suggestions.take(maxSuggestions)
@@ -86,6 +88,7 @@ fun AutoCompleteTextField(
             value = value,
             onValueChange = { newValue ->
                 onValueChange(newValue)
+                // Always keep dropdown open when typing, don't close on spaces
                 expanded = true
             },
             label = { Text(label) },
@@ -99,22 +102,16 @@ fun AutoCompleteTextField(
                 Row {
                     if (value.isNotEmpty()) {
                         IconButton(
-                            onClick = { 
+                            onClick = {
                                 onValueChange("")
                                 expanded = false
-                                focusManager.clearFocus()
                             }
                         ) {
                             Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
                     }
                     IconButton(
-                        onClick = { 
-                            expanded = !expanded
-                            if (!expanded) {
-                                focusManager.clearFocus()
-                            }
-                        }
+                        onClick = { expanded = !expanded }
                     ) {
                         Icon(
                             Icons.Default.ArrowDropDown,
@@ -149,20 +146,18 @@ fun AutoCompleteTextField(
                                 onItemSelected(suggestion)
                                 onValueChange(suggestion)
                                 expanded = false
-                                focusManager.clearFocus()
                             }
                         )
                     }
-                    
+
                     // Show "Add new" option if current value doesn't exist
                     if (showAddOption && value.isNotEmpty()) {
                         item {
                             AddNewItem(
-                                text = "Add \"$value\"",
+                                text = "Add \"${value.trim()}\"",
                                 onClick = {
-                                    onAddNew(value)
+                                    onAddNew(value.trim())
                                     expanded = false
-                                    focusManager.clearFocus()
                                 }
                             )
                         }

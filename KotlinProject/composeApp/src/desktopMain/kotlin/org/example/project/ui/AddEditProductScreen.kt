@@ -9,8 +9,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.*
@@ -37,6 +39,7 @@ import org.example.project.data.calculateRateForKarat
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.data.MetalRatesManager
 import org.example.project.viewModels.MetalRateViewModel
+import org.example.project.ui.AutoCompleteTextField
 import kotlinx.coroutines.launch
 
 // Helper function to extract karat from material type
@@ -50,16 +53,16 @@ fun extractKaratFromMaterialType(materialType: String): Int {
 fun findFallbackRateForMaterial(metalRateViewModel: MetalRateViewModel, materialId: String, targetKarat: Int): Double {
     return try {
         // Get all metal rates for this material
-        val allRates = metalRateViewModel.metalRates.value.filter { 
-            it.materialId == materialId && it.isActive 
+        val allRates = metalRateViewModel.metalRates.value.filter {
+            it.materialId == materialId && it.isActive
         }
-        
+
         if (allRates.isNotEmpty()) {
             // Find the closest karat rate or use the first available rate
-            val bestRate = allRates.minByOrNull { 
-                kotlin.math.abs(it.karat - targetKarat) 
+            val bestRate = allRates.minByOrNull {
+                kotlin.math.abs(it.karat - targetKarat)
             } ?: allRates.first()
-            
+
             // Calculate rate for target karat based on the found rate
             val calculatedRate = bestRate.calculateRateForKarat(targetKarat)
             println("🔄 Found fallback rate: ${bestRate.materialType} ${bestRate.karat}K -> ${targetKarat}K = $calculatedRate")
@@ -79,6 +82,7 @@ fun AddEditProductScreen(
     viewModel: ProductsViewModel,
     onSave: () -> Unit,
     onCancel: () -> Unit,
+    onEditBarcode: (String) -> Unit = {},
     isEditing: Boolean = false
 ) {
     val product = viewModel.currentProduct.value ?: Product()
@@ -97,7 +101,7 @@ fun AddEditProductScreen(
     var generatedBarcodes by remember { mutableStateOf(if (isEditing) product.barcodeIds else emptyList()) }
     var name by remember { mutableStateOf(product.name) }
     var description by remember { mutableStateOf(product.description ?: "") }
-    
+
     // Sample suggestions for autocomplete
     val descriptionSuggestions = listOf(
         "Gold ring with diamond",
@@ -111,14 +115,22 @@ fun AddEditProductScreen(
         "Platinum wedding ring",
         "Gold pendant with chain"
     )
-    
+
     // Material suggestions from Firestore
     val materialSuggestions = materials.map { it.name }
     
+    // Debug logging
+    LaunchedEffect(materials) {
+        println("🔍 DEBUG: Materials loaded: ${materials.size} items")
+        materials.forEach { material ->
+            println("   - ${material.name} (ID: ${material.id})")
+        }
+    }
+
     // Material type suggestions
     val materialTypeSuggestions = listOf(
         "22K",
-        "18K", 
+        "18K",
         "14K",
         "10K",
         "24K",
@@ -128,15 +140,23 @@ fun AddEditProductScreen(
         "999 Pure",
         "750 Gold"
     )
-    
+
     // Category suggestions from Firestore
     val categorySuggestions = categories.map { it.name }
+    
+    // Debug logging for categories
+    LaunchedEffect(categories) {
+        println("🔍 DEBUG: Categories loaded: ${categories.size} items")
+        categories.forEach { category ->
+            println("   - ${category.name} (ID: ${category.id})")
+        }
+    }
     var materialRate by remember { mutableStateOf(if (product.price > 0) product.price.toString() else "") }
     var isMaterialRateEditable by remember { mutableStateOf(true) } // Always editable by default
     var categoryId by remember { mutableStateOf(product.categoryId) }
     var materialId by remember { mutableStateOf(product.materialId ?: "") }
     var materialType by remember { mutableStateOf(product.materialType ?: "") }
-    
+
     // Display values for autocomplete fields
     var materialDisplayValue by remember { mutableStateOf(materials.find { it.id == materialId }?.name ?: "") }
     var materialTypeDisplayValue by remember { mutableStateOf(materialType) }
@@ -205,13 +225,13 @@ fun AddEditProductScreen(
         val makingRate = defaultMakingRate.toDoubleOrNull() ?: 0.0
         val va = vaCharges.toDoubleOrNull() ?: 0.0
         val cw = cwWeight.toDoubleOrNull() ?: 0.0
-        
+
         // Material cost (net weight × material rate)
         val materialCost = netWeight * (materialRate.toDoubleOrNull() ?: 0.0)
-        
+
         // Making charges (net weight × making rate)
         val makingCharges = netWeight * makingRate
-        
+
         // Stone amount (if has stones)
         val stoneAmount = if (hasStones) {
             val stoneRateValue = stoneRate.toDoubleOrNull() ?: 0.0
@@ -220,7 +240,7 @@ fun AddEditProductScreen(
                 cw * stoneRateValue * stoneQuantityValue
             } else 0.0
         } else 0.0
-        
+
         // Total = Material Cost + Making Charges + Stone Amount + VA Charges
         materialCost + makingCharges + stoneAmount + va
     }
@@ -230,10 +250,10 @@ fun AddEditProductScreen(
         if (materialId.isNotEmpty() && materialType.isNotEmpty()) {
             // Extract karat from material type (e.g., "18K" -> 18, "22K" -> 22)
             val karat = extractKaratFromMaterialType(materialType)
-            
+
             val calculatedRate = metalRateViewModel.calculateRateForMaterial(
-                materialId, 
-                materialType, 
+                materialId,
+                materialType,
                 karat
             )
             if (calculatedRate > 0) {
@@ -262,11 +282,11 @@ fun AddEditProductScreen(
                         materialRate = String.format("%.2f", globalRate)
                         println("🌐 Global rates fallback used: $globalRate for $materialType ($karat K)")
                     } else {
-                    // If no rate found, clear the field to show user needs to enter manually
-                    if (materialRate.isEmpty()) {
-                        materialRate = ""
-                        println("⚠️ No rate found for $materialType, please enter manually")
-                    }
+                        // If no rate found, clear the field to show user needs to enter manually
+                        if (materialRate.isEmpty()) {
+                            materialRate = ""
+                            println("⚠️ No rate found for $materialType, please enter manually")
+                        }
                     }
                 }
             }
@@ -279,7 +299,7 @@ fun AddEditProductScreen(
             val cwWeightValue = cwWeight.toDoubleOrNull() ?: 0.0
             val stoneRateValue = stoneRate.toDoubleOrNull() ?: 0.0
             val stoneQuantityValue = stoneQuantity.toDoubleOrNull() ?: 0.0
-            
+
             if (cwWeightValue > 0 && stoneRateValue > 0 && stoneQuantityValue > 0) {
                 val calculatedStoneAmount = cwWeightValue * stoneRateValue * stoneQuantityValue
                 println("💎 Auto-calculated stone amount: $calculatedStoneAmount (CW: $cwWeightValue × Rate: $stoneRateValue × Qty: $stoneQuantityValue)")
@@ -313,11 +333,7 @@ fun AddEditProductScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp)
-                .clickable { 
-                    // Clear focus to close any open dropdowns when clicking on empty areas
-                    focusManager.clearFocus()
-                },
+                .padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             // Header Section
@@ -326,19 +342,33 @@ fun AddEditProductScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        if (isEditing) "Edit Product" else "Add New Product",
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2D2D2D)
-                    )
-                    Text(
-                        if (isEditing) "Update product information" else "Create a new jewelry item",
-                        fontSize = 14.sp,
-                        color = Color.Gray,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (isEditing) {
+                        IconButton(onClick = onCancel) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = MaterialTheme.colors.primary
+                            )
+                        }
+                    }
+                    Column {
+                        Text(
+                            if (isEditing) "Edit Product" else "Add New Product",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2D2D2D)
+                        )
+                        Text(
+                            if (isEditing) "Update product information" else "Create a new jewelry item",
+                            fontSize = 14.sp,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
             }
 
@@ -377,13 +407,33 @@ fun AddEditProductScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Column {
                                     product.barcodeIds.forEach { code ->
-                                        Text(
-                                            code,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colors.primary,
-                                            modifier = Modifier.padding(vertical = 2.dp)
-                                        )
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                code,
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 14.sp,
+                                                color = MaterialTheme.colors.primary,
+                                                modifier = Modifier.padding(vertical = 2.dp)
+                                            )
+                                            IconButton(
+                                                onClick = {
+                                                    // Navigate to edit screen for this barcode
+                                                    onEditBarcode(code)
+                                                },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Edit,
+                                                    contentDescription = "Edit barcode $code",
+                                                    tint = MaterialTheme.colors.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -436,109 +486,109 @@ fun AddEditProductScreen(
 
                     if (!isEditing || product.barcodeIds.isEmpty()) {
                         if (autoGenerateId) {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            backgroundColor = Color(0xFFFFF8E1),
-                            elevation = 0.dp,
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                backgroundColor = Color(0xFFFFF8E1),
+                                elevation = 0.dp,
+                                shape = RoundedCornerShape(8.dp)
                             ) {
-                                Icon(
-                                    Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colors.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Column(modifier = Modifier.padding(start = 12.dp)) {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        NumericSelectAllField(
-                                            value = barcodeDigits,
-                                            onValueChange = { v ->
-                                                val filtered = v.filter { it.isDigit() }.take(2)
-                                                barcodeDigits = filtered
-                                                barcodeError = ""
-                                            },
-                                            label = "Barcode digits",
-                                            modifier = Modifier.width(160.dp),
-                                            maxLength = 2
-                                        )
-                                        StyledTextField(
-                                            value = if (quantity > 0) quantity.toString() else "",
-                                            onValueChange = {
-                                                val digitsOnly = it.filter { ch -> ch.isDigit() }
-                                                if (digitsOnly.isEmpty()) {
-                                                    quantity = 0
+                                Row(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colors.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column(modifier = Modifier.padding(start = 12.dp)) {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            NumericSelectAllField(
+                                                value = barcodeDigits,
+                                                onValueChange = { v ->
+                                                    val filtered = v.filter { it.isDigit() }.take(2)
+                                                    barcodeDigits = filtered
                                                     barcodeError = ""
+                                                },
+                                                label = "Barcode digits",
+                                                modifier = Modifier.width(160.dp),
+                                                maxLength = 2
+                                            )
+                                            StyledTextField(
+                                                value = if (quantity > 0) quantity.toString() else "",
+                                                onValueChange = {
+                                                    val digitsOnly = it.filter { ch -> ch.isDigit() }
+                                                    if (digitsOnly.isEmpty()) {
+                                                        quantity = 0
+                                                        barcodeError = ""
+                                                    } else {
+                                                        val newQuantity = digitsOnly.toIntOrNull()
+                                                        if (newQuantity != null && newQuantity > 0) {
+                                                            quantity = newQuantity
+                                                            barcodeError = ""
+                                                        }
+                                                    }
+                                                },
+                                                label = "Quantity",
+                                                modifier = Modifier.width(160.dp),
+                                                keyboardType = KeyboardType.Number
+                                            )
+                                            Button(onClick = {
+                                                val digits = barcodeDigits.toIntOrNull() ?: 12
+                                                val q = quantity.coerceAtLeast(1)
+                                                if (digits !in 8..13) {
+                                                    barcodeError = "Barcode digits must be between 8 and 13"
                                                 } else {
-                                                    val newQuantity = digitsOnly.toIntOrNull()
-                                                    if (newQuantity != null && newQuantity > 0) {
-                                                        quantity = newQuantity
+                                                    scope.launch {
+                                                        println("Generating $q barcodes with $digits digits")
+                                                        generatedBarcodes = viewModel.generateUniqueBarcodes(q, digits)
+                                                        println("Generated barcodes: $generatedBarcodes")
                                                         barcodeError = ""
                                                     }
                                                 }
-                                            },
-                                            label = "Quantity",
-                                            modifier = Modifier.width(160.dp),
-                                            keyboardType = KeyboardType.Number
-                                        )
-                                        Button(onClick = {
-                                            val digits = barcodeDigits.toIntOrNull() ?: 12
-                                            val q = quantity.coerceAtLeast(1)
-                                            if (digits !in 8..13) {
-                                                barcodeError = "Barcode digits must be between 8 and 13"
-                                            } else {
-                                                scope.launch {
-                                                    println("Generating $q barcodes with $digits digits")
-                                                    generatedBarcodes = viewModel.generateUniqueBarcodes(q, digits)
-                                                    println("Generated barcodes: $generatedBarcodes")
-                                                    barcodeError = ""
+                                            }) { Text("Generate Barcodes") }
+                                        }
+                                        if (barcodeError.isNotEmpty()) {
+                                            Text(
+                                                barcodeError,
+                                                color = MaterialTheme.colors.error,
+                                                fontSize = 12.sp,
+                                                modifier = Modifier.padding(top = 8.dp)
+                                            )
+                                        }
+                                        if (generatedBarcodes.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text("Generated Barcodes:", fontSize = 12.sp, color = Color.Gray)
+                                            Column {
+                                                generatedBarcodes.forEach { code ->
+                                                    Text(
+                                                        code,
+                                                        fontFamily = FontFamily.Monospace,
+                                                        fontSize = 14.sp,
+                                                        color = MaterialTheme.colors.primary
+                                                    )
                                                 }
-                                            }
-                                        }) { Text("Generate Barcodes") }
-                                    }
-                                    if (barcodeError.isNotEmpty()) {
-                                        Text(
-                                            barcodeError,
-                                            color = MaterialTheme.colors.error,
-                                            fontSize = 12.sp,
-                                            modifier = Modifier.padding(top = 8.dp)
-                                        )
-                                    }
-                                    if (generatedBarcodes.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text("Generated Barcodes:", fontSize = 12.sp, color = Color.Gray)
-                                        Column {
-                                            generatedBarcodes.forEach { code ->
-                                                Text(
-                                                    code,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontSize = 14.sp,
-                                                    color = MaterialTheme.colors.primary
-                                                )
                                             }
                                         }
                                     }
                                 }
                             }
+                        } else {
+                            StyledTextField(
+                                value = customProductId,
+                                onValueChange = {
+                                    customProductId = it
+                                    customIdError = it.isEmpty()
+                                },
+                                label = "Barcode",
+                                isError = customIdError,
+                                errorMessage = "Barcode is required"
+                            )
                         }
-                    } else {
-                        StyledTextField(
-                            value = customProductId,
-                            onValueChange = {
-                                customProductId = it
-                                customIdError = it.isEmpty()
-                            },
-                            label = "Barcode",
-                            isError = customIdError,
-                            errorMessage = "Barcode is required"
-                        )
-                    }
                     }
                 }
             }
@@ -629,7 +679,7 @@ fun AddEditProductScreen(
                     if (materialId.isNotEmpty()) {
                         val selectedMaterial = materials.find { it.id == materialId }
                         val materialTypes = selectedMaterial?.types ?: emptyList()
-                        
+
                         // Combine predefined types with suggestions
                         val allMaterialTypes = (materialTypes + materialTypeSuggestions).distinct()
 
@@ -765,7 +815,7 @@ fun AddEditProductScreen(
                                 isError = materialRateError,
                                 errorMessage = "Valid material rate required"
                             )
-                            
+
                             // Auto-calculation indicator
                             if (materialRate.isNotEmpty() && materialId.isNotEmpty() && materialType.isNotEmpty()) {
                                 Text(
@@ -776,15 +826,15 @@ fun AddEditProductScreen(
                                 )
                             }
                         }
-                        
+
                         IconButton(
                             onClick = {
                                 // Re-calculate material rate from current material and type
                                 if (materialId.isNotEmpty() && materialType.isNotEmpty()) {
                                     val karat = extractKaratFromMaterialType(materialType)
                                     val calculatedRate = metalRateViewModel.calculateRateForMaterial(
-                                        materialId, 
-                                        materialType, 
+                                        materialId,
+                                        materialType,
                                         karat
                                     )
                                     if (calculatedRate > 0) {
@@ -1103,7 +1153,7 @@ fun AddEditProductScreen(
                             cwWeightValue * stoneRateValue * stoneQuantityValue
                         } else 0.0
                     } else 0.0
-                    
+
                     if (hasStones && calculatedStoneAmount > 0) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1298,33 +1348,33 @@ fun AddEditProductScreen(
                     Text("Cancel", modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                 }
 
-                 Button(
-                     onClick = {
-                         println("=== ADD PRODUCT BUTTON CLICKED ===")
-                         println("Form state - Name: '$name', Category: '$categoryId', Material: '$materialId', MaterialRate: '$materialRate'")
-                         println("Auto generate: $autoGenerateId, Custom barcode: '$customProductId', Quantity: $quantity")
+                Button(
+                    onClick = {
+                        println("=== ADD PRODUCT BUTTON CLICKED ===")
+                        println("Form state - Name: '$name', Category: '$categoryId', Material: '$materialId', MaterialRate: '$materialRate'")
+                        println("Auto generate: $autoGenerateId, Custom barcode: '$customProductId', Quantity: $quantity")
 
-                         // Validate required fields
-                         nameError = name.isEmpty()
-                         categoryError = categoryId.isEmpty()
-                         materialError = materialId.isEmpty()
+                        // Validate required fields
+                        nameError = name.isEmpty()
+                        categoryError = categoryId.isEmpty()
+                        materialError = materialId.isEmpty()
 
-                         // Material rate validation
-                         materialRateError = if (materialRate.isNotEmpty()) {
-                             try {
-                                 materialRate.toDouble() <= 0
-                             } catch (e: NumberFormatException) {
-                                 true
-                             }
-                         } else false
+                        // Material rate validation
+                        materialRateError = if (materialRate.isNotEmpty()) {
+                            try {
+                                materialRate.toDouble() <= 0
+                            } catch (e: NumberFormatException) {
+                                true
+                            }
+                        } else false
 
-                         customIdError = !autoGenerateId && customProductId.isEmpty()
+                        customIdError = !autoGenerateId && customProductId.isEmpty()
 
-                         println("Validation results - Name: $nameError, Category: $categoryError, Material: $materialError, MaterialRate: $materialRateError, CustomId: $customIdError")
+                        println("Validation results - Name: $nameError, Category: $categoryError, Material: $materialError, MaterialRate: $materialRateError, CustomId: $customIdError")
 
                         if (!nameError && !materialRateError && !categoryError && !materialError && !customIdError) {
                             println("✅ Basic validation passed, checking barcode requirements...")
-                            
+
                             // Skip barcode validation when editing existing products
                             if (isEditing && product.barcodeIds.isNotEmpty()) {
                                 println("✅ Editing mode: skipping barcode validation - using existing barcodes")
@@ -1356,7 +1406,7 @@ fun AddEditProductScreen(
 
                             println("📝 Creating product object with form data...")
                             println("Form data - Description: '$description', MaterialId: '$materialId', MaterialType: '$materialType', CustomProductId: '$customProductId'")
-                            
+
                             val updatedProduct = Product(
                                 id = if (isEditing) product.id else "",
                                 name = name,
@@ -1695,44 +1745,5 @@ fun StyledDropdown(
                 modifier = Modifier.padding(start = 16.dp, top = 4.dp)
             )
         }
-    }
-}
-
-@Composable
-fun StatusToggle(
-    title: String,
-    description: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-            Text(
-                title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF2D2D2D)
-            )
-            Text(
-                description,
-                fontSize = 12.sp,
-                color = Color.Gray,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colors.primary,
-                checkedTrackColor = MaterialTheme.colors.primary.copy(alpha = 0.5f),
-                uncheckedThumbColor = Color(0xFFBDBDBD),
-                uncheckedTrackColor = Color(0xFFE0E0E0)
-            )
-        )
     }
 }

@@ -5,7 +5,6 @@ import org.apache.pdfbox.pdmodel.PDPage
 import org.apache.pdfbox.pdmodel.PDPageContentStream
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDType1Font
-import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.example.project.data.Order
 import org.example.project.data.User
 import kotlinx.coroutines.Dispatchers
@@ -17,19 +16,19 @@ import java.util.*
 
 class BillPDFGenerator {
 
-    private val helveticaBold = PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD)
-    private val helvetica = PDType1Font(Standard14Fonts.FontName.HELVETICA)
-    private val courierBold = PDType1Font(Standard14Fonts.FontName.COURIER_BOLD)
-    private val courier = PDType1Font(Standard14Fonts.FontName.COURIER)
+    private val helveticaBold = PDType1Font.HELVETICA_BOLD
+    private val helvetica = PDType1Font.HELVETICA
+    private val courierBold = PDType1Font.COURIER_BOLD
+    private val courier = PDType1Font.COURIER
 
     suspend fun generateBill(
         order: Order,
         customer: User,
         outputPath: Path,
-        companyName: String = "GAGAN JEWELLERS",
+        companyName: String = "Vishal Gems and Jewels Pvt. Ltd.",
         companyAddress: String = "123 Jewelry Street, Golden City, GC 12345",
         companyPhone: String = "+91 98765 43210",
-        companyEmail: String = "info@gaganjewellers.com",
+        companyEmail: String = "info@vishalgems.com",
         gstNumber: String = "22AAAAA0000A1Z5",
         goldPricePerGram: Double = 6080.0,
         silverPricePerGram: Double = 75.0
@@ -100,9 +99,6 @@ class BillPDFGenerator {
                         companyPhone, gstNumber, order, customer, margin, yPosition, pageWidth)
                     println("✅ Main header drawn, yPosition: $yPosition")
 
-                    println("🔧 Drawing gold rate info...")
-                    yPosition = drawGoldRateInfo(contentStream, margin, yPosition, pageWidth, goldPricePerGram, silverPricePerGram)
-                    println("✅ Gold rate info drawn, yPosition: $yPosition")
 
                     println("🔧 Drawing items table...")
                     yPosition = drawCorrectItemsTable(
@@ -308,45 +304,6 @@ class BillPDFGenerator {
         return yPos
     }
 
-    private fun drawGoldRateInfo(
-        contentStream: PDPageContentStream,
-        margin: Float,
-        startY: Float,
-        pageWidth: Float,
-        goldPrice: Double,
-        silverPrice: Double
-    ): Float {
-        var yPos = startY - 10f
-
-        try {
-            // Draw line
-            contentStream.setLineWidth(1f)
-            contentStream.moveTo(margin, yPos)
-            contentStream.lineTo(pageWidth - margin, yPos)
-            contentStream.stroke()
-            yPos -= 15f
-
-            contentStream.setFont(helvetica, 8f)
-            val rateText = "Gold Rate: Rs.${formatCurrency(goldPrice)}/g | Silver Rate: Rs.${formatCurrency(silverPrice)}/g | Making Charges: Rs.100/g"
-
-            contentStream.beginText()
-            contentStream.newLineAtOffset(margin, yPos)
-            contentStream.showText(rateText)
-            contentStream.endText()
-
-            yPos -= 15f
-
-            // Draw line
-            contentStream.moveTo(margin, yPos)
-            contentStream.lineTo(pageWidth - margin, yPos)
-            contentStream.stroke()
-
-        } catch (e: Exception) {
-            println("Error in drawGoldRateInfo: ${e.message}")
-        }
-
-        return yPos
-    }
 
     private fun drawCorrectItemsTable(
         contentStream: PDPageContentStream,

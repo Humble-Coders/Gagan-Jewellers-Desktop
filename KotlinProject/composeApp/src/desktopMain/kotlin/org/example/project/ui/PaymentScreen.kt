@@ -78,11 +78,8 @@ fun PaymentScreen(
     var dueAmount by remember { mutableStateOf("") }
     var paymentSplit by remember { mutableStateOf<PaymentSplit?>(null) }
     
-    // GST radio button state - 0%, 5%, 18%
-    var selectedGstRate by remember { mutableStateOf(0.18) } // Default to 18%
-
-    // Calculate GST amount based on selected rate
-    val gstAmount = cartViewModel.getTotalCharges() * selectedGstRate
+    // Calculate GST amount using split model (3% base, 5% making) via CartViewModel
+    val gstAmount = cartViewModel.getGST()
     
     // Calculate discount amount using the new method that includes GST
     val calculatedDiscountAmount = if (discountValue.isNotEmpty()) {
@@ -146,7 +143,7 @@ fun PaymentScreen(
                 if (isValid) {
                     paymentViewModel.saveOrderWithPaymentMethod(
                         cart = cart,
-                        subtotal = cartViewModel.getSubtotal(),
+                        subtotal = cartViewModel.getTotalCharges(),
                         discountAmount = calculatedDiscountAmount,
                         gst = gstAmount,
                         finalTotal = cartViewModel.getTotalCharges() + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
@@ -233,8 +230,6 @@ fun PaymentScreen(
                 paymentSplit = paymentSplit,
                 exchangeGoldValue = exchangeGoldValue,
                 cartViewModel = cartViewModel,
-                selectedGstRate = selectedGstRate,
-                onGstRateChange = { selectedGstRate = it },
                 onConfirmOrder = onConfirmOrder,
                 isProcessing = isProcessing,
                 paymentMethodSelected = selectedPaymentMethod != null || paymentSplit != null
@@ -823,8 +818,6 @@ private fun OrderSummarySection(
     paymentSplit: PaymentSplit?,
     exchangeGoldValue: Double,
     cartViewModel: CartViewModel,
-    selectedGstRate: Double,
-    onGstRateChange: (Double) -> Unit,
     onConfirmOrder: () -> Unit,
     isProcessing: Boolean,
     paymentMethodSelected: Boolean
@@ -874,9 +867,7 @@ private fun OrderSummarySection(
                 subtotal = subtotal,
                 discountAmount = discountAmount,
                 gst = gst,
-                total = total,
-                selectedGstRate = selectedGstRate,
-                onGstRateChange = onGstRateChange
+                total = total
             )
 
             // Payment Split Information
@@ -1022,9 +1013,7 @@ private fun PriceBreakdown(
     subtotal: Double,
     discountAmount: Double,
     gst: Double,
-    total: Double,
-    selectedGstRate: Double,
-    onGstRateChange: (Double) -> Unit
+    total: Double
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1044,92 +1033,11 @@ private fun PriceBreakdown(
             )
         }
 
-        // GST Radio Buttons and Amount
-        Column(
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                text = "GST Rate",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF666666)
-            )
-            
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = selectedGstRate == 0.0,
-                            onClick = { onGstRateChange(0.0) },
-                            colors = RadioButtonDefaults.colors(
-                                selectedColor = Color(0xFFB8973D),
-                                unselectedColor = Color(0xFFE0E0E0)
-                            )
-                        )
-                        Text(
-                            text = "0%",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF666666)
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = selectedGstRate == 0.05,
-                            onClick = { onGstRateChange(0.05) },
-                            colors = RadioButtonDefaults.colors(
-                                selectedColor = Color(0xFFB8973D),
-                                unselectedColor = Color(0xFFE0E0E0)
-                            )
-                        )
-                        Text(
-                            text = "5%",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF666666)
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = selectedGstRate == 0.18,
-                            onClick = { onGstRateChange(0.18) },
-                            colors = RadioButtonDefaults.colors(
-                                selectedColor = Color(0xFFB8973D),
-                                unselectedColor = Color(0xFFE0E0E0)
-                            )
-                        )
-                        Text(
-                            text = "18%",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF666666)
-                        )
-                    }
-                }
-                
-                if (selectedGstRate > 0) {
-                    Text(
-                        text = "₹${formatCurrency(gst)}",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF2E2E2E)
-                    )
-                }
-            }
-        }
+        // GST Amount (calculated from split GST: 3% base + 5% making)
+        PriceRow(
+            label = "GST",
+            amount = gst
+        )
 
         Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
 

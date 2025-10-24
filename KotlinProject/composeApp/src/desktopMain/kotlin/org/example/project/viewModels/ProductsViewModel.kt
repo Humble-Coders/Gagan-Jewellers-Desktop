@@ -159,8 +159,48 @@ class ProductsViewModel(internal val repository: ProductRepository, private val 
      * Group products by commonId for dashboard display
      * Products with same commonId are grouped together
      * Products with null commonId are shown individually
+     * Products with null/empty barcodeIds are shown as 0 quantity (sold items)
      */
     fun getGroupedProducts(): List<GroupedProduct> {
+        val allProducts = _products.value
+        
+        // Include all products, but show sold items (empty barcodeIds) as 0 quantity
+        val groupedMap = allProducts.groupBy { it.commonId }
+        
+        return groupedMap.map { (commonId, products) ->
+            if (commonId == null) {
+                // Single products (no grouping)
+                products.map { product ->
+                    val hasBarcode = product.barcodeIds.isNotEmpty()
+                    GroupedProduct(
+                        baseProduct = product,
+                        quantity = if (hasBarcode) 1 else 0, // Show 0 quantity for sold items
+                        individualProducts = listOf(product),
+                        barcodeIds = product.barcodeIds,
+                        commonId = null
+                    )
+                }
+            } else {
+                // Grouped products
+                val availableProducts = products.filter { it.barcodeIds.isNotEmpty() }
+                listOf(
+                    GroupedProduct(
+                        baseProduct = products.first(), // Use first product as representative
+                        quantity = availableProducts.size, // Only count products with barcodes
+                        individualProducts = products,
+                        barcodeIds = products.flatMap { it.barcodeIds },
+                        commonId = commonId
+                    )
+                )
+            }
+        }.flatten()
+    }
+
+    /**
+     * Get all grouped products including sold items (for administrative purposes)
+     * This includes products with null/empty barcodeIds
+     */
+    fun getAllGroupedProductsIncludingSold(): List<GroupedProduct> {
         val allProducts = _products.value
         val groupedMap = allProducts.groupBy { it.commonId }
         
@@ -289,10 +329,66 @@ class ProductsViewModel(internal val repository: ProductRepository, private val 
         return repository.generateUniqueBarcodes(quantity, digits)
     }
     
+    fun generateBarcode(digits: Int): String {
+        return repository.generateBarcode(digits)
+    }
+    
+    fun duplicateProductWithBarcode(productId: String, barcodeId: String) {
+        viewModelScope.launch {
+            _loading.value = true
+            try {
+                // Get the product to duplicate
+                val productToDuplicate = repository.getProductById(productId)
+                if (productToDuplicate == null) {
+                    _error.value = "Product not found for duplication"
+                    return@launch
+                }
+                
+                // Determine the commonId for grouping
+                val commonId = if (productToDuplicate.commonId != null) {
+                    // If original has commonId, use the same one
+                    productToDuplicate.commonId
+                } else {
+                    // If original doesn't have commonId, create a new one and update original too
+                    val newCommonId = generateCommonId()
+                    // Update the original product to have the new commonId
+                    val updatedOriginal = productToDuplicate.copy(commonId = newCommonId)
+                    repository.updateProduct(updatedOriginal)
+                    newCommonId
+                }
+                
+                // Create a duplicate product with the same details but new barcode
+                val duplicatedProduct = productToDuplicate.copy(
+                    id = barcodeId, // Use barcode as the new product ID
+                    barcodeIds = listOf(barcodeId), // Set the new barcode
+                    commonId = commonId, // Use the determined commonId
+                    quantity = 1 // Reset quantity to 1
+                )
+                
+                println("🔄 Duplicating product: ${productToDuplicate.name} with barcode: $barcodeId")
+                val result = repository.addProduct(duplicatedProduct)
+                if (result.isNotEmpty()) {
+                    loadProducts() // Refresh the list
+                    loadFeaturedProducts() // Refresh featured products list
+                    _error.value = null
+                    println("✅ Product duplicated successfully")
+                } else {
+                    _error.value = "Failed to duplicate product"
+                }
+            } catch (e: Exception) {
+                println("💥 Exception in duplicateProductWithBarcode: ${e.message}")
+                e.printStackTrace()
+                _error.value = "Failed to duplicate product: ${e.message}"
+            } finally {
+                _loading.value = false
+            }
+        }
+    }
+    
     /**
      * Generate a common ID for grouping multiple products
      */
-    private fun generateCommonId(): String {
+    fun generateCommonId(): String {
         val timestamp = System.currentTimeMillis()
         val random = (1000..9999).random()
         return "GRP_${timestamp}_${random}"
@@ -320,7 +416,7 @@ class ProductsViewModel(internal val repository: ProductRepository, private val 
                     val productForDoc = baseProduct.copy(
                         id = "", // repository will assign auto document id
                         quantity = 1,
-                        barcodeIds = listOf(code),
+                        barcodeIds = listOf(code), // Keep as list for internal consistency
                         commonId = commonId // Assign common ID for grouping
                     )
                     println("📝 Creating product for barcode: $code with commonId: $commonId")

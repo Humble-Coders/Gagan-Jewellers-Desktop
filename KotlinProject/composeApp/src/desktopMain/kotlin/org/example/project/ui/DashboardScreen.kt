@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.RadioButton
+import androidx.compose.material.TextFieldDefaults
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -36,7 +40,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -75,12 +81,16 @@ fun DashboardScreen(
     viewModel: ProductsViewModel,
     imageLoader: ImageLoader,
     onAddProduct: () -> Unit,
-    onViewProductDetails: (String) -> Unit
+    onViewProductDetails: (String) -> Unit,
+    onEditBarcode: (String) -> Unit = {},
+    onDuplicateProduct: (String, String) -> Unit = { _, _ -> }
 ) {
     val products by remember { viewModel.products }
     val groupedProducts = remember(products) { viewModel.getGroupedProducts() }
     val showDeleteDialog = remember { mutableStateOf(false) }
     val productToDelete = remember { mutableStateOf<String?>(null) }
+    val showDuplicateDialog = remember { mutableStateOf(false) }
+    val productToDuplicate = remember { mutableStateOf<String?>(null) }
     
     // Add logging to verify dashboard shows products with 0 quantity
     println("📊 DEBUG: Dashboard screen loaded")
@@ -183,6 +193,11 @@ fun DashboardScreen(
                             onClick = { 
                                 // For grouped products, show details of the first product
                                 onViewProductDetails(groupedProduct.baseProduct.id) 
+                            },
+                            onEditBarcode = onEditBarcode,
+                            onDuplicateProduct = { productId ->
+                                productToDuplicate.value = productId
+                                showDuplicateDialog.value = true
                             }
                         )
                         Divider()
@@ -216,6 +231,25 @@ fun DashboardScreen(
             }
         )
     }
+
+    // Duplicate product dialog
+    if (showDuplicateDialog.value) {
+        DuplicateProductDialog(
+            productId = productToDuplicate.value ?: "",
+            viewModel = viewModel,
+            onDismiss = { 
+                showDuplicateDialog.value = false
+                productToDuplicate.value = null
+            },
+            onConfirm = { barcodeId ->
+                showDuplicateDialog.value = false
+                productToDuplicate.value?.let { productId ->
+                    onDuplicateProduct(productId, barcodeId)
+                }
+                productToDuplicate.value = null
+            }
+        )
+    }
 }
 
 @Composable
@@ -224,7 +258,9 @@ private fun GroupedProductRow(
     viewModel: ProductsViewModel,
     imageLoader: ImageLoader,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onEditBarcode: (String) -> Unit,
+    onDuplicateProduct: (String) -> Unit
 ) {
     val product = groupedProduct.baseProduct
     var productImage by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -376,24 +412,45 @@ private fun GroupedProductRow(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = { expanded = false },
-                modifier = Modifier.widthIn(min = 200.dp)
+                modifier = Modifier.widthIn(min = 180.dp, max = 200.dp)
             ) {
                 Text(
                     text = "Barcodes (${groupedProduct.barcodeIds.size})",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    fontSize = 12.sp
                 )
                 Divider()
                 groupedProduct.barcodeIds.forEach { barcode ->
                     DropdownMenuItem(
                         onClick = { expanded = false }
                     ) {
-                        Text(
-                            text = barcode,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            fontSize = 12.sp
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = barcode,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = {
+                                    expanded = false
+                                    onEditBarcode(barcode)
+                                },
+                                modifier = Modifier.size(16.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Edit,
+                                    contentDescription = "Edit barcode $barcode",
+                                    tint = MaterialTheme.colors.primary,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -404,15 +461,33 @@ private fun GroupedProductRow(
             modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterStart
         ) {
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.size(24.dp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "Delete",
-                    tint = Color(0xFFD32F2F)
-                )
+                // Duplicate button
+                IconButton(
+                    onClick = { onDuplicateProduct(product.id) },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "Duplicate Product",
+                        tint = MaterialTheme.colors.primary
+                    )
+                }
+                
+                // Delete button
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "Delete",
+                        tint = Color(0xFFD32F2F)
+                    )
+                }
             }
         }
     }
@@ -715,4 +790,112 @@ private fun extractKaratFromMaterialTypeString(materialType: String): Int {
     val karatRegex = Regex("""(\d+)K""", RegexOption.IGNORE_CASE)
     val match = karatRegex.find(materialType)
     return match?.groupValues?.get(1)?.toIntOrNull() ?: 22 // Default to 22K
+}
+
+@Composable
+private fun DuplicateProductDialog(
+    productId: String,
+    viewModel: ProductsViewModel,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val product = viewModel.products.value.find { it.id == productId }
+    var barcodeType by remember { mutableStateOf("auto") } // "auto" or "custom"
+    var customBarcodeId by remember { mutableStateOf("") }
+    var barcodeDigits by remember { mutableStateOf("12") }
+    
+    if (product == null) {
+        onDismiss()
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Duplicate Product") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text("Create a new product document with the same details as '${product.name}'")
+                
+                // Barcode type selection
+                Text("Barcode ID Type:", fontWeight = FontWeight.Medium)
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    RadioButton(
+                        selected = barcodeType == "auto",
+                        onClick = { barcodeType = "auto" }
+                    )
+                    Text("Auto-generated")
+                }
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    RadioButton(
+                        selected = barcodeType == "custom",
+                        onClick = { barcodeType = "custom" }
+                    )
+                    Text("Custom")
+                }
+                
+                // Custom barcode input
+                if (barcodeType == "custom") {
+                    OutlinedTextField(
+                        value = customBarcodeId,
+                        onValueChange = { customBarcodeId = it },
+                        label = { Text("Custom Barcode ID") },
+                        placeholder = { Text("Enter custom barcode") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+                
+                // Auto-generated barcode digits
+                if (barcodeType == "auto") {
+                    OutlinedTextField(
+                        value = barcodeDigits,
+                        onValueChange = { barcodeDigits = it },
+                        label = { Text("Barcode Digits") },
+                        placeholder = { Text("12") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val finalBarcodeId = when (barcodeType) {
+                        "custom" -> customBarcodeId.trim()
+                        "auto" -> {
+                            val digits = barcodeDigits.toIntOrNull() ?: 12
+                            viewModel.generateBarcode(digits)
+                        }
+                        else -> viewModel.generateBarcode(12)
+                    }
+                    onConfirm(finalBarcodeId)
+                },
+                enabled = when (barcodeType) {
+                    "custom" -> customBarcodeId.trim().isNotEmpty()
+                    "auto" -> barcodeDigits.toIntOrNull() != null
+                    else -> false
+                }
+            ) {
+                Text("Create Duplicate")
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }

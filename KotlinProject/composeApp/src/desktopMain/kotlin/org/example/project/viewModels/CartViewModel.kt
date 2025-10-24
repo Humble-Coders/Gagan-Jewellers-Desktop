@@ -282,9 +282,12 @@ class CartViewModel(
         }
     }
 
-    // GST is already included in each product's final amount, so return 0
+    // Compute GST using split rates: 3% on base amount, 5% on making charges (post-discount)
     fun getGST(): Double {
-        return 0.0 // GST is already included in subtotal
+        val metalRates = MetalRatesManager.metalRates.value
+        return _cart.value.items.sumOf { cartItem ->
+            calculateItemSplitGST(cartItem, metalRates)
+        }
     }
 
     // Final total is the same as subtotal since GST is already included
@@ -347,8 +350,8 @@ class CartViewModel(
         // 6. D_AMT (Discount Amount) = T_CHARGES × (D_PERCENT ÷ 100)
         val discountAmount = totalCharges * (discountPercent / 100.0)
 
-        // 7. TAXABLE_AMOUNT = T_CHARGES - D_AMT (this is what we return - no GST)
-        return totalCharges - discountAmount
+        // 7. Return totalCharges (before discount) to match detail panel display
+        return totalCharges
     }
 
     // Calculate individual item final amount using jewelry calculation logic
@@ -401,20 +404,62 @@ class CartViewModel(
         // 7. TAXABLE_AMOUNT = T_CHARGES - D_AMT
         val taxableAmount = totalCharges - discountAmount
 
-        // 8. CGST = TAXABLE_AMOUNT × 1.5%
-        val cgst = taxableAmount * 0.015
+        // Split GST: apply 3% on base amount, 5% on making charges, after discount
+        // Distribute discount proportionally across components
+        val discountFactor = if (totalCharges > 0) (taxableAmount / totalCharges) else 1.0
+        val discountedBase = baseAmount * discountFactor
+        val discountedMaking = makingCharges * discountFactor
 
-        // 9. SGST = TAXABLE_AMOUNT × 1.5%
-        val sgst = taxableAmount * 0.015
+        val gstOnBase = discountedBase * 0.03
+        val gstOnMaking = discountedMaking * 0.05
+        val totalGst = gstOnBase + gstOnMaking
 
-        // 10. IGST = TAXABLE_AMOUNT × 3% (alternative to CGST+SGST)
-        val igst = taxableAmount * 0.03
-
-        // 11. TOTAL GST = CGST + SGST (for intrastate) or IGST (for interstate)
-        val totalGst = cgst + sgst // Using intrastate calculation
-
-        // 12. FINAL AMOUNT = TAXABLE_AMOUNT + TOTAL_TAX
+        // FINAL AMOUNT = TAXABLE_AMOUNT + TOTAL_GST
         return taxableAmount + totalGst
+    }
+
+    // Calculate split GST for a single item (3% on base, 5% on making, after discount)
+    private fun calculateItemSplitGST(cartItem: CartItem, metalRates: org.example.project.data.MetalRates): Double {
+        // Extract karat from metal field or fallback to product karat
+        val metalKarat = if (cartItem.metal.isNotEmpty()) {
+            cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(cartItem.product.materialType)
+        } else {
+            extractKaratFromMaterialType(cartItem.product.materialType)
+        }
+
+        val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else metalRates.getGoldRateForKarat(metalKarat)
+        val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
+
+        // Input fields with fallbacks
+        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.product.totalWeight
+        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else cartItem.product.lessWeight
+        val quantity = cartItem.quantity
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
+        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.cwWeight
+        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else cartItem.product.stoneRate
+        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else cartItem.product.stoneQuantity
+        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.vaCharges
+        val discountPercent = cartItem.discountPercent
+
+        val netWeight = grossWeight - lessWeight
+        val baseAmount = when {
+            cartItem.product.materialType.contains("gold", ignoreCase = true) -> netWeight * goldRate * quantity
+            cartItem.product.materialType.contains("silver", ignoreCase = true) -> netWeight * silverRate * quantity
+            else -> netWeight * goldRate * quantity
+        }
+        val makingCharges = netWeight * makingChargesPerGram * quantity
+        val stoneAmount = stoneRate * stoneQuantity * cwWeight
+        val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+        val discountAmount = totalCharges * (discountPercent / 100.0)
+        val taxableAmount = totalCharges - discountAmount
+
+        val discountFactor = if (totalCharges > 0) (taxableAmount / totalCharges) else 1.0
+        val discountedBase = baseAmount * discountFactor
+        val discountedMaking = makingCharges * discountFactor
+
+        val gstOnBase = discountedBase * 0.03
+        val gstOnMaking = discountedMaking * 0.05
+        return gstOnBase + gstOnMaking
     }
 
     // Calculate individual item subtotal using jewelry calculation logic

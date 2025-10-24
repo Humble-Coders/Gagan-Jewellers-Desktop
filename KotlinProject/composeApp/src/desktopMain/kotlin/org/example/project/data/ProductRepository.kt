@@ -19,6 +19,7 @@ interface ProductRepository {
     suspend fun getMaterials(): List<Material>
     suspend fun getProductImage(url: String): ByteArray?
     suspend fun generateUniqueBarcodes(quantity: Int, digits: Int): List<String>
+    fun generateBarcode(digits: Int): String
     // New: suggestion management
     suspend fun addCategory(name: String): String
     suspend fun addMaterial(name: String): String
@@ -91,7 +92,11 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     else -> false
                 },
                 images = (data["images"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                barcodeIds = (data["barcode_ids"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+                barcodeIds = when (val barcodeData = data["barcode_ids"]) {
+                    is String -> if (barcodeData.isNotEmpty()) listOf(barcodeData) else emptyList()
+                    is List<*> -> barcodeData.filterIsInstance<String>()
+                    else -> emptyList()
+                },
                 autoGenerateId = when (val value = data["auto_generate_id"]) {
                     is Boolean -> value
                     is String -> value.toBoolean()
@@ -192,7 +197,11 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                         else -> false
                     },
                     images = (data?.get("images") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                    barcodeIds = (data?.get("barcode_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+                    barcodeIds = when (val barcodeData = data?.get("barcode_ids")) {
+                        is String -> if (barcodeData.isNotEmpty()) listOf(barcodeData) else emptyList()
+                        is List<*> -> barcodeData.filterIsInstance<String>()
+                        else -> emptyList()
+                    },
                     autoGenerateId = when (val value = data?.get("auto_generate_id")) {
                         is Boolean -> value
                         is String -> value.toBoolean()
@@ -298,7 +307,11 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                         else -> false
                     },
                     images = (data?.get("images") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                    barcodeIds = (data?.get("barcode_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+                    barcodeIds = when (val barcodeData = data?.get("barcode_ids")) {
+                        is String -> if (barcodeData.isNotEmpty()) listOf(barcodeData) else emptyList()
+                        is List<*> -> barcodeData.filterIsInstance<String>()
+                        else -> emptyList()
+                    },
                     autoGenerateId = when (val value = data?.get("auto_generate_id")) {
                         is Boolean -> value
                         is String -> value.toBoolean()
@@ -347,6 +360,10 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             sb.append(d)
         }
         return sb.toString()
+    }
+    
+    override fun generateBarcode(digits: Int): String {
+        return generateRandomBarcode(digits)
     }
 
     private fun isBarcodeUnique(barcode: String): Boolean {
@@ -408,7 +425,8 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["available"] = product.available
         productMap["featured"] = product.featured
         productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
-        productMap["barcode_ids"] = product.barcodeIds.takeIf { it.isNotEmpty() } ?: emptyList<String>()
+        // Store barcodeIds as single string instead of array for new products
+        productMap["barcode_ids"] = product.barcodeIds.firstOrNull() ?: ""
         productMap["auto_generate_id"] = product.autoGenerateId
         productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
         productMap["common_id"] = product.commonId
@@ -530,7 +548,8 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["available"] = product.available
             productMap["featured"] = product.featured
             productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
-            productMap["barcode_ids"] = product.barcodeIds.takeIf { it.isNotEmpty() } ?: emptyList<String>()
+            // Store barcodeIds as single string instead of array for consistency with addProduct
+            productMap["barcode_ids"] = product.barcodeIds.firstOrNull() ?: ""
             productMap["auto_generate_id"] = product.autoGenerateId
             productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
         productMap["common_id"] = product.commonId

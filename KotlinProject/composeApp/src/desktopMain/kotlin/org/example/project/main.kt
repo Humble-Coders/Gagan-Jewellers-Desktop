@@ -4,7 +4,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import androidx.compose.runtime.*
 import org.example.project.navigation.JewelryApp
+import org.example.project.ui.SplashScreenDesktop
 import java.io.File
 import java.nio.file.Paths
 
@@ -36,12 +38,14 @@ fun main() {
                     title = "Jewelry Inventory",
                     state = rememberWindowState(width = 1280.dp, height = 800.dp)
                 ) {
-                    // Get the ViewModel from the initializer
-                    val viewModel = JewelryAppInitializer.getViewModel()
+                    var showSplash by remember { mutableStateOf(true) }
 
-                    // Render the main app UI
-                    JewelryApp(viewModel)
-
+                    if (showSplash) {
+                        SplashScreenDesktop(onFinished = { showSplash = false })
+                    } else {
+                        val viewModel = JewelryAppInitializer.getViewModel()
+                        JewelryApp(viewModel)
+                    }
                 }
             }
         } catch (e: Exception) {

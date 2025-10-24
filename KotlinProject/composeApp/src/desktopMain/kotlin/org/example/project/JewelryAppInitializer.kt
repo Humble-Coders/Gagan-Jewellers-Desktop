@@ -24,6 +24,10 @@ import org.example.project.data.MetalRateRepository
 import org.example.project.data.FirestoreMetalRateRepository
 import org.example.project.data.StonesRepository
 import org.example.project.data.FirestoreStonesRepository
+import org.example.project.data.AvailabilityRepository
+import org.example.project.data.BookingRepository
+import org.example.project.data.FirestoreAvailabilityRepository
+import org.example.project.data.FirestoreBookingRepository
 import org.example.project.utils.ImageLoader
 import org.example.project.utils.StorageService
 import org.example.project.viewModels.CartViewModel
@@ -32,7 +36,7 @@ import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.viewModels.GoldRateViewModel
 import org.example.project.viewModels.MetalRateViewModel
-import org.example.project.viewModels.InvoiceConfigViewModel
+import org.example.project.viewModels.AppointmentViewModel
 import java.io.FileInputStream
 import java.nio.file.Path
 
@@ -64,7 +68,9 @@ object JewelryAppInitializer {
     private var metalRatesRepository: MetalRatesRepository? = null
     private var metalRateRepository: MetalRateRepository? = null
     private var metalRateViewModel: MetalRateViewModel? = null
-    private var invoiceConfigViewModel: InvoiceConfigViewModel? = null
+    private var bookingRepository: BookingRepository? = null
+    private var appointmentViewModel: AppointmentViewModel? = null
+    private var availabilityRepository: AvailabilityRepository? = null
 
 
     /**
@@ -129,7 +135,9 @@ object JewelryAppInitializer {
             MetalRatesManager.initialize(metalRatesRepository!!)
             metalRateRepository = FirestoreMetalRateRepository(firestore)
             metalRateViewModel = MetalRateViewModel(metalRateRepository!!)
-            invoiceConfigViewModel = InvoiceConfigViewModel()
+            bookingRepository = FirestoreBookingRepository(firestore)
+            appointmentViewModel = AppointmentViewModel(bookingRepository!!)
+            availabilityRepository = FirestoreAvailabilityRepository(firestore)
 
             initialized = true
             println("Firebase initialized successfully with project ID: $projectId")
@@ -163,9 +171,14 @@ object JewelryAppInitializer {
         return metalRateViewModel!!
     }
 
-    fun getInvoiceConfigViewModel(): InvoiceConfigViewModel {
+    fun getAppointmentViewModel(): AppointmentViewModel {
         checkInitialized()
-        return invoiceConfigViewModel!!
+        return appointmentViewModel!!
+    }
+
+    fun getAvailabilityRepository(): AvailabilityRepository {
+        checkInitialized()
+        return availabilityRepository!!
     }
 
     /**

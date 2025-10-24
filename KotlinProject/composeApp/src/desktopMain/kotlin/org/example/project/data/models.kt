@@ -349,6 +349,7 @@ data class Order(
     val makingCharges: Double = 0.0, // Making charges for the order
     val discountAmount: Double = 0.0,
     val gstAmount: Double = 0.0,
+    val gstRate: Double = 0.0, // GST rate applied (e.g., 0.03 for 3%)
     val totalAmount: Double = 0.0,
     val isGstIncluded: Boolean = true, // Whether GST is included in the price
     val status: OrderStatus = OrderStatus.CONFIRMED,
@@ -361,10 +362,12 @@ data class PaymentTransaction(
     val id: String = "",
     val cartId: String = "",
     val paymentMethod: PaymentMethod = PaymentMethod.CARD,
+    val paymentSplit: PaymentSplit? = null, // Payment split information
     val subtotal: Double = 0.0,
     val makingCharges: Double = 0.0, // Making charges for the transaction
     val discountAmount: Double = 0.0,
     val gstAmount: Double = 0.0,
+    val gstRate: Double = 0.0, // GST rate applied (e.g., 0.03 for 3%)
     val totalAmount: Double = 0.0,
     val isGstIncluded: Boolean = true, // Whether GST is included in the price
     val status: PaymentStatus = PaymentStatus.PENDING,
@@ -407,7 +410,7 @@ fun MetalRate.calculateRateForKarat(targetKarat: Int): Double {
 
 data class InvoiceConfig(
     val id: String = "default",
-    val companyName: String = "Gagan Jewellers",
+    val companyName: String = "Vishal Gems and Jewels Pvt. Ltd.",
     val companyAddress: String = "",
     val companyPhone: String = "",
     val companyEmail: String = "",
@@ -465,3 +468,52 @@ data class ExchangeGold(
         return netWeight * (tunch / 100.0)
     }
 }
+// Appointment and Booking Models
+data class Booking(
+    val id: String = "",
+    val type: String = "booking",
+    val userId: String = "",
+    val userName: String? = null,
+    val startTime: Long = System.currentTimeMillis(),
+    val endTime: Long = System.currentTimeMillis(),
+    val status: BookingStatus = BookingStatus.PENDING,
+    val createdAt: Long = System.currentTimeMillis(),
+    val wishlistProductIds: List<String> = emptyList(),
+    val notes: String = "",
+    val serviceType: String = "",
+    val estimatedDuration: Int = 30 // in minutes
+)
+
+enum class BookingStatus {
+    PENDING,
+    CONFIRMED,
+    COMPLETED,
+    CANCELLED,
+    NO_SHOW
+}
+
+data class AppointmentWithUser(
+    val booking: Booking,
+    val user: User? = null
+)
+
+// Availability Slot Models
+data class AvailabilitySlot(
+    val id: String = "",
+    val type: String = "availability",
+    val startTime: Long = System.currentTimeMillis(),
+    val endTime: Long = System.currentTimeMillis(),
+    val slotDuration: Int = 30, // Duration in minutes
+    val createdAt: Long = System.currentTimeMillis(),
+    val isActive: Boolean = true
+)
+
+data class AvailabilitySlotRequest(
+    val startDate: java.util.Date,
+    val endDate: java.util.Date? = null, // If null, single day
+    val startTime: String, // Format: "HH:mm"
+    val endTime: String, // Format: "HH:mm"
+    val slotDuration: Int = 30, // Duration in minutes
+    val excludeWeekends: Boolean = false,
+    val excludeDates: List<java.util.Date> = emptyList()
+)

@@ -22,7 +22,7 @@ class InvoiceConfigRepository {
                 val data = snapshot.data
                 InvoiceConfig(
                     id = snapshot.id,
-                    companyName = data?.get("companyName") as? String ?: "Vishal Gems and Jewels Pvt. Ltd.",
+                    companyName = data?.get("companyName") as? String ?: "Gagan Jewellers Pvt.Ltd.",
                     companyAddress = data?.get("companyAddress") as? String ?: "",
                     companyPhone = data?.get("companyPhone") as? String ?: "",
                     companyEmail = data?.get("companyEmail") as? String ?: "",
@@ -98,7 +98,7 @@ class InvoiceConfigRepository {
                 val data = snapshot.data
                 InvoiceConfig(
                     id = snapshot.id,
-                    companyName = data?.get("companyName") as? String ?: "Vishal Gems and Jewels Pvt. Ltd.",
+                    companyName = data?.get("companyName") as? String ?: "Gagan Jewellers Pvt.Ltd.",
                     companyAddress = data?.get("companyAddress") as? String ?: "",
                     companyPhone = data?.get("companyPhone") as? String ?: "",
                     companyEmail = data?.get("companyEmail") as? String ?: "",

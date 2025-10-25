@@ -30,7 +30,7 @@ fun CashAmountDialog(
 ) {
     var amount by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
-    var transactionType by remember { mutableStateOf(CashTransactionType.GIVE) }
+    var transactionType by remember { mutableStateOf(CashTransactionType.RECEIVE) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
@@ -129,7 +129,7 @@ fun CashAmountDialog(
                     // Give Option
                     Card(
                         modifier = Modifier.weight(1f),
-                        backgroundColor = if (transactionType == CashTransactionType.GIVE) Color(0xFFDCFCE7) else Color(0xFFF8F9FA),
+                        backgroundColor = if (transactionType == CashTransactionType.GIVE) Color(0xFFFEE2E2) else Color(0xFFF8F9FA),
                         shape = RoundedCornerShape(12.dp),
                         elevation = if (transactionType == CashTransactionType.GIVE) 4.dp else 0.dp
                     ) {
@@ -145,12 +145,12 @@ fun CashAmountDialog(
                                 text = "💸 Give",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (transactionType == CashTransactionType.GIVE) Color(0xFF16A34A) else Color(0xFF6B7280)
+                                color = if (transactionType == CashTransactionType.GIVE) Color(0xFFDC2626) else Color(0xFF6B7280)
                             )
                             Text(
                                 text = "Give cash to customer\n(Increases balance)",
                                 fontSize = 12.sp,
-                                color = if (transactionType == CashTransactionType.GIVE) Color(0xFF16A34A) else Color(0xFF9CA3AF),
+                                color = if (transactionType == CashTransactionType.GIVE) Color(0xFFDC2626) else Color(0xFF9CA3AF),
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
                         }
@@ -159,7 +159,7 @@ fun CashAmountDialog(
                     // Receive Option
                     Card(
                         modifier = Modifier.weight(1f),
-                        backgroundColor = if (transactionType == CashTransactionType.RECEIVE) Color(0xFFFEE2E2) else Color(0xFFF8F9FA),
+                        backgroundColor = if (transactionType == CashTransactionType.RECEIVE) Color(0xFFDCFCE7) else Color(0xFFF8F9FA),
                         shape = RoundedCornerShape(12.dp),
                         elevation = if (transactionType == CashTransactionType.RECEIVE) 4.dp else 0.dp
                     ) {
@@ -175,12 +175,12 @@ fun CashAmountDialog(
                                 text = "💰 Receive",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (transactionType == CashTransactionType.RECEIVE) Color(0xFFDC2626) else Color(0xFF6B7280)
+                                color = if (transactionType == CashTransactionType.RECEIVE) Color(0xFF16A34A) else Color(0xFF6B7280)
                             )
                             Text(
                                 text = "Receive cash from customer\n(Decreases balance)",
                                 fontSize = 12.sp,
-                                color = if (transactionType == CashTransactionType.RECEIVE) Color(0xFFDC2626) else Color(0xFF9CA3AF),
+                                color = if (transactionType == CashTransactionType.RECEIVE) Color(0xFF16A34A) else Color(0xFF9CA3AF),
                                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
                         }

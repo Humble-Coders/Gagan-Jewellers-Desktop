@@ -60,7 +60,7 @@ class HtmlToPdfBillGenerator {
             <div class="container">
                 <div class="header">
                     <div class="company">
-                        <h1>Vishal Gems and Jewels Pvt. Ltd.</h1>
+                        <h1>Gagan Jewellers Pvt.Ltd.</h1>
                         <p class="tagline">Premium Gold and Silver Jewelry</p>
                         <p>Your Store Address Here</p>
                         <p>Phone: +91-XXXXXXXXXX</p>

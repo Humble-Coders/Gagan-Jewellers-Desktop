@@ -30,6 +30,8 @@ import org.example.project.data.AvailabilityRepository
 import org.example.project.data.BookingRepository
 import org.example.project.data.FirestoreAvailabilityRepository
 import org.example.project.data.FirestoreBookingRepository
+import org.example.project.data.OrderRepository
+import org.example.project.data.FirestoreOrderRepository
 import org.example.project.utils.ImageLoader
 import org.example.project.utils.StorageService
 import org.example.project.viewModels.CartViewModel
@@ -74,6 +76,7 @@ object JewelryAppInitializer {
     private var appointmentViewModel: AppointmentViewModel? = null
     private var availabilityRepository: AvailabilityRepository? = null
     private var inventoryRepository: InventoryRepository? = null
+    private var orderRepository: OrderRepository? = null
 
 
     /**
@@ -132,7 +135,8 @@ object JewelryAppInitializer {
             cartRepository = FirestoreCartRepository(firestore)
             cartViewModel = CartViewModel(repository!!, cartRepository!!, imageLoader!!)
             paymentRepository = FirestorePaymentRepository(firestore)
-            paymentViewModel = PaymentViewModel(paymentRepository!!)
+            orderRepository = FirestoreOrderRepository(firestore)
+            paymentViewModel = PaymentViewModel(paymentRepository!!, orderRepository!!)
             goldRateRepository = FirestoreGoldRateRepository(firestore)
             goldRateViewModel = GoldRateViewModel(goldRateRepository!!)
             metalRatesRepository = FirestoreMetalRatesRepository(firestore)

@@ -4,6 +4,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +27,9 @@ import androidx.compose.material.RadioButton
 import androidx.compose.material.TextFieldDefaults
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,6 +49,7 @@ import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
@@ -72,13 +82,33 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.example.project.utils.ImageLoader
 import org.example.project.data.Product
+import org.example.project.data.Category
 import org.example.project.data.GroupedProduct
 import org.example.project.data.MetalRatesManager
 import org.example.project.viewModels.ProductsViewModel
 import org.jetbrains.skia.Image
 import java.text.NumberFormat
 import java.util.Locale
+import java.net.URL
+import javax.imageio.ImageIO
 import org.example.project.JewelryAppInitializer
+
+// Image cache to store loaded images
+object ImageCache {
+    private val cache = mutableMapOf<String, ImageBitmap>()
+
+    fun get(url: String): ImageBitmap? = cache[url]
+
+    fun put(url: String, bitmap: ImageBitmap) {
+        cache[url] = bitmap
+    }
+
+    fun clear() {
+        cache.clear()
+    }
+
+    fun size(): Int = cache.size
+}
 
 @Composable
 fun DashboardScreen(
@@ -91,34 +121,69 @@ fun DashboardScreen(
     onDuplicateProduct: (String, String) -> Unit = { _, _ -> }
 ) {
     val products by remember { viewModel.products }
+    val categories by remember { viewModel.categories }
     val loading by remember { viewModel.loading }
+    val inventoryLoading by remember { viewModel.inventoryLoading }
     val inventoryRefreshTrigger by remember { viewModel.inventoryRefreshTrigger }
-    
+
+    // State for view mode: true = category view, false = products view
+    var showCategoryView by remember { mutableStateOf(true) }
+    var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+
+    // Search state for categories
+    var searchQuery by remember { mutableStateOf("") }
+
+    // Search state for products
+    var productSearchQuery by remember { mutableStateOf("") }
+
     // Use LaunchedEffect to load products asynchronously
     LaunchedEffect(Unit) {
         if (products.isEmpty()) {
             viewModel.loadProducts()
         }
     }
-    
+
     // Ensure rates are loaded when dashboard loads and observe rate changes
     val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
     val metalRatesList by ratesVM.metalRates.collectAsState()
     val metalRates by MetalRatesManager.metalRates
-    
+
     LaunchedEffect(Unit) {
         ratesVM.loadMetalRates()
     }
-    
+
     // Calculate grouped products efficiently to prevent UI blocking
-    val groupedProducts by remember(products, inventoryRefreshTrigger) { 
+    val groupedProducts by remember(products, inventoryRefreshTrigger, selectedCategoryId, inventoryLoading, productSearchQuery) {
         derivedStateOf {
-            if (products.isEmpty()) {
+            if (products.isEmpty() || inventoryLoading) {
                 emptyList()
             } else {
                 try {
-                    // Use cached calculation to avoid repeated heavy operations
-                    viewModel.getGroupedProducts()
+                    // Get all grouped products first
+                    val allGroupedProducts = viewModel.getGroupedProducts()
+
+                    // Apply filters
+                    var filteredProducts = allGroupedProducts
+
+                    // Filter by selected category if one is selected
+                    if (selectedCategoryId != null) {
+                        filteredProducts = filteredProducts.filter { groupedProduct ->
+                            groupedProduct.baseProduct.categoryId == selectedCategoryId
+                        }
+                    }
+
+                    // Filter by search query if one is provided
+                    if (productSearchQuery.isNotBlank()) {
+                        filteredProducts = filteredProducts.filter { groupedProduct ->
+                            val product = groupedProduct.baseProduct
+                            product.name.contains(productSearchQuery, ignoreCase = true) ||
+                                    product.description.contains(productSearchQuery, ignoreCase = true) ||
+                                    viewModel.getCategoryName(product.categoryId).contains(productSearchQuery, ignoreCase = true) ||
+                                    viewModel.getMaterialName(product.materialId).contains(productSearchQuery, ignoreCase = true)
+                        }
+                    }
+
+                    filteredProducts
                 } catch (e: Exception) {
                     println("Error calculating grouped products: ${e.message}")
                     emptyList()
@@ -126,28 +191,38 @@ fun DashboardScreen(
             }
         }
     }
-    
+
     val showDeleteDialog = remember { mutableStateOf(false) }
     val productToDelete = remember { mutableStateOf<String?>(null) }
     val groupedProductToDelete = remember { mutableStateOf<GroupedProduct?>(null) }
     val showDuplicateDialog = remember { mutableStateOf(false) }
     val productToDuplicate = remember { mutableStateOf<String?>(null) }
-    
-    // Loading state - consistent with other screens
-    if (loading) {
+
+    // Loading state - show loading while products or inventory are loading
+    if (loading || inventoryLoading) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
         ) {
-            CircularProgressIndicator(
-                color = Color(0xFFB8973D),
-                strokeWidth = 3.dp,
-                modifier = Modifier.size(48.dp)
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                CircularProgressIndicator(
+                    color = Color(0xFFB8973D),
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(48.dp)
+                )
+                Text(
+                    text = if (loading) "Loading products..." else "Loading inventory...",
+                    fontSize = 16.sp,
+                    color = Color(0xFF6B7280)
+                )
+            }
         }
         return
     }
-    
+
     // Empty state - consistent with other screens
     if (products.isEmpty()) {
         Card(
@@ -180,9 +255,10 @@ fun DashboardScreen(
         }
         return
     }
-    
+
     // Minimal logging for performance
     println("📊 Dashboard loaded: ${products.size} products, ${groupedProducts.size} grouped")
+    println("🖼️ Image cache: ${ImageCache.size()} images cached")
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         // Header with title and add button
@@ -191,12 +267,30 @@ fun DashboardScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Back button (only show when in products view)
+                if (!showCategoryView) {
+                    IconButton(
+                        onClick = {
+                            showCategoryView = true
+                            selectedCategoryId = null
+                            productSearchQuery = "" // Clear product search when going back
+                        }
+                    ) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                }
 
-            Text(
-                "Products",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
-            )
+                Text(
+                    if (showCategoryView) "Inventory" else "Products",
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF1A202C)
+                )
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -213,89 +307,165 @@ fun DashboardScreen(
             }
         }
 
-        // Search bar
-        OutlinedTextField(
-            value = "",
-            onValueChange = {  },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            placeholder = { Text("Search products...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search") },
-            singleLine = true
-        )
-
-        // Products table
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.White, RoundedCornerShape(8.dp))
-                .border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(8.dp))
-        ) {
-            // Table header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFFF5F5F5))
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Image", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Name", fontWeight = FontWeight.Bold, modifier = Modifier.weight(2f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Category", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Material", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Price", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.2f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Available", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Quantity", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("Actions", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-
-            Divider()
-
-            // Table content
-            if (groupedProducts.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxWidth().height(200.dp),
-                    contentAlignment = Alignment.Center
-                ) {
+        // Show category cards or products table based on view mode
+        if (showCategoryView) {
+            // Search bar for categories
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+                placeholder = {
                     Text(
-                        "No products found. Add a new product to get started.",
-                        color = Color.Gray
+                        "Search inventory categories...",
+                        color = Color(0xFF9CA3AF)
                     )
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = Color(0xFFB8973D)
+                    )
+                },
+                singleLine = true,
+                colors = TextFieldDefaults.outlinedTextFieldColors(
+                    focusedBorderColor = Color(0xFFB8973D),
+                    unfocusedBorderColor = Color(0xFFE5E7EB),
+                    cursorColor = Color(0xFFB8973D)
+                ),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            CategoryCardsView(
+                categories = categories,
+                products = products,
+                searchQuery = searchQuery,
+                onCategoryClick = { categoryId ->
+                    selectedCategoryId = categoryId
+                    showCategoryView = false
                 }
-            } else {
-                LazyColumn {
-                    items(groupedProducts) { groupedProduct ->
-                        GroupedProductRow(
-                            groupedProduct = groupedProduct,
-                            viewModel = viewModel,
-                            imageLoader = imageLoader,
-                            metalRates = metalRates,
-                            onDelete = {
-                                // For grouped products, delete all products in the group except parent
-                                println("🗑️ DASHBOARD: Delete button clicked")
-                                println("   - Product ID: ${groupedProduct.baseProduct.id}")
-                                println("   - Product Name: ${groupedProduct.baseProduct.name}")
-                                println("   - Common ID: ${groupedProduct.commonId}")
-                                println("   - Quantity: ${groupedProduct.quantity}")
-                                println("   - Current dialog state: ${showDeleteDialog.value}")
-                                productToDelete.value = groupedProduct.baseProduct.id
-                                groupedProductToDelete.value = groupedProduct
-                                showDeleteDialog.value = true
-                                println("   - Dialog state set to: ${showDeleteDialog.value}")
-                                println("   - Delete dialog should be shown")
-                            },
-                            onClick = { 
-                                // For grouped products, show details of the first product
-                                onViewProductDetails(groupedProduct.baseProduct.id) 
-                            },
-                            onEditBarcode = onEditBarcode,
-                            onDeleteBarcode = onDeleteBarcode,
-                            onDuplicateProduct = { productId ->
-                                productToDuplicate.value = productId
-                                showDuplicateDialog.value = true
+            )
+        } else {
+            // Search bar (only show in products view)
+            OutlinedTextField(
+                value = productSearchQuery,
+                onValueChange = { productSearchQuery = it },
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                placeholder = {
+                    Text(
+                        "Search products by name, description, category, or material...",
+                        color = Color(0xFF9CA3AF)
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = Color(0xFFB8973D)
+                    )
+                },
+                singleLine = true,
+                colors = TextFieldDefaults.outlinedTextFieldColors(
+                    focusedBorderColor = Color(0xFFB8973D),
+                    unfocusedBorderColor = Color(0xFFE5E7EB),
+                    cursorColor = Color(0xFFB8973D)
+                ),
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            // Products table
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.White, RoundedCornerShape(8.dp))
+                    .border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(8.dp))
+            ) {
+                // Table header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFF5F5F5))
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Image", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Name", fontWeight = FontWeight.Bold, modifier = Modifier.weight(2f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Category", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Material", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Price", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.2f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Available", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Quantity", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Actions", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+
+                Divider()
+
+                // Table content
+                if (groupedProducts.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().height(200.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = if (productSearchQuery.isBlank()) {
+                                    "No products found. Add a new product to get started."
+                                } else {
+                                    "No products match your search"
+                                },
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFF6B7280)
+                            )
+                            if (productSearchQuery.isNotBlank()) {
+                                Text(
+                                    text = "Try searching for different keywords or clear the search",
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF9CA3AF),
+                                    textAlign = TextAlign.Center
+                                )
                             }
-                        )
-                        Divider()
+                        }
+                    }
+                } else {
+                    LazyColumn {
+                        items(groupedProducts) { groupedProduct ->
+                            GroupedProductRow(
+                                groupedProduct = groupedProduct,
+                                viewModel = viewModel,
+                                imageLoader = imageLoader,
+                                metalRates = metalRates,
+                                onDelete = {
+                                    // For grouped products, delete all products in the group except parent
+                                    println("🗑️ DASHBOARD: Delete button clicked")
+                                    println("   - Product ID: ${groupedProduct.baseProduct.id}")
+                                    println("   - Product Name: ${groupedProduct.baseProduct.name}")
+                                    println("   - Common ID: ${groupedProduct.commonId}")
+                                    println("   - Quantity: ${groupedProduct.quantity}")
+                                    println("   - Current dialog state: ${showDeleteDialog.value}")
+                                    productToDelete.value = groupedProduct.baseProduct.id
+                                    groupedProductToDelete.value = groupedProduct
+                                    showDeleteDialog.value = true
+                                    println("   - Dialog state set to: ${showDeleteDialog.value}")
+                                    println("   - Delete dialog should be shown")
+                                },
+                                onClick = {
+                                    // For grouped products, show details of the first product
+                                    onViewProductDetails(groupedProduct.baseProduct.id)
+                                },
+                                onEditBarcode = onEditBarcode,
+                                onDeleteBarcode = onDeleteBarcode,
+                                onDuplicateProduct = { productId ->
+                                    productToDuplicate.value = productId
+                                    showDuplicateDialog.value = true
+                                }
+                            )
+                            Divider()
+                        }
                     }
                 }
             }
@@ -307,13 +477,13 @@ fun DashboardScreen(
     if (showDeleteDialog.value) {
         println("🗑️ DELETE DIALOG IS SHOWING")
         AlertDialog(
-            onDismissRequest = { 
+            onDismissRequest = {
                 showDeleteDialog.value = false
                 productToDelete.value = null
                 groupedProductToDelete.value = null
             },
             title = { Text("Confirm Deletion") },
-            text = { 
+            text = {
                 val groupedProduct = groupedProductToDelete.value
                 if (groupedProduct?.commonId != null) {
                     Text("Are you sure you want to delete this grouped product? This will delete all products in the group except the parent product. This action cannot be undone.")
@@ -343,7 +513,7 @@ fun DashboardScreen(
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { 
+                OutlinedButton(onClick = {
                     showDeleteDialog.value = false
                     productToDelete.value = null
                     groupedProductToDelete.value = null
@@ -359,7 +529,7 @@ fun DashboardScreen(
         DuplicateProductDialog(
             productId = productToDuplicate.value ?: "",
             viewModel = viewModel,
-            onDismiss = { 
+            onDismiss = {
                 showDuplicateDialog.value = false
                 productToDuplicate.value = null
             },
@@ -524,17 +694,17 @@ private fun GroupedProductRow(
             contentAlignment = Alignment.CenterStart
         ) {
             var expanded by remember { mutableStateOf(false) }
-            
+
             Row(
                 modifier = Modifier
-                    .clickable { 
+                    .clickable {
                         println("📋 BARCODE DROPDOWN OPENED")
                         println("   - Product Name: ${groupedProduct.baseProduct.name}")
                         println("   - Product ID: ${groupedProduct.baseProduct.id}")
                         println("   - Barcode Count: ${groupedProduct.barcodeIds.size}")
                         println("   - Barcodes: ${groupedProduct.barcodeIds}")
                         println("   - Timestamp: ${System.currentTimeMillis()}")
-                        expanded = true 
+                        expanded = true
                     }
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -552,14 +722,14 @@ private fun GroupedProductRow(
                     tint = Color.Gray
                 )
             }
-            
+
             DropdownMenu(
                 expanded = expanded,
-                onDismissRequest = { 
+                onDismissRequest = {
                     println("📋 BARCODE DROPDOWN DISMISSED")
                     println("   - Product Name: ${groupedProduct.baseProduct.name}")
                     println("   - Timestamp: ${System.currentTimeMillis()}")
-                    expanded = false 
+                    expanded = false
                 },
                 modifier = Modifier.widthIn(min = 180.dp, max = 200.dp)
             ) {
@@ -583,7 +753,7 @@ private fun GroupedProductRow(
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-                    
+
                     // Edit option
                     DropdownMenuItem(
                         onClick = {
@@ -614,7 +784,7 @@ private fun GroupedProductRow(
                             )
                         }
                     }
-                    
+
                     // Delete option
                     DropdownMenuItem(
                         onClick = {
@@ -646,7 +816,7 @@ private fun GroupedProductRow(
                             )
                         }
                     }
-                    
+
                     // Divider between barcodes
                     if (barcode != groupedProduct.barcodeIds.last()) {
                         Divider(modifier = Modifier.padding(horizontal = 8.dp))
@@ -675,7 +845,7 @@ private fun GroupedProductRow(
                         tint = MaterialTheme.colors.primary
                     )
                 }
-                
+
                 // Delete button
                 IconButton(
                     onClick = {
@@ -966,7 +1136,7 @@ private fun DuplicateProductDialog(
     var barcodeType by remember { mutableStateOf("auto") } // "auto" or "custom"
     var customBarcodeId by remember { mutableStateOf("") }
     var barcodeDigits by remember { mutableStateOf("12") }
-    
+
     if (product == null) {
         onDismiss()
         return
@@ -980,10 +1150,10 @@ private fun DuplicateProductDialog(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Text("Create a new product document with the same details as '${product.name}'")
-                
+
                 // Barcode type selection
                 Text("Barcode ID Type:", fontWeight = FontWeight.Medium)
-                
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -994,7 +1164,7 @@ private fun DuplicateProductDialog(
                     )
                     Text("Auto-generated")
                 }
-                
+
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1005,7 +1175,7 @@ private fun DuplicateProductDialog(
                     )
                     Text("Custom")
                 }
-                
+
                 // Custom barcode input
                 if (barcodeType == "custom") {
                     OutlinedTextField(
@@ -1018,7 +1188,7 @@ private fun DuplicateProductDialog(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
                 }
-                
+
                 // Auto-generated barcode digits
                 if (barcodeType == "auto") {
                     OutlinedTextField(
@@ -1061,4 +1231,298 @@ private fun DuplicateProductDialog(
             }
         }
     )
+}
+
+@Composable
+private fun CategoryCardsView(
+    categories: List<Category>,
+    products: List<Product>,
+    searchQuery: String,
+    onCategoryClick: (String) -> Unit
+) {
+    // Filter categories based on search query
+    val filteredCategories = remember(categories, searchQuery) {
+        if (searchQuery.isBlank()) {
+            categories
+        } else {
+            categories.filter { category ->
+                category.name.contains(searchQuery, ignoreCase = true) ||
+                        category.description.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
+    // Calculate product count for each filtered category
+    val categoryProductCounts = remember(filteredCategories, products) {
+        filteredCategories.associateWith { category: Category ->
+            products.count { product: Product -> product.categoryId == category.id }
+        }
+    }
+
+    if (filteredCategories.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = if (searchQuery.isBlank()) "No categories found" else "No categories match your search",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF6B7280)
+                )
+                if (searchQuery.isNotBlank()) {
+                    Text(
+                        text = "Try searching for: ${categories.take(3).joinToString(", ") { it.name }}",
+                        fontSize = 14.sp,
+                        color = Color(0xFF9CA3AF),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    LazyVerticalGrid(
+        columns = GridCells.Adaptive(minSize = 200.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        items(filteredCategories) { category: Category ->
+            CategoryCard(
+                category = category,
+                productCount = categoryProductCounts[category] ?: 0,
+                onClick = { onCategoryClick(category.id) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun CategoryCard(
+    category: Category,
+    productCount: Int,
+    onClick: () -> Unit
+) {
+    var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var isLoading by remember { mutableStateOf(true) }
+    var hasError by remember { mutableStateOf(false) }
+
+    // Load image asynchronously with caching
+    LaunchedEffect(category.imageUrl) {
+        if (category.imageUrl.isNotEmpty()) {
+            // Check cache first
+            val cachedImage = ImageCache.get(category.imageUrl)
+            if (cachedImage != null) {
+                imageBitmap = cachedImage
+                isLoading = false
+                hasError = false
+                println("✅ Using cached image for category: ${category.name}")
+                return@LaunchedEffect
+            }
+
+            // Load from URL if not in cache
+            try {
+                val loadedBitmap = withContext(Dispatchers.IO) {
+                    ImageIO.read(URL(category.imageUrl))?.toComposeImageBitmap()
+                }
+                if (loadedBitmap != null) {
+                    // Cache the loaded image
+                    ImageCache.put(category.imageUrl, loadedBitmap)
+                    imageBitmap = loadedBitmap
+                    hasError = false
+                    println("✅ Loaded and cached image for category: ${category.name}")
+                } else {
+                    hasError = true
+                }
+            } catch (e: Exception) {
+                println("❌ Error loading category image: ${e.message}")
+                hasError = true
+            }
+        } else {
+            hasError = true
+        }
+        isLoading = false
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(200.dp)
+            .clickable { onClick() },
+        elevation = 8.dp,
+        shape = RoundedCornerShape(20.dp),
+        backgroundColor = Color.White
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize()
+        ) {
+            // Gradient background overlay
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFFF8F9FA),
+                                Color(0xFFFFFFFF)
+                            ),
+                            startY = 0f,
+                            endY = Float.POSITIVE_INFINITY
+                        ),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                // Image container with elegant styling
+                Box(
+                    modifier = Modifier
+                        .size(80.dp)
+                        .background(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    Color(0xFFB8973D).copy(alpha = 0.15f),
+                                    Color(0xFFB8973D).copy(alpha = 0.05f)
+                                ),
+                                radius = 50f
+                            ),
+                            shape = RoundedCornerShape(20.dp)
+                        )
+                        .border(
+                            width = 2.dp,
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFFB8973D).copy(alpha = 0.3f),
+                                    Color(0xFFB8973D).copy(alpha = 0.1f)
+                                )
+                            ),
+                            shape = RoundedCornerShape(20.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        isLoading -> {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                color = Color(0xFFB8973D),
+                                strokeWidth = 3.dp
+                            )
+                        }
+                        imageBitmap != null && !hasError -> {
+                            Image(
+                                bitmap = imageBitmap!!,
+                                contentDescription = category.name,
+                                modifier = Modifier
+                                    .size(76.dp)
+                                    .clip(RoundedCornerShape(18.dp)),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                        else -> {
+                            // Elegant fallback with gradient text
+                            Box(
+                                modifier = Modifier
+                                    .size(76.dp)
+                                    .background(
+                                        brush = Brush.linearGradient(
+                                            colors = listOf(
+                                                Color(0xFFB8973D),
+                                                Color(0xFFD4AF37)
+                                            )
+                                        ),
+                                        shape = RoundedCornerShape(18.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = category.name.take(2).uppercase(),
+                                    fontSize = 24.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    style = TextStyle(
+                                        shadow = Shadow(
+                                            color = Color.Black.copy(alpha = 0.3f),
+                                            offset = Offset(1f, 1f),
+                                            blurRadius = 2f
+                                        )
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Category name with elegant typography
+                Text(
+                    text = category.name,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF1A202C),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = TextStyle(
+                        letterSpacing = 0.5.sp
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Product count with badge-like styling
+                Box(
+                    modifier = Modifier
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    Color(0xFFB8973D).copy(alpha = 0.1f),
+                                    Color(0xFFD4AF37).copy(alpha = 0.1f)
+                                )
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "$productCount products",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFFB8973D),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            // Subtle border glow effect
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .border(
+                        width = 1.dp,
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color(0xFFB8973D).copy(alpha = 0.2f),
+                                Color.Transparent,
+                                Color(0xFFB8973D).copy(alpha = 0.2f)
+                            )
+                        ),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+            )
+        }
+    }
 }

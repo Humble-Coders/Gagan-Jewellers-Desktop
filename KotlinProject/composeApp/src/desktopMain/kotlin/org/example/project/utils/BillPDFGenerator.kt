@@ -25,7 +25,7 @@ class BillPDFGenerator {
         order: Order,
         customer: User,
         outputPath: Path,
-        companyName: String = "Vishal Gems and Jewels Pvt. Ltd.",
+        companyName: String = "Gagan Jewellers Pvt.Ltd.",
         companyAddress: String = "123 Jewelry Street, Golden City, GC 12345",
         companyPhone: String = "+91 98765 43210",
         companyEmail: String = "info@vishalgems.com",
@@ -392,6 +392,7 @@ class BillPDFGenerator {
             // Draw items with correct calculations
             contentStream.setFont(helvetica, 7f)
 
+            // Display each item separately (no grouping)
             order.items.forEach { item ->
                 val itemRowHeight = rowHeight * 1.2f
                 yPos -= itemRowHeight
@@ -402,18 +403,37 @@ class BillPDFGenerator {
 
                 xPos = margin + 1f
                 
-                // Get product details for this item
+                // Get product details for this item (for name and other reference details)
                 val product = products.find { it.id == item.productId }
                 val weight = if (product != null) parseWeight(product.weight) else 5.0
+                
+                // Use materialType from order item, fallback to product if not available
+                val materialType = if (item.materialType.isNotBlank()) item.materialType else (product?.materialType ?: "Unknown")
+                
                 val pricePerGram = when {
-                    product?.materialType?.contains("gold", ignoreCase = true) == true -> goldPricePerGram
-                    product?.materialType?.contains("silver", ignoreCase = true) == true -> silverPricePerGram
+                    materialType.contains("gold", ignoreCase = true) -> goldPricePerGram
+                    materialType.contains("silver", ignoreCase = true) -> silverPricePerGram
                     else -> goldPricePerGram
                 }
+                
+                // Calculate costs for this individual item
                 val metalCost = weight * item.quantity * pricePerGram
-                val makingCharges = weight * item.quantity * 100.0
-                val subTotal = metalCost + makingCharges
-                val gst = if (order.isGstIncluded) subTotal * 0.18 else 0.0
+                
+                // Use making rate from order item (it's stored as rate per gram from cartItem.makingCharges)
+                val makingRatePerGram = item.defaultMakingRate
+                val makingCharges = weight * item.quantity * makingRatePerGram
+                
+                // VA charges from the order item (stored from cartItem.va, which is per-item)
+                val vaCharges = if (item.vaCharges > 0) {
+                    item.vaCharges * item.quantity
+                } else 0.0
+                val subTotal = metalCost + makingCharges + vaCharges
+                // Calculate GST using split model: 3% on metal, 5% on making charges (matching receipt screen)
+                val gst = if (order.isGstIncluded) {
+                    // Simple split GST calculation without discount for now
+                    // GST: 3% on metal, 5% on making
+                    (metalCost * 0.03) + (makingCharges * 0.05)
+                } else 0.0
                 val itemTotal = subTotal + gst
 
                 totalQty += item.quantity
@@ -421,7 +441,7 @@ class BillPDFGenerator {
 
                 val values = listOf(
                     product?.name ?: "Product ${item.productId}",
-                    product?.materialType ?: "Unknown",
+                    materialType,
                     "${item.quantity}",
                     String.format("%.2f", weight * item.quantity),
                     formatCurrency(pricePerGram),
@@ -564,9 +584,16 @@ class BillPDFGenerator {
             }
 
             if (order.isGstIncluded && order.gstAmount > 0) {
+                // Calculate GST percentage from the order data
+                val gstPercentage = if (order.subtotal > 0) {
+                    ((order.gstAmount / order.subtotal) * 100).toInt()
+                } else {
+                    3 // Default fallback percentage
+                }
+                
                 contentStream.beginText()
                 contentStream.newLineAtOffset(margin, yPos)
-                contentStream.showText("GST (18%):")
+                contentStream.showText("GST (${gstPercentage}%):")
                 contentStream.endText()
                 contentStream.beginText()
                 contentStream.newLineAtOffset(margin + 120f, yPos)

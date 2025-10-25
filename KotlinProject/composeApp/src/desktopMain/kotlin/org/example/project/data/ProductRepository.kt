@@ -100,6 +100,13 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 customProductId = data["custom_product_id"] as? String ?: "",
                 commonId = data["common_id"] as? String,
                 createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                // Collection product fields
+                isCollectionProduct = when (val value = data["is_collection_product"]) {
+                    is Boolean -> value
+                    is String -> value.toBoolean()
+                    else -> false
+                },
+                collectionId = data["collection_id"] as? String ?: "",
                 show = ProductShowConfig(
                     name = showMap["name"] as? Boolean ?: true,
                     description = showMap["description"] as? Boolean ?: true,
@@ -124,7 +131,9 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     customPrice = showMap["custom_price"] as? Boolean ?: true,
                     images = showMap["images"] as? Boolean ?: true,
                     available = showMap["available"] as? Boolean ?: true,
-                    featured = showMap["featured"] as? Boolean ?: true
+                    featured = showMap["featured"] as? Boolean ?: true,
+                    isCollectionProduct = showMap["is_collection_product"] as? Boolean ?: true,
+                    collectionId = showMap["collection_id"] as? Boolean ?: true
                 )
             )
         }
@@ -271,29 +280,32 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["has_custom_price"] = product.hasCustomPrice
             productMap["custom_price"] = if (product.customPrice > 0) product.customPrice.toString() else null
             productMap["available"] = product.available
-        productMap["featured"] = product.featured
-        productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
-        productMap["auto_generate_id"] = product.autoGenerateId
-        productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
-        productMap["common_id"] = product.commonId
+            productMap["featured"] = product.featured
+            productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
+            productMap["auto_generate_id"] = product.autoGenerateId
+            productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
+            productMap["common_id"] = product.commonId
+            // Collection product fields
+            productMap["is_collection_product"] = product.isCollectionProduct
+            productMap["collection_id"] = product.collectionId.takeIf { it.isNotBlank() }
 
-        // Show map
-        val showMap = mapOf(
-            "name" to product.show.name,
-            "description" to product.show.description,
-            "category_id" to product.show.category,
-            "material_id" to product.show.material,
-            "material_type" to product.show.materialType,
-            "quantity" to product.show.quantity,
-            "total_weight" to product.show.totalWeight,
-            "price" to product.show.price,
-            "default_making_rate" to product.show.defaultMakingRate,
-            "va_charges" to product.show.vaCharges,
-            "is_other_than_gold" to product.show.isOtherThanGold,
-            "less_weight" to product.show.lessWeight,
-            "has_stones" to product.show.hasStones,
-            "stone_name" to product.show.stoneName,
-            "stone_quantity" to product.show.stoneQuantity,
+            // Show map
+            val showMap = mapOf(
+                "name" to product.show.name,
+                "description" to product.show.description,
+                "category_id" to product.show.category,
+                "material_id" to product.show.material,
+                "material_type" to product.show.materialType,
+                "quantity" to product.show.quantity,
+                "total_weight" to product.show.totalWeight,
+                "price" to product.show.price,
+                "default_making_rate" to product.show.defaultMakingRate,
+                "va_charges" to product.show.vaCharges,
+                "is_other_than_gold" to product.show.isOtherThanGold,
+                "less_weight" to product.show.lessWeight,
+                "has_stones" to product.show.hasStones,
+                "stone_name" to product.show.stoneName,
+                "stone_quantity" to product.show.stoneQuantity,
                 "stone_rate" to product.show.stoneRate,
                 "cw_weight" to product.show.cwWeight,
                 "stone_amount" to product.show.stoneAmount,
@@ -302,7 +314,9 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 "custom_price" to product.show.customPrice,
                 "images" to product.show.images,
                 "available" to product.show.available,
-                "featured" to product.show.featured
+                "featured" to product.show.featured,
+                "is_collection_product" to product.show.isCollectionProduct,
+                "collection_id" to product.show.collectionId
             )
             productMap["show"] = showMap
 
@@ -353,6 +367,27 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             }
         }
 
+        // Add to themed collection if product is a collection product
+        if (product.isCollectionProduct && product.collectionId.isNotBlank()) {
+            println("🎨 Adding product to themed collection: ${product.collectionId}")
+            val collectionRef = firestore.collection("themed_collections").document(product.collectionId)
+            val collectionDoc = collectionRef.get().get()
+
+            if (collectionDoc.exists()) {
+                val data = collectionDoc.data
+                val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                if (!currentProductIds.contains(newProductId)) {
+                    val updatedProductIds = currentProductIds + newProductId
+                    collectionRef.update("productIds", updatedProductIds).get()
+                    println("✅ Added product to themed collection")
+                } else {
+                    println("ℹ️ Product already in themed collection")
+                }
+            } else {
+                println("⚠️ Themed collection not found: ${product.collectionId}")
+            }
+        }
+
         println("🏁 ProductRepository.addProduct completed successfully")
         newProductId
         } catch (e: Exception) {
@@ -396,7 +431,10 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
             productMap["auto_generate_id"] = product.autoGenerateId
             productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
-        productMap["common_id"] = product.commonId
+            productMap["common_id"] = product.commonId
+            // Collection product fields
+            productMap["is_collection_product"] = product.isCollectionProduct
+            productMap["collection_id"] = product.collectionId.takeIf { it.isNotBlank() }
             // Show map
             val showMap = mapOf(
                 "name" to product.show.name,
@@ -422,7 +460,9 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 "custom_price" to product.show.customPrice,
                 "images" to product.show.images,
                 "available" to product.show.available,
-                "featured" to product.show.featured
+                "featured" to product.show.featured,
+                "is_collection_product" to product.show.isCollectionProduct,
+                "collection_id" to product.show.collectionId
             )
             productMap["show"] = showMap
 
@@ -461,6 +501,40 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                         println("✅ Removed product from featured_products list")
                     } else {
                         println("ℹ️ Product not in featured_products list")
+                    }
+                }
+            }
+
+            // Handle themed collection
+            if (product.isCollectionProduct && product.collectionId.isNotBlank()) {
+                println("🎨 Updating themed collection: adding product ${product.id} to ${product.collectionId}")
+                val collectionRef = firestore.collection("themed_collections").document(product.collectionId)
+                val collectionDoc = collectionRef.get().get()
+
+                if (collectionDoc.exists()) {
+                    val data = collectionDoc.data
+                    val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                    if (!currentProductIds.contains(product.id)) {
+                        val updatedProductIds = currentProductIds + product.id
+                        collectionRef.update("productIds", updatedProductIds).get()
+                        println("✅ Added product to themed collection")
+                    } else {
+                        println("ℹ️ Product already in themed collection")
+                    }
+                } else {
+                    println("⚠️ Themed collection not found: ${product.collectionId}")
+                }
+            } else {
+                // Remove from all themed collections if not a collection product
+                println("🎨 Updating themed collection: removing product ${product.id} from all collections")
+                val collectionsSnapshot = firestore.collection("themed_collections").get().get()
+                collectionsSnapshot.documents.forEach { doc ->
+                    val data = doc.data
+                    val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                    if (currentProductIds.contains(product.id)) {
+                        val updatedProductIds = currentProductIds.filter { it != product.id }
+                        doc.reference.update("productIds", updatedProductIds).get()
+                        println("✅ Removed product from themed collection: ${doc.id}")
                     }
                 }
             }

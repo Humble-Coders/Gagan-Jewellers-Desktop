@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
@@ -31,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.example.project.JewelryAppInitializer
@@ -42,6 +44,9 @@ import org.example.project.viewModels.MetalRateViewModel
 import org.example.project.ui.AutoCompleteTextField
 import org.example.project.data.InventoryItem
 import org.example.project.data.InventoryStatus
+import org.example.project.data.ThemedCollection
+import org.example.project.data.ThemedCollectionRepository
+import org.example.project.data.FirestoreThemedCollectionRepository
 import kotlinx.coroutines.launch
 
 // Helper function to extract karat from material type
@@ -97,6 +102,13 @@ fun AddEditProductScreen(
     var isSaving by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
+    // Collection state
+    val collectionRepository = remember { FirestoreThemedCollectionRepository(JewelryAppInitializer.getFirestore()) }
+    var collections by remember { mutableStateOf<List<ThemedCollection>>(emptyList()) }
+    var selectedCollection by remember { mutableStateOf<ThemedCollection?>(null) }
+    var collectionSearchQuery by remember { mutableStateOf("") }
+    var showCollectionDropdown by remember { mutableStateOf(false) }
+
     // Form state
     var autoGenerateId by remember { mutableStateOf(true) }
     var customProductId by remember { mutableStateOf("") }
@@ -120,7 +132,7 @@ fun AddEditProductScreen(
 
     // Material suggestions from Firestore
     val materialSuggestions = materials.map { it.name }
-    
+
     // Debug logging
     LaunchedEffect(materials) {
         println("🔍 DEBUG: Materials loaded: ${materials.size} items")
@@ -145,7 +157,7 @@ fun AddEditProductScreen(
 
     // Category suggestions from Firestore
     val categorySuggestions = categories.map { it.name }
-    
+
     // Debug logging for categories
     LaunchedEffect(categories) {
         println("🔍 DEBUG: Categories loaded: ${categories.size} items")
@@ -177,6 +189,8 @@ fun AddEditProductScreen(
     var vaCharges by remember { mutableStateOf(if (product.vaCharges > 0) product.vaCharges.toString() else "") }
     var available by remember { mutableStateOf(product.available) }
     var featured by remember { mutableStateOf(product.featured) }
+    var isCollectionProduct by remember { mutableStateOf(product.isCollectionProduct) }
+    var collectionId by remember { mutableStateOf(product.collectionId) }
     var images by remember { mutableStateOf(product.images) }
     var hasCustomPrice by remember { mutableStateOf(product.hasCustomPrice) }
     var customPrice by remember { mutableStateOf(if (product.customPrice > 0) product.customPrice.toString() else "") }
@@ -206,6 +220,8 @@ fun AddEditProductScreen(
     var showImages by remember { mutableStateOf(product.show.images) }
     var showAvailable by remember { mutableStateOf(product.show.available) }
     var showFeatured by remember { mutableStateOf(product.show.featured) }
+    var showIsCollectionProduct by remember { mutableStateOf(product.show.isCollectionProduct) }
+    var showCollectionId by remember { mutableStateOf(product.show.collectionId) }
 
     // Calculated values
     val netWeight = remember(totalWeight, lessWeight) {
@@ -313,6 +329,30 @@ fun AddEditProductScreen(
     LaunchedEffect(featured) {
         if (!featured) {
             showFeatured = false
+        }
+    }
+
+    // Load collections and initialize selected collection
+    LaunchedEffect(Unit) {
+        try {
+            collections = collectionRepository.getAllCollections()
+            // Initialize selected collection if product has a collection ID
+            if (collectionId.isNotBlank()) {
+                selectedCollection = collections.find { it.id == collectionId }
+            }
+        } catch (e: Exception) {
+            println("Error loading collections: ${e.message}")
+        }
+    }
+
+    // Update collection ID when selected collection changes
+    LaunchedEffect(selectedCollection) {
+        selectedCollection?.let { collection ->
+            collectionId = collection.id
+        } ?: run {
+            if (selectedCollection == null) {
+                collectionId = ""
+            }
         }
     }
 
@@ -1260,6 +1300,127 @@ fun AddEditProductScreen(
                         checked = featured,
                         onCheckedChange = { featured = it }
                     )
+
+                    Divider(color = Color(0xFFE0E0E0))
+
+                    StatusToggle(
+                        title = "Collection Product",
+                        description = "Add this product to a themed collection",
+                        checked = isCollectionProduct,
+                        onCheckedChange = { isCollectionProduct = it }
+                    )
+                }
+            }
+
+            // Collection Selection (only show if collection product is enabled)
+            if (isCollectionProduct) {
+                SectionCard(title = "Collection Selection") {
+                    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text(
+                            text = "Select a themed collection for this product",
+                            fontSize = 14.sp,
+                            color = Color(0xFF6B7280),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+
+                        // Collection dropdown using AutoCompleteTextField
+                        AutoCompleteTextField(
+                            value = collectionSearchQuery,
+                            onValueChange = { query ->
+                                collectionSearchQuery = query
+                                showCollectionDropdown = true
+                            },
+                            onItemSelected = { selectedCollectionName ->
+                                val collection = collections.find { it.name == selectedCollectionName }
+                                selectedCollection = collection
+                                collectionSearchQuery = selectedCollectionName
+                                showCollectionDropdown = false
+                            },
+                            onAddNew = { newCollectionName ->
+                                // For now, just show a message that collections need to be created separately
+                                println("New collection creation not implemented yet: $newCollectionName")
+                            },
+                            suggestions = collections.filter { collection ->
+                                collection.name.contains(collectionSearchQuery, ignoreCase = true) && collection.isActive
+                            }.map { it.name },
+                            label = "Search Collections",
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = isCollectionProduct
+                        )
+
+                        // Selected collection display
+                        selectedCollection?.let { collection ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                backgroundColor = Color(0xFFF0F9FF),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = collection.name,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF1E40AF)
+                                        )
+                                        if (collection.description.isNotBlank()) {
+                                            Text(
+                                                text = collection.description,
+                                                fontSize = 12.sp,
+                                                color = Color(0xFF6B7280),
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            selectedCollection = null
+                                            collectionSearchQuery = ""
+                                        }
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            contentDescription = "Remove Collection",
+                                            tint = Color(0xFF6B7280),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // No collections message
+                        if (collections.isEmpty()) {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                backgroundColor = Color(0xFFFFF3CD),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Info,
+                                        contentDescription = null,
+                                        tint = Color(0xFF856404),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "No themed collections found. Create collections first to assign products.",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF856404)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1290,6 +1451,8 @@ fun AddEditProductScreen(
                     StatusToggle("Show Images", "Display product images section", showImages) { showImages = it }
                     StatusToggle("Show Available", "Display available status", showAvailable) { showAvailable = it }
                     StatusToggle("Show Featured", "Display featured status", showFeatured) { showFeatured = it }
+                    StatusToggle("Show Collection Product", "Display collection product status", showIsCollectionProduct) { showIsCollectionProduct = it }
+                    StatusToggle("Show Collection ID", "Display collection information", showCollectionId) { showCollectionId = it }
                 }
             }
 
@@ -1418,6 +1581,8 @@ fun AddEditProductScreen(
                                 customPrice = customPrice.toDoubleOrNull() ?: 0.0,
                                 available = available,
                                 featured = featured,
+                                isCollectionProduct = isCollectionProduct,
+                                collectionId = collectionId,
                                 images = images,
                                 autoGenerateId = autoGenerateId,
                                 customProductId = customProductId,
@@ -1446,7 +1611,9 @@ fun AddEditProductScreen(
                                     customPrice = showCustomPrice,
                                     images = showImages,
                                     available = showAvailable,
-                                    featured = showFeatured
+                                    featured = showFeatured,
+                                    isCollectionProduct = showIsCollectionProduct,
+                                    collectionId = showCollectionId
                                 )
                             )
 
@@ -1462,7 +1629,7 @@ fun AddEditProductScreen(
                                             println("   - Product ID: ${updatedProduct.id}")
                                             println("   - Common ID: ${updatedProduct.commonId}")
                                             println("   - Product Name: ${updatedProduct.name}")
-                                            
+
                                             // Use the new bulk update method
                                             viewModel.updateProductsWithCommonId(updatedProduct)
                                             println("✅ Product and related products updated successfully")
@@ -1489,7 +1656,7 @@ fun AddEditProductScreen(
                                             val productId = viewModel.addProductSync(updatedProduct)
                                             if (productId != null) {
                                                 println("✅ Product created with ID: $productId")
-                                                
+
                                                 // Then create inventory items for each barcode
                                                 for (barcode in generatedBarcodes) {
                                                     val inventoryItem = InventoryItem(
@@ -1506,7 +1673,7 @@ fun AddEditProductScreen(
                                                         println("❌ Failed to create inventory item for barcode: $barcode")
                                                     }
                                                 }
-                                                
+
                                                 println("✅ Product and inventory items added successfully")
                                                 isSaving = false
                                                 onSave()
@@ -1535,7 +1702,7 @@ fun AddEditProductScreen(
                                             val productId = viewModel.addProductSync(updatedProduct)
                                             if (productId != null) {
                                                 println("✅ Product created with ID: $productId")
-                                                
+
                                                 // Then create inventory item for the custom barcode
                                                 val inventoryItem = InventoryItem(
                                                     productId = productId,
@@ -1550,7 +1717,7 @@ fun AddEditProductScreen(
                                                 } else {
                                                     println("❌ Failed to create inventory item for barcode: $customProductId")
                                                 }
-                                                
+
                                                 println("✅ Product and inventory item added successfully")
                                                 isSaving = false
                                                 onSave()

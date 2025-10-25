@@ -53,6 +53,32 @@ class CartViewModel(
     val cartImages: State<Map<String, ImageBitmap>> = _cartImages
 
 
+    fun updateCartItemBarcodes(productId: String, selectedBarcodeIds: List<String>) {
+        println("🛒 DEBUG: updateCartItemBarcodes called for product ID: $productId")
+        println("   - Selected Barcode IDs: $selectedBarcodeIds")
+        
+        val currentCart = _cart.value
+        val existingItemIndex = currentCart.items.indexOfFirst { it.productId == productId }
+        
+        if (existingItemIndex >= 0) {
+            val updatedItems = currentCart.items.toMutableList().apply {
+                this[existingItemIndex] = this[existingItemIndex].copy(
+                    quantity = selectedBarcodeIds.size,
+                    selectedBarcodeIds = selectedBarcodeIds
+                )
+            }
+            
+            _cart.value = currentCart.copy(
+                items = updatedItems,
+                updatedAt = System.currentTimeMillis()
+            )
+            
+            println("   - ✅ Updated cart item barcodes")
+            println("   - New quantity: ${selectedBarcodeIds.size}")
+            println("   - New barcodes: $selectedBarcodeIds")
+        }
+    }
+
     fun addToCart(product: Product, selectedBarcodeIds: List<String> = emptyList()) {
         println("🛒 DEBUG: addToCart called for product: ${product.name}")
         println("   - Product ID: ${product.id}")
@@ -91,12 +117,21 @@ class CartViewModel(
         println("   - Existing item index: $existingItemIndex")
 
         val updatedItems = if (existingItemIndex >= 0) {
-            // Update existing item quantity
-            println("   - Updating existing item quantity")
+            // Update existing item - merge barcodes and set quantity to selected barcodes count
+            println("   - Updating existing item with new barcodes")
+            val existingItem = currentCart.items[existingItemIndex]
+            val mergedBarcodes = (existingItem.selectedBarcodeIds + selectedBarcodeIds).distinct()
+            val newQuantity = mergedBarcodes.size
+            
+            println("   - Existing barcodes: ${existingItem.selectedBarcodeIds}")
+            println("   - New barcodes: $selectedBarcodeIds")
+            println("   - Merged barcodes: $mergedBarcodes")
+            println("   - New quantity: $newQuantity")
+            
             currentCart.items.toMutableList().apply {
                 this[existingItemIndex] = this[existingItemIndex].copy(
-                    quantity = this[existingItemIndex].quantity + 1,
-                    selectedBarcodeIds = selectedBarcodeIds
+                    quantity = newQuantity,
+                    selectedBarcodeIds = mergedBarcodes
                 )
             }
         } else {
@@ -106,11 +141,12 @@ class CartViewModel(
             val currentGoldRate = MetalRatesManager.metalRates.value.getGoldRateForKarat(extractKaratFromMaterialType(product.materialType))
             println("   - Product weight: $productWeight")
             println("   - Current gold rate: $currentGoldRate")
+            println("   - Setting quantity to ${selectedBarcodeIds.size} based on selected barcodes")
             
             currentCart.items + CartItem(
                 productId = product.id,
                 product = product,
-                quantity = 1,
+                quantity = selectedBarcodeIds.size, // Set quantity to number of selected barcodes
                 selectedBarcodeIds = selectedBarcodeIds,
                 metal = "${extractKaratFromMaterialType(product.materialType)}K", // Set metal from product materialType
                 customGoldRate = currentGoldRate, // Initialize with current gold rate

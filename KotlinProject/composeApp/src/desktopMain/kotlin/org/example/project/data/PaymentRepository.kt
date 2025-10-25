@@ -40,7 +40,10 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                     mapOf(
                         "productId" to item.productId,
                         "barcodeId" to item.barcodeId,
-                        "quantity" to item.quantity
+                        "quantity" to item.quantity,
+                        "defaultMakingRate" to item.defaultMakingRate,
+                        "vaCharges" to item.vaCharges,
+                        "materialType" to item.materialType
                     )
                 },
                 "paymentSplit" to order.paymentSplit?.let { split ->

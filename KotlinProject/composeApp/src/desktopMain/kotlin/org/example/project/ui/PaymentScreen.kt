@@ -118,8 +118,8 @@ fun PaymentScreen(
             
             val baseAmount = netWeight * metalRate * quantity
             val makingCharges = netWeight * makingChargesPerGram * quantity
-            val stoneAmount = stoneRate * stoneQuantity * cwWeight
-            val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+            val stoneAmount = stoneRate * stoneQuantity * cwWeight * quantity
+            val totalCharges = baseAmount + makingCharges + stoneAmount + (vaCharges * quantity)
             
             println("💰 PAYMENT SCREEN DEBUG: ${cartItem.product.name} = $totalCharges")
             totalCharges
@@ -1144,7 +1144,7 @@ private fun OrderSummaryItem(
 
             val baseAmount = netWeight * metalRate * quantity
             val makingCharges = netWeight * makingChargesPerGram * quantity
-            val stoneAmount = stoneRate * stoneQuantity * cwWeight
+            val stoneAmount = stoneRate * stoneQuantity * cwWeight * quantity
             val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
 
             println("💰 ORDER SUMMARY ITEM DEBUG: ${cartItem.product.name} = $totalCharges")

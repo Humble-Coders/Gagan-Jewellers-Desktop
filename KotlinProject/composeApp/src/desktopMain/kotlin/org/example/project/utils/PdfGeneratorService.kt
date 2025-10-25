@@ -253,9 +253,17 @@ class PdfGeneratorService {
             
             // Calculate amounts using the same logic as cart screen
             val baseAmount = netWeight * metalRate * quantity
-            val makingCharges = netWeight * makingChargesPerGram * quantity
+            // 🔧 FIX: Making charges should be rate per gram × weight × quantity
+            val makingCharges = makingChargesPerGram * netWeight * quantity  // Rate per gram × weight × quantity
             val stoneAmount = stoneRate * stoneQuantity * cwWeight
-            val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+            val totalVaCharges = vaCharges * quantity  // Total VA charge per item × quantity
+            val totalCharges = baseAmount + makingCharges + stoneAmount + totalVaCharges
+            
+            println("📄 PDF SERVICE CALCULATION for ${item.product.name}:")
+            println("   - Base amount: ${baseAmount}")
+            println("   - Making charges (${makingChargesPerGram} × ${netWeight}g × ${quantity}): ${makingCharges}")
+            println("   - VA charges (${vaCharges} × ${quantity}): ${totalVaCharges}")
+            println("   - Total charges: ${totalCharges}")
             
             """
             <tr>
@@ -274,7 +282,7 @@ class PdfGeneratorService {
                     <div class="charge-item">Base: Rs ${String.format("%.2f", baseAmount)}</div>
                     ${if (makingCharges > 0) "<div class=\"charge-item\">Making: Rs ${String.format("%.2f", makingCharges)}</div>" else ""}
                     ${if (stoneAmount > 0) "<div class=\"charge-item\">Stone: Rs ${String.format("%.2f", stoneAmount)}</div>" else ""}
-                    ${if (vaCharges > 0) "<div class=\"charge-item\">VA: Rs ${String.format("%.2f", vaCharges)}</div>" else ""}
+                    ${if (totalVaCharges > 0) "<div class=\"charge-item\">VA: Rs ${String.format("%.2f", totalVaCharges)}</div>" else ""}
                 </td>
                 <td class="total-amount">Rs ${String.format("%.2f", totalCharges)}</td>
             </tr>
@@ -664,20 +672,26 @@ class PdfGeneratorService {
         return items.joinToString("") { item ->
             val product = products.find { it.id == item.productId }
             if (product != null) {
+                // 🔧 FIX: Use actual order data from Firestore instead of hardcoded values
+                println("📄 PDF SERVICE: Using Firestore order data for item ${item.productId}")
+                println("   - Making charges: ${item.defaultMakingRate}")
+                println("   - VA charges: ${item.vaCharges}")
+                println("   - Material type: ${item.materialType}")
+                
                 generateItemsRows(listOf(org.example.project.data.CartItem(
                     productId = item.productId,
                     quantity = item.quantity,
                     selectedBarcodeIds = listOf(item.barcodeId),
                     product = product,
-                    metal = product.materialType,
+                    metal = item.materialType.ifEmpty { product.materialType }, // Use order material type
                     grossWeight = parseWeight(product.weight),
                     totalWeight = parseWeight(product.weight),
                     lessWeight = 0.0,
-                    makingCharges = 0.0,
+                    makingCharges = item.defaultMakingRate, // ✅ Use actual making charges from Firestore
                     stoneRate = 0.0,
                     stoneQuantity = 0.0,
                     cwWeight = 0.0,
-                    va = 0.0
+                    va = item.vaCharges // ✅ Use actual VA charges from Firestore
                 )))
             } else {
                 generateSimplifiedItemsRows(listOf(item))

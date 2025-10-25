@@ -103,3 +103,4 @@ fun CashAmount.toUnifiedTransaction(): UnifiedTransaction {
         createdBy = this.createdBy
     )
 }
+

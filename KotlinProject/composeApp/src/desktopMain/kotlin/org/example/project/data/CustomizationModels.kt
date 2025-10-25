@@ -1,15 +1,5 @@
 package org.example.project.data
 
-data class ThemedCollection(
-    val id: String = "",
-    val name: String = "",
-    val description: String = "",
-    val isActive: Boolean = true,
-    val order: Int = 0,
-    val images: List<CollectionImage> = emptyList(),
-    val metadata: CollectionMetadata = CollectionMetadata()
-)
-
 data class CollectionImage(
     val url: String = "",
     val isActive: Boolean = true,

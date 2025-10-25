@@ -37,6 +37,9 @@ data class Product(
     val customPrice: Double = 0.0, // Custom price value when hasCustomPrice is true
     val customMetalRate: Double = 0.0, // Custom metal rate for this specific product
     val makingRate: Double = 0.0, // Custom making rate for this specific product
+    // Collection product fields
+    val isCollectionProduct: Boolean = false, // Checkbox for collection product
+    val collectionId: String = "", // ID of the themed collection this product belongs to
     // Field-level visibility configuration
     val show: ProductShowConfig = ProductShowConfig()
 )
@@ -65,7 +68,9 @@ data class ProductShowConfig(
     val customPrice: Boolean = true,
     val images: Boolean = true,
     val available: Boolean = true,
-    val featured: Boolean = true
+    val featured: Boolean = true,
+    val isCollectionProduct: Boolean = true,
+    val collectionId: Boolean = true
 )
 
 /**
@@ -381,7 +386,10 @@ enum class DiscountType {
 data class OrderItem(
     val productId: String = "",
     val barcodeId: String = "",
-    val quantity: Int = 1
+    val quantity: Int = 1,
+    val defaultMakingRate: Double = 0.0, // Default making rate per gram
+    val vaCharges: Double = 0.0, // VA (Value Addition) charges
+    val materialType: String = "" // Material type (e.g., "22K Gold", "Silver")
 )
 
 data class Order(
@@ -470,7 +478,7 @@ fun MetalRate.calculateRateForKarat(targetKarat: Int): Double {
 
 data class InvoiceConfig(
     val id: String = "default",
-    val companyName: String = "Vishal Gems and Jewels Pvt. Ltd.",
+    val companyName: String = "Gagan Jewellers Pvt.Ltd.",
     val companyAddress: String = "",
     val companyPhone: String = "",
     val companyEmail: String = "",

@@ -238,6 +238,9 @@ fun CartBuildingScreen(
     // Barcode selection dialog state
     var showBarcodeDialog by remember { mutableStateOf(false) }
     var selectedGroupedProduct by remember { mutableStateOf<GroupedProduct?>(null) }
+    var targetQuantity by remember { mutableStateOf(0) }
+    // Map to store selected barcodes state per product (by product ID)
+    var selectedBarcodeStates by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
     
     // Load metal rates when screen loads
     LaunchedEffect(Unit) {
@@ -481,12 +484,36 @@ fun CartBuildingScreen(
                             if (newQuantity > 0) {
                                 val currentItem = cart.items.find { it.productId == groupedProduct.baseProduct.id }
                                 if (currentItem != null) {
-                                    cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
-                                } else {
-                                    // Add to cart first, then update quantity
-                                    cartViewModel.addToCart(groupedProduct.baseProduct, groupedProduct.barcodeIds)
-                                    if (newQuantity > 1) {
+                                    val oldQuantity = currentItem.quantity
+                                    // Check if product has multiple barcodes
+                                    if (groupedProduct.barcodeIds.size > 1) {
+                                        // Show barcode selection dialog for both increase and decrease
+                                        if (newQuantity > oldQuantity || newQuantity < oldQuantity) {
+                                            println("🖱️ Quantity change clicked for product with multiple barcodes")
+                                            println("   - Product: ${groupedProduct.baseProduct.name}")
+                                            println("   - Available barcodes: ${groupedProduct.barcodeIds}")
+                                            println("   - Old quantity: $oldQuantity")
+                                            println("   - New quantity: $newQuantity")
+                                            selectedGroupedProduct = groupedProduct
+                                            targetQuantity = newQuantity
+                                            showBarcodeDialog = true
+                                        }
+                                    } else {
+                                        // Single barcode - update directly
                                         cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
+                                    }
+                                } else {
+                                    // Product not in cart yet - show barcode dialog if multiple barcodes
+                                    if (groupedProduct.barcodeIds.size > 1) {
+                                        println("🖱️ Adding to cart - showing barcode selection dialog")
+                                        selectedGroupedProduct = groupedProduct
+                                        showBarcodeDialog = true
+                                    } else {
+                                        // Single barcode - add directly
+                                        cartViewModel.addToCart(groupedProduct.baseProduct, groupedProduct.barcodeIds)
+                                        if (newQuantity > 1) {
+                                            cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
+                                        }
                                     }
                                 }
                             } else {
@@ -501,29 +528,52 @@ fun CartBuildingScreen(
     
     // Barcode Selection Dialog
     selectedGroupedProduct?.let { groupedProduct ->
+        val productId = groupedProduct.baseProduct.id
+        val currentItem = cart.items.find { it.productId == productId }
+        
+        // Get current selected barcodes from cart item if it exists, otherwise from stored state
+        val initialSelectedBarcodes = currentItem?.selectedBarcodeIds 
+            ?: selectedBarcodeStates[productId] 
+            ?: emptyList()
+        
         BarcodeSelectionDialog(
             groupedProduct = groupedProduct,
             isVisible = showBarcodeDialog,
+            initialSelectedBarcodes = initialSelectedBarcodes,
+            isRemovalMode = targetQuantity > 0 || (currentItem != null && targetQuantity < currentItem.quantity),
             onDismiss = {
+                // Save the current state before dismissing
+                selectedBarcodeStates = selectedBarcodeStates + (productId to initialSelectedBarcodes)
                 showBarcodeDialog = false
                 selectedGroupedProduct = null
             },
             onConfirm = { selectedBarcodes ->
                 println("🏷️ BARCODE SELECTION CONFIRMED IN CART BUILDING")
                 println("   - Product: ${groupedProduct.baseProduct.name}")
-                println("   - Product ID: ${groupedProduct.baseProduct.id}")
+                println("   - Product ID: $productId")
                 println("   - Selected barcodes: $selectedBarcodes")
                 println("   - Selected barcodes count: ${selectedBarcodes.size}")
-                println("   - Calling cartViewModel.addToCart...")
+                println("   - Target quantity: $targetQuantity")
                 
-                cartViewModel.addToCart(groupedProduct.baseProduct, selectedBarcodes)
+                // Update the cart with selected barcodes
+                if (currentItem != null) {
+                    // Always use updateCartItemBarcodes to replace barcodes (not merge)
+                    cartViewModel.updateCartItemBarcodes(productId, selectedBarcodes)
+                } else {
+                    // Adding new item
+                    cartViewModel.addToCart(groupedProduct.baseProduct, selectedBarcodes)
+                }
                 
-                println("   - addToCart call completed")
+                // Save the selected state
+                selectedBarcodeStates = selectedBarcodeStates + (productId to selectedBarcodes)
+                
+                println("   - Cart update completed")
                 println("   - Current cart items count: ${cart.items.size}")
                 println("   - Current cart item IDs: ${cart.items.map { it.productId }}")
                 
                 showBarcodeDialog = false
                 selectedGroupedProduct = null
+                targetQuantity = 0
             }
         )
     }
@@ -700,12 +750,13 @@ fun GroupedProductCard(
                                 modifier = Modifier.weight(1f)
                             )
 
-                            // Stock indicator - use grouped quantity with new format
+                            // Stock indicator - use grouped quantity minus cart quantity
+                            val remainingQuantity = groupedProduct.quantity - cartQuantity
                             if (groupedProduct.quantity <= 5) {
                                 Text(
-                                    text = if (groupedProduct.quantity == 0) "Out of Stock" else "Qty: ${groupedProduct.quantity} left",
+                                    text = if (remainingQuantity <= 0) "Out of Stock" else "Qty: ${remainingQuantity} left",
                                     fontSize = 10.sp,
-                                    color = if (groupedProduct.quantity == 0) Color.Red else Color.Red,
+                                    color = if (remainingQuantity <= 0) Color.Red else Color.Red,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -956,12 +1007,13 @@ fun ProductCard(
                                 modifier = Modifier.weight(1f)
                             )
 
-                            // Stock indicator
+                            // Stock indicator - show remaining quantity after items in cart
+                            val remainingQuantity = product.quantity - cartQuantity
                             if (product.quantity <= 5) {
                                 Text(
-                                    text = if (product.quantity == 0) "Out of Stock" else "Only ${product.quantity} left",
+                                    text = if (remainingQuantity <= 0) "Out of Stock" else "Qty: ${remainingQuantity} left",
                                     fontSize = 10.sp,
-                                    color = if (product.quantity == 0) Color.Red else Color.Red,
+                                    color = if (remainingQuantity <= 0) Color.Red else Color.Red,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
@@ -1654,12 +1706,18 @@ private fun getMaterialRateForProduct(product: Product, metalRates: List<org.exa
 fun BarcodeSelectionDialog(
     groupedProduct: GroupedProduct,
     isVisible: Boolean,
+    initialSelectedBarcodes: List<String> = emptyList(),
+    isRemovalMode: Boolean = false,
     onDismiss: () -> Unit,
     onConfirm: (List<String>) -> Unit
 ) {
     if (!isVisible) return
 
-    var selectedBarcodes by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Initialize selected barcodes with the provided initial state
+    // Use key to reset the state when initialSelectedBarcodes changes significantly
+    var selectedBarcodes by remember(isVisible, initialSelectedBarcodes) { 
+        mutableStateOf(initialSelectedBarcodes) 
+    }
 
     println("🏷️ BARCODE SELECTION DIALOG SHOWN")
     println("   - Product Name: ${groupedProduct.baseProduct.name}")
@@ -1673,7 +1731,7 @@ fun BarcodeSelectionDialog(
         },
         title = {
             Text(
-                "Select Barcodes",
+                if (isRemovalMode) "Select Barcodes to Keep" else "Select Barcodes",
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp
             )
@@ -1692,7 +1750,10 @@ fun BarcodeSelectionDialog(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Available barcodes (${groupedProduct.barcodeIds.size}):",
+                    text = if (isRemovalMode) 
+                        "Select barcodes to keep (${groupedProduct.barcodeIds.size} total):"
+                    else 
+                        "Available barcodes (${groupedProduct.barcodeIds.size}):",
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
@@ -1740,7 +1801,10 @@ fun BarcodeSelectionDialog(
                 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Selected: ${selectedBarcodes.size} of ${groupedProduct.barcodeIds.size}",
+                    text = if (isRemovalMode)
+                        "Keeping: ${selectedBarcodes.size} of ${groupedProduct.barcodeIds.size}"
+                    else
+                        "Selected: ${selectedBarcodes.size} of ${groupedProduct.barcodeIds.size}",
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
@@ -1756,7 +1820,7 @@ fun BarcodeSelectionDialog(
                 },
                 enabled = selectedBarcodes.isNotEmpty()
             ) {
-                Text("Add to Cart")
+                Text(if (isRemovalMode) "Update" else "Add to Cart")
             }
         },
         dismissButton = {

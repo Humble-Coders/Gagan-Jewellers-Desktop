@@ -200,7 +200,12 @@ class FirestoreCustomizationRepository(private val firestore: Firestore) : Custo
             id = doc.id,
             name = data["name"] as? String ?: "",
             description = data["description"] as? String ?: "",
+            imageUrl = data["imageUrl"] as? String ?: "",
             isActive = data["isActive"] as? Boolean ?: true,
+            createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+            updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+            productIds = (data["productIds"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+            createdBy = data["createdBy"] as? String ?: "system",
             order = (data["order"] as? Number)?.toInt() ?: 0,
             images = imagesData.map { imageData ->
                 CollectionImage(
@@ -221,7 +226,12 @@ class FirestoreCustomizationRepository(private val firestore: Firestore) : Custo
         return mapOf(
             "name" to collection.name,
             "description" to collection.description,
+            "imageUrl" to collection.imageUrl,
             "isActive" to collection.isActive,
+            "createdAt" to collection.createdAt,
+            "updatedAt" to System.currentTimeMillis(),
+            "productIds" to collection.productIds,
+            "createdBy" to collection.createdBy,
             "order" to collection.order,
             "images" to collection.images.map { image ->
                 mapOf(

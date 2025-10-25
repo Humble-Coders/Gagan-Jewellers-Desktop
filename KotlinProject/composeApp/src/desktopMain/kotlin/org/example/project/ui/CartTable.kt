@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,6 +85,10 @@ fun CartTable(
     var isLoadingProduct by remember { mutableStateOf(false) }
     val keyboardController = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
+    
+    // Barcode selection dialog state
+    var showBarcodeDialog by remember { mutableStateOf(false) }
+    var selectedCartItem by remember { mutableStateOf<CartItem?>(null) }
 
     fun onEditingFieldChange(newField: String?) {
         println("🔄 EDITING FIELD CHANGE: $editingField -> $newField")
@@ -161,10 +166,19 @@ fun CartTable(
                     selectedIndex = selectedItemIndex,
                     onItemSelected = ::onItemSelected,
                     onItemRemove = { index ->
-                        saveAndCloseEditing()
-                        onItemRemove(index)
-                        if (selectedItemIndex == index) {
-                            selectedItemIndex = null
+                        val item = cartItems[index]
+                        // Check if item has multiple selected barcodes
+                        if (item.selectedBarcodeIds.size > 1) {
+                            // Show barcode selection dialog for removal
+                            selectedCartItem = item
+                            showBarcodeDialog = true
+                        } else {
+                            // Single barcode or empty - remove directly
+                            saveAndCloseEditing()
+                            onItemRemove(index)
+                            if (selectedItemIndex == index) {
+                                selectedItemIndex = null
+                            }
                         }
                     },
                     cartImages = cartImages,
@@ -219,7 +233,150 @@ fun CartTable(
                 }
             }
         }
+        
+        // Barcode Selection Dialog
+        selectedCartItem?.let { cartItem ->
+            // For now, use the selected barcodes from the cart item as the available options
+            // In a real scenario, you'd need to fetch all available barcodes from the inventory
+            val allBarcodeIds = cartItem.selectedBarcodeIds
+            
+            if (allBarcodeIds.size > 1) {
+                BarcodeRemovalDialog(
+                    cartItem = cartItem,
+                    allBarcodeIds = allBarcodeIds,
+                    isVisible = showBarcodeDialog,
+                    onDismiss = {
+                        showBarcodeDialog = false
+                        selectedCartItem = null
+                    },
+                    onConfirm = { remainingBarcodes ->
+                        val index = cartItems.indexOf(cartItem)
+                        if (remainingBarcodes.isEmpty()) {
+                            // Remove entire item if no barcodes selected
+                            saveAndCloseEditing()
+                            onItemRemove(index)
+                            if (selectedItemIndex == index) {
+                                selectedItemIndex = null
+                            }
+                        } else {
+                            // Update item with remaining barcodes
+                            val updatedItem = cartItem.copy(
+                                selectedBarcodeIds = remainingBarcodes,
+                                quantity = remainingBarcodes.size
+                            )
+                            onItemUpdate(index, updatedItem)
+                        }
+                        showBarcodeDialog = false
+                        selectedCartItem = null
+                    }
+                )
+            }
+        }
     }
+}
+
+@Composable
+private fun BarcodeRemovalDialog(
+    cartItem: CartItem,
+    allBarcodeIds: List<String>,
+    isVisible: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (List<String>) -> Unit
+) {
+    if (!isVisible) return
+
+    var selectedBarcodes by remember { mutableStateOf(cartItem.selectedBarcodeIds.toList()) }
+
+    androidx.compose.material.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                "Select Barcodes to Keep",
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp)
+            ) {
+                Text(
+                    text = "Product: ${cartItem.product.name}",
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colors.primary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Select barcodes to keep (${allBarcodeIds.size} total):",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Barcode selection list
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 200.dp)
+                ) {
+                    items(allBarcodeIds) { barcode ->
+                        val isSelected = selectedBarcodes.contains(barcode)
+                        
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedBarcodes = if (isSelected) {
+                                        selectedBarcodes.filter { it != barcode }
+                                    } else {
+                                        selectedBarcodes + barcode
+                                    }
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isSelected) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank,
+                                contentDescription = if (isSelected) "Selected" else "Not selected",
+                                tint = if (isSelected) MaterialTheme.colors.primary else Color.Gray,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = barcode,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colors.primary else Color.Black
+                            )
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Keeping: ${selectedBarcodes.size} of ${allBarcodeIds.size}",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onConfirm(selectedBarcodes)
+                }
+            ) {
+                Text("Update")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable
@@ -350,7 +507,7 @@ private fun CompactCartItem(
         val vaCharges = if (item.va > 0) item.va else currentProduct.vaCharges
 
         val makingCharges = netWeight * makingChargesPerGram * item.quantity
-        val stoneAmount = stoneRate * stoneQuantity * cwWeight
+        val stoneAmount = stoneRate * stoneQuantity * cwWeight * item.quantity
         
         println("🔍 Stone Calculation Debug (Compact): stoneRate=$stoneRate, stoneQuantity=$stoneQuantity, cwWeight=$cwWeight, stoneAmount=$stoneAmount")
         
@@ -430,13 +587,19 @@ private fun CompactCartItem(
                 Column(
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(
-                        currentProduct.name,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary,
-                        maxLines = 1
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "${currentProduct.name} ${item.metal.ifEmpty { "${extractKaratFromMaterialType(currentProduct.materialType)}K" }}",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = TextPrimary,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Row(
@@ -448,11 +611,16 @@ private fun CompactCartItem(
                             fontWeight = FontWeight.Bold,
                             color = GoldPrimary
                         )
-                        Text(
-                            " • ${item.metal.ifEmpty { "${extractKaratFromMaterialType(currentProduct.materialType)}K" }}",
-                            fontSize = 11.sp,
-                            color = TextSecondary
-                        )
+                        // Show selected barcode IDs next to quantity
+                        if (item.selectedBarcodeIds.isNotEmpty()) {
+                            Text(
+                                " • ${item.selectedBarcodeIds.joinToString(", ")}",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
@@ -560,10 +728,10 @@ private fun DetailPanel(
         
         val baseAmount = netWeight * metalRate * quantity
         val makingCharges = netWeight * makingChargesPerGram * quantity
-        val stoneAmount = stoneRate * stoneQuantity * cwWeight
+        val stoneAmount = stoneRate * stoneQuantity * cwWeight * quantity
         println("🔍 Stone Calculation Debug: stoneRate=$stoneRate, stoneQuantity=$stoneQuantity, cwWeight=$cwWeight, stoneAmount=$stoneAmount")
         
-        val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+        val totalCharges = baseAmount + makingCharges + stoneAmount + (vaCharges * quantity)
         val discountAmount = totalCharges * (discountPercent / 100)
         val taxableAmount = totalCharges - discountAmount
         val cgst = taxableAmount * 0.015
@@ -926,6 +1094,26 @@ private fun DetailPanel(
                 Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
                 Spacer(modifier = Modifier.height(6.dp))
                 AmountRow("Total Charges", calculatedValues["totalCharges"] ?: 0.0, GoldPrimary, isBold = true)
+                
+                // Show per-product price if quantity > 1
+                val quantity = (calculatedValues["quantity"] ?: 1.0).toInt()
+                if (quantity > 1) {
+                    val totalCharges = calculatedValues["totalCharges"] ?: 0.0
+                    val perProductCharges = totalCharges / quantity
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 10.dp, top = 2.dp),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Text(
+                            "(₹${formatCurrencyNumber(perProductCharges)} per item)",
+                            fontSize = 11.sp,
+                            color = Color(0xFF666666),
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                        )
+                    }
+                }
             }
         }
     }

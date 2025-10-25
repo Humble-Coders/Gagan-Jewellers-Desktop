@@ -969,8 +969,8 @@ private fun NavigationItems(
             screen = Screen.PROFILE
         ),
         NavigationItemData(
-            icon = Icons.Default.AccountBox,
-            title = "Gold Rates",
+            icon = Icons.Default.Star,
+            title = "Metal Rates",
             screen = Screen.GOLD_RATES
         ),
         NavigationItemData(
@@ -978,11 +978,11 @@ private fun NavigationItems(
             title = "Categories",
             screen = Screen.CATEGORIES
         ),
-        NavigationItemData(
-            icon = Icons.Default.Build,
-            title = "Customization",
-            screen = Screen.CUSTOMIZATION
-        ),
+        // NavigationItemData(
+        //     icon = Icons.Default.Build,
+        //     title = "Customization",
+        //     screen = Screen.CUSTOMIZATION
+        // ),
         NavigationItemData(
             icon = Icons.Default.Event,
             title = "Appointments",

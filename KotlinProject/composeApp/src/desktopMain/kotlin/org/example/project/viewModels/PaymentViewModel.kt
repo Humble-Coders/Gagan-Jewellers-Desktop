@@ -19,7 +19,8 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 class PaymentViewModel(
-    private val paymentRepository: PaymentRepository
+    private val paymentRepository: PaymentRepository,
+    private val orderRepository: OrderRepository
 ) {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -246,14 +247,17 @@ class PaymentViewModel(
                 
                 val gstRate = if (subtotal > 0) gst / subtotal else 0.0
                 
-                // Convert CartItem objects to OrderItem objects (only store barcodeId and productId)
+                // Convert CartItem objects to OrderItem objects with additional fields
                 val orderItems = cart.items.flatMap { cartItem ->
                     cartItem.selectedBarcodeIds.map { barcodeId ->
-                        OrderItem(
-                            productId = cartItem.productId,
-                            barcodeId = barcodeId,
-                            quantity = 1 // Each barcode represents 1 item
-                        )
+                OrderItem(
+                    productId = cartItem.productId,
+                    barcodeId = barcodeId,
+                    quantity = 1, // Each barcode represents 1 item
+                    defaultMakingRate = cartItem.makingCharges, // Use making charges from cart item
+                    vaCharges = cartItem.va, // Use VA charges from cart item
+                    materialType = cartItem.product.materialType // Use material type from product
+                )
                     }
                 }
                 
@@ -376,6 +380,23 @@ class PaymentViewModel(
             _errorMessage.value = null
             
             try {
+                // 🔧 FIX: Retrieve order from Firestore to ensure we have the latest stored data
+                println("📄 PDF GENERATION: Retrieving order from Firestore for accurate bill generation")
+                val firestoreOrder = orderRepository.getOrderById(order.orderId)
+                
+                if (firestoreOrder == null) {
+                    throw Exception("Order not found in Firestore: ${order.orderId}")
+                }
+                
+                println("📄 PDF GENERATION: Using Firestore order data")
+                println("   - Order ID: ${firestoreOrder.orderId}")
+                println("   - Items count: ${firestoreOrder.items.size}")
+                firestoreOrder.items.forEach { item ->
+                    println("   - Item: productId=${item.productId}, makingRate=${item.defaultMakingRate}, vaCharges=${item.vaCharges}, materialType=${item.materialType}")
+                }
+                
+                // Use the order retrieved from Firestore instead of the passed order
+                val orderToUse = firestoreOrder
                 val userHome = System.getProperty("user.home")
                 if (userHome.isNullOrBlank()) {
                     throw Exception("User home directory not found")
@@ -390,7 +411,7 @@ class PaymentViewModel(
                     throw Exception("Cannot write to bills directory: ${billsDirectory.absolutePath}")
                 }
 
-                val pdfFileName = "Invoice_${order.orderId}_${System.currentTimeMillis()}.pdf"
+                val pdfFileName = "Invoice_${orderToUse.orderId}_${System.currentTimeMillis()}.pdf"
                 val pdfOutputPath = File(billsDirectory, pdfFileName)
 
                 // Fetch invoice configuration directly; fall back to defaults if not found
@@ -398,7 +419,7 @@ class PaymentViewModel(
                     .getInvoiceConfig() ?: org.example.project.data.InvoiceConfig()
                 
                 val pdfResult = pdfGeneratorService.generateInvoicePDF(
-                    order = order,
+                    order = orderToUse,
                     customer = customer,
                     outputFile = pdfOutputPath,
                     invoiceConfig = invoiceConfig
@@ -496,7 +517,10 @@ class PaymentViewModel(
                 OrderItem(
                     productId = cartItem.productId,
                     barcodeId = cartItem.selectedBarcodeIds.firstOrNull() ?: "",
-                    quantity = cartItem.quantity
+                    quantity = cartItem.quantity,
+                    defaultMakingRate = cartItem.makingCharges, // Use making charges from cart item
+                    vaCharges = cartItem.va, // Use VA charges from cart item
+                    materialType = cartItem.product.materialType // Use material type from product
                 )
             },
             metalRatesReference = getCurrentMetalRatesReference(), // Reference to rates collection
@@ -650,14 +674,17 @@ class PaymentViewModel(
                 val (dynamicSubtotal, dynamicGst, dynamicTotal) = calculateDynamicPrices(cart, goldPrice, silverPrice)
                 val discountAmount = calculateDiscountAmount(dynamicSubtotal, dynamicGst)
 
-                // Convert CartItem objects to OrderItem objects (only store barcodeId and productId)
+                // Convert CartItem objects to OrderItem objects with additional fields
                 val orderItems = cart.items.flatMap { cartItem ->
                     cartItem.selectedBarcodeIds.map { barcodeId ->
                         OrderItem(
-                            productId = cartItem.productId,
-                            barcodeId = barcodeId,
-                            quantity = 1 // Each barcode represents 1 item
-                        )
+                    productId = cartItem.productId,
+                    barcodeId = barcodeId,
+                    quantity = 1, // Each barcode represents 1 item
+                    defaultMakingRate = cartItem.makingCharges, // Use making charges from cart item
+                    vaCharges = cartItem.va, // Use VA charges from cart item
+                    materialType = cartItem.product.materialType // Use material type from product
+                )
                     }
                 }
                 

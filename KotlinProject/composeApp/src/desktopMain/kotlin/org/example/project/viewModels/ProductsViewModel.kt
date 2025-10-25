@@ -18,8 +18,14 @@ import org.example.project.data.InventoryRepository
 import org.example.project.data.InventoryItem
 import org.example.project.data.InventoryStatus
 
+// Data class to hold cached inventory information for a product
+data class InventoryData(
+    val availableCount: Int = 0,
+    val barcodeIds: List<String> = emptyList()
+)
+
 class ProductsViewModel(
-    internal val repository: ProductRepository, 
+    internal val repository: ProductRepository,
     private val stonesRepository: StonesRepository? = null,
     private val inventoryRepository: InventoryRepository? = null
 ) {
@@ -50,6 +56,14 @@ class ProductsViewModel(
     private val _inventoryRefreshTrigger = mutableStateOf(0)
     val inventoryRefreshTrigger: State<Int> = _inventoryRefreshTrigger
 
+    // Inventory data cache
+    private val _inventoryData = mutableStateOf<Map<String, InventoryData>>(emptyMap())
+    val inventoryData: State<Map<String, InventoryData>> = _inventoryData
+
+    // Inventory loading state
+    private val _inventoryLoading = mutableStateOf(false)
+    val inventoryLoading: State<Boolean> = _inventoryLoading
+
     // Selected product state
     private val _currentProduct = mutableStateOf<Product?>(null)
     val currentProduct: State<Product?> = _currentProduct
@@ -66,10 +80,51 @@ class ProductsViewModel(
         loadFeaturedProducts()
     }
 
+    /**
+     * Load inventory data for all products asynchronously
+     * This prevents UI blocking by loading inventory data in the background
+     */
+    fun loadInventoryData() {
+        if (inventoryRepository == null) return
+
+        viewModelScope.launch {
+            _inventoryLoading.value = true
+            try {
+                val allProducts = _products.value
+                val inventoryDataMap = mutableMapOf<String, InventoryData>()
+
+                // Load inventory data for each product
+                allProducts.forEach { product ->
+                    try {
+                        val availableItems = inventoryRepository.getAvailableInventoryItemsByProductId(product.id)
+                        val allItems = inventoryRepository.getInventoryItemsByProductId(product.id)
+                        val barcodeIds = allItems.map { it.barcodeId }
+
+                        inventoryDataMap[product.id] = InventoryData(
+                            availableCount = availableItems.size,
+                            barcodeIds = barcodeIds
+                        )
+                    } catch (e: Exception) {
+                        println("Error loading inventory for product ${product.id}: ${e.message}")
+                        inventoryDataMap[product.id] = InventoryData()
+                    }
+                }
+
+                _inventoryData.value = inventoryDataMap
+                println("✅ Loaded inventory data for ${inventoryDataMap.size} products")
+            } catch (e: Exception) {
+                println("❌ Error loading inventory data: ${e.message}")
+                _error.value = "Failed to load inventory data: ${e.message}"
+            } finally {
+                _inventoryLoading.value = false
+            }
+        }
+    }
+
     fun clearError() {
         _error.value = null
     }
-    
+
     /**
      * Trigger refresh of inventory-based data (like grouped products)
      * This should be called whenever inventory changes occur
@@ -77,6 +132,9 @@ class ProductsViewModel(
     fun triggerInventoryRefresh() {
         _inventoryRefreshTrigger.value = _inventoryRefreshTrigger.value + 1
         println("🔄 Inventory refresh triggered: ${_inventoryRefreshTrigger.value}")
+
+        // Reload inventory data asynchronously
+        loadInventoryData()
     }
 
     fun loadProducts() {
@@ -85,6 +143,9 @@ class ProductsViewModel(
             try {
                 _products.value = repository.getAllProducts()
                 _error.value = null
+
+                // Load inventory data after products are loaded
+                loadInventoryData()
             } catch (e: Exception) {
                 _error.value = "Failed to load products: ${e.message}"
             } finally {
@@ -174,7 +235,7 @@ class ProductsViewModel(
             }
         }
     }
-    
+
     /**
      * Group products by commonId for dashboard display
      * Products with same commonId are grouped together
@@ -183,10 +244,10 @@ class ProductsViewModel(
      */
     fun getGroupedProducts(): List<GroupedProduct> {
         val allProducts = _products.value
-        
+
         // Group products by commonId
         val groupedMap = allProducts.groupBy { it.commonId }
-        
+
         return groupedMap.map { (commonId, products) ->
             if (commonId == null) {
                 // Single products (no grouping)
@@ -228,7 +289,7 @@ class ProductsViewModel(
     fun getAllGroupedProductsIncludingSold(): List<GroupedProduct> {
         val allProducts = _products.value
         val groupedMap = allProducts.groupBy { it.commonId }
-        
+
         return groupedMap.map { (commonId, products) ->
             if (commonId == null) {
                 // Single products (no grouping)
@@ -407,11 +468,11 @@ class ProductsViewModel(
             emptyList()
         }
     }
-    
+
     fun generateBarcode(digits: Int): String {
         return inventoryRepository?.generateBarcode(digits) ?: ""
     }
-    
+
     fun duplicateProductWithBarcode(productId: String, barcodeId: String) {
         viewModelScope.launch {
             _loading.value = true
@@ -422,12 +483,12 @@ class ProductsViewModel(
                     _error.value = "Product not found for duplication"
                     return@launch
                 }
-                
+
                 println("🔄 Duplicating product: ${productToDuplicate.name}")
                 println("   - Original Product ID: $productId")
                 println("   - New Barcode ID: $barcodeId")
                 println("   - ⚠️ NO PRODUCT DOCUMENT WILL BE CREATED - ONLY INVENTORY ITEM")
-                
+
                 // Create ONLY a new inventory item with the same product ID and new barcode ID
                 // NO product document is created in products collection
                 val inventoryItem = InventoryItem(
@@ -437,7 +498,7 @@ class ProductsViewModel(
                     location = "",
                     notes = "Duplicated from original product"
                 )
-                
+
                 val inventoryId = inventoryRepository?.addInventoryItem(inventoryItem)
                 if (inventoryId != null && inventoryId.isNotEmpty()) {
                     println("✅ Inventory item created successfully")
@@ -445,10 +506,10 @@ class ProductsViewModel(
                     println("   - Product ID: $productId (same as original)")
                     println("   - Barcode ID: $barcodeId (new)")
                     println("   - Products collection: UNCHANGED")
-                    
+
                     // Trigger immediate refresh of dashboard to show updated quantity
                     triggerInventoryRefresh()
-                    
+
                     _error.value = null
                     println("✅ Product duplicated successfully - ONLY inventory item added")
                 } else {
@@ -464,7 +525,7 @@ class ProductsViewModel(
             }
         }
     }
-    
+
     /**
      * Generate a common ID for grouping multiple products
      */
@@ -482,16 +543,16 @@ class ProductsViewModel(
             _loading.value = true
             try {
                 println("🔄 Starting batch processing...")
-                
+
                 // Generate common ID only if multiple barcodes (quantity > 1)
                 val commonId = if (barcodes.size > 1) {
                     generateCommonId()
                 } else {
                     null // Single product gets null commonId
                 }
-                
+
                 println("📋 Common ID: $commonId")
-                
+
                 // Create the base product first
                 val productForDoc = baseProduct.copy(
                     id = "", // repository will assign auto document id
@@ -501,7 +562,7 @@ class ProductsViewModel(
                 println("📝 Creating base product with commonId: $commonId")
                 val productId = repository.addProduct(productForDoc)
                 println("✅ Base product created with ID: $productId")
-                
+
                 // Create inventory items for each barcode
                 for (code in barcodes) {
                     val inventoryItem = InventoryItem(
@@ -514,7 +575,7 @@ class ProductsViewModel(
                     inventoryRepository?.addInventoryItem(inventoryItem)
                     println("✅ Added inventory item for barcode: $code")
                 }
-                
+
                 loadProducts()
                 loadFeaturedProducts() // Refresh featured products list
                 _error.value = null
@@ -530,7 +591,7 @@ class ProductsViewModel(
             }
         }
     }
-    
+
     suspend fun addProductSync(product: Product): String? {
         return try {
             repository.addProduct(product)
@@ -577,12 +638,12 @@ class ProductsViewModel(
                 // Find all products with the same commonId
                 val allProducts = repository.getAllProducts()
                 val productsWithSameCommonId = allProducts.filter { it.commonId == product.commonId }
-                
+
                 println("🔄 BULK UPDATE: Found ${productsWithSameCommonId.size} products with commonId: ${product.commonId}")
-                
+
                 var successCount = 0
                 var failureCount = 0
-                
+
                 // Update each product with the same commonId
                 productsWithSameCommonId.forEach { existingProduct ->
                     try {
@@ -611,7 +672,7 @@ class ProductsViewModel(
                             show = product.show
                             // Keep original: id, quantity, commonId, createdAt
                         )
-                        
+
                         val success = repository.updateProduct(updatedProduct)
                         if (success) {
                             successCount++
@@ -625,7 +686,7 @@ class ProductsViewModel(
                         println("❌ Error updating product ${existingProduct.id}: ${e.message}")
                     }
                 }
-                
+
                 if (failureCount == 0) {
                     println("🎉 Successfully updated all ${successCount} products with commonId: ${product.commonId}")
                     loadProducts() // Refresh the list
@@ -635,7 +696,7 @@ class ProductsViewModel(
                     _error.value = "Updated ${successCount} products successfully, ${failureCount} failed"
                     loadProducts() // Still refresh to show partial updates
                 }
-                
+
             } catch (e: Exception) {
                 _error.value = "Failed to update products with common ID: ${e.message}"
                 println("❌ Bulk update error: ${e.message}")
@@ -649,23 +710,23 @@ class ProductsViewModel(
         println("🗑️ VIEWMODEL: deleteProduct called")
         println("   - Product ID: $productId")
         println("   - Timestamp: ${System.currentTimeMillis()}")
-        
+
         viewModelScope.launch {
             _loading.value = true
             try {
                 println("🗑️ PRODUCT DELETION START")
                 println("   - Product ID: $productId")
-                
+
                 // First, delete all inventory items (barcode documents) for this product
                 val inventoryDeleted = deleteAllInventoryItemsForProduct(productId)
                 println("   - Inventory deletion result: $inventoryDeleted")
-                
+
                 // Then delete the product document
                 println("🗑️ DELETING PRODUCT DOCUMENT")
                 println("   - Product ID: $productId")
                 val success = repository.deleteProduct(productId)
                 println("   - Product deletion result: $success")
-                
+
                 if (success) {
                     println("✅ Product and all related inventory items deleted successfully")
                     loadProducts() // Refresh the list
@@ -683,7 +744,7 @@ class ProductsViewModel(
             }
         }
     }
-    
+
     /**
      * Delete grouped products properly.
      * For grouped products, keeps only the parent/base product and deletes all others.
@@ -695,7 +756,7 @@ class ProductsViewModel(
         println("   - Product ID: ${groupedProduct.baseProduct.id}")
         println("   - Common ID: ${groupedProduct.commonId}")
         println("   - Timestamp: ${System.currentTimeMillis()}")
-        
+
         viewModelScope.launch {
             _loading.value = true
             try {
@@ -704,11 +765,11 @@ class ProductsViewModel(
                     println("🗑️ SINGLE PRODUCT DELETION")
                     println("   - Product ID: ${groupedProduct.baseProduct.id}")
                     println("   - Product Name: ${groupedProduct.baseProduct.name}")
-                    
+
                     // Delete all inventory items for this product first
                     val inventoryDeleted = deleteAllInventoryItemsForProduct(groupedProduct.baseProduct.id)
                     println("   - Inventory deletion result: $inventoryDeleted")
-                    
+
                     // Then delete the product document
                     val success = repository.deleteProduct(groupedProduct.baseProduct.id)
                     if (success) {
@@ -727,15 +788,15 @@ class ProductsViewModel(
                     println("   - Total products in group: ${groupedProduct.individualProducts.size}")
                     println("   - Parent Product ID: ${groupedProduct.baseProduct.id}")
                     println("   - Parent Product Name: ${groupedProduct.baseProduct.name}")
-                    
+
                     val parentProduct = groupedProduct.baseProduct
                     val productsToDelete = groupedProduct.individualProducts.filter { it.id != parentProduct.id }
-                    
+
                     println("   - Products to delete: ${productsToDelete.size}")
-                    
+
                     var deletedCount = 0
                     var inventoryDeletedCount = 0
-                    
+
                     // Delete each product and its inventory items
                     productsToDelete.forEach { productToDelete ->
                         try {
@@ -744,7 +805,7 @@ class ProductsViewModel(
                             if (inventoryDeleted) {
                                 inventoryDeletedCount++
                             }
-                            
+
                             // Then delete the product document
                             val success = repository.deleteProduct(productToDelete.id)
                             if (success) {
@@ -757,13 +818,13 @@ class ProductsViewModel(
                             println("   - ❌ Error deleting product ${productToDelete.id}: ${e.message}")
                         }
                     }
-                    
+
                     println("🗑️ GROUPED PRODUCT DELETION COMPLETE")
                     println("   - Common ID: ${groupedProduct.commonId}")
                     println("   - Parent Product Preserved: ${parentProduct.name}")
                     println("   - Products Deleted: $deletedCount/${productsToDelete.size}")
                     println("   - Inventory Items Deleted: $inventoryDeletedCount")
-                    
+
                     loadProducts() // Refresh the list
                     triggerInventoryRefresh() // Trigger dashboard refresh
                     _error.value = null
@@ -781,28 +842,28 @@ class ProductsViewModel(
         println("🗑️ BARCODE DELETE REQUEST START")
         println("   - Barcode ID: $barcodeId")
         println("   - Timestamp: ${System.currentTimeMillis()}")
-        
+
         viewModelScope.launch {
             _loading.value = true
             try {
                 println("🔍 Searching for inventory item with barcode: $barcodeId")
                 val inventoryItem = inventoryRepository?.getInventoryItemByBarcodeId(barcodeId)
-                
+
                 if (inventoryItem != null) {
                     println("✅ Inventory item found for barcode deletion:")
                     println("   - Inventory ID: ${inventoryItem.id}")
                     println("   - Product ID: ${inventoryItem.productId}")
                     println("   - Status: ${inventoryItem.status}")
-                    
+
                     // Actually delete the inventory item document
                     val success = inventoryRepository?.deleteInventoryItem(inventoryItem.id) ?: false
-                    
+
                     if (success) {
                         println("✅ Inventory item deleted successfully!")
                         println("   - Inventory ID: ${inventoryItem.id}")
                         println("   - Barcode: $barcodeId")
                         println("   - Document removed from Firestore")
-                        
+
                         // Trigger dashboard refresh to show updated quantities
                         triggerInventoryRefresh()
                         _error.value = null
@@ -861,8 +922,8 @@ class ProductsViewModel(
             try {
                 // Update category in repository (you'll need to implement this in ProductRepository)
                 // For now, just update local state
-                _categories.value = _categories.value.map { 
-                    if (it.id == category.id) category else it 
+                _categories.value = _categories.value.map {
+                    if (it.id == category.id) category else it
                 }
                 _error.value = null
             } catch (e: Exception) {
@@ -903,7 +964,7 @@ class ProductsViewModel(
     fun onCleared() {
         viewModelScope.cancel()
     }
-    
+
     // Inventory Management Methods
     suspend fun addInventoryItem(inventoryItem: InventoryItem): String? {
         return try {
@@ -921,7 +982,7 @@ class ProductsViewModel(
             null
         }
     }
-    
+
     suspend fun updateInventoryItem(inventoryItem: InventoryItem): String? {
         return try {
             val success = inventoryRepository?.updateInventoryItem(inventoryItem) ?: false
@@ -931,7 +992,7 @@ class ProductsViewModel(
             null
         }
     }
-    
+
     suspend fun getInventoryItemByBarcodeId(barcodeId: String): InventoryItem? {
         return try {
             inventoryRepository?.getInventoryItemByBarcodeId(barcodeId)
@@ -940,54 +1001,23 @@ class ProductsViewModel(
             null
         }
     }
-    
+
     /**
-     * Get available inventory count for a product using where condition on product ID
-     * This method queries the inventory collection for items with the given product ID and AVAILABLE status
+     * Get available inventory count for a product from cached data
+     * This method uses cached inventory data to avoid blocking the UI thread
      */
     private fun getAvailableInventoryCountForProduct(productId: String): Int {
-        return try {
-            if (inventoryRepository == null) {
-                println("⚠️ Inventory repository is null, returning 0 for product: $productId")
-                return 0
-            }
-            
-            // Use runBlocking to make this synchronous for the UI
-            kotlinx.coroutines.runBlocking {
-                val inventoryItems = inventoryRepository.getAvailableInventoryItemsByProductId(productId)
-                println("📊 Inventory count for product $productId: ${inventoryItems.size}")
-                inventoryItems.size
-            }
-        } catch (e: Exception) {
-            println("❌ Error getting inventory count for product $productId: ${e.message}")
-            0
-        }
+        return _inventoryData.value[productId]?.availableCount ?: 0
     }
-    
+
     /**
-     * Get all barcode IDs for a product from inventory collection
-     * This method queries the inventory collection for items with the given product ID
+     * Get all barcode IDs for a product from cached data
+     * This method uses cached inventory data to avoid blocking the UI thread
      */
     private fun getBarcodeIdsForProduct(productId: String): List<String> {
-        return try {
-            if (inventoryRepository == null) {
-                println("⚠️ Inventory repository is null, returning empty list for product: $productId")
-                return emptyList()
-            }
-            
-            // Use runBlocking to make this synchronous for the UI
-            kotlinx.coroutines.runBlocking {
-                val inventoryItems = inventoryRepository.getInventoryItemsByProductId(productId)
-                val barcodeIds = inventoryItems.map { it.barcodeId }
-                println("📋 Barcode IDs for product $productId: $barcodeIds")
-                barcodeIds
-            }
-        } catch (e: Exception) {
-            println("❌ Error getting barcode IDs for product $productId: ${e.message}")
-            emptyList()
-        }
+        return _inventoryData.value[productId]?.barcodeIds ?: emptyList()
     }
-    
+
     /**
      * Delete all inventory items (barcode documents) for a product
      * This method removes all inventory documents that reference the given product ID
@@ -998,22 +1028,22 @@ class ProductsViewModel(
                 println("⚠️ Inventory repository is null, cannot delete inventory items for product: $productId")
                 return false
             }
-            
+
             println("🗑️ DELETING ALL INVENTORY ITEMS FOR PRODUCT")
             println("   - Product ID: $productId")
-            
+
             // Get all inventory items for this product
             val inventoryItems = inventoryRepository.getInventoryItemsByProductId(productId)
             println("   - Found ${inventoryItems.size} inventory items to delete")
-            
+
             if (inventoryItems.isEmpty()) {
                 println("   - No inventory items found for this product")
                 return true // Return true since there's nothing to delete
             }
-            
+
             var deletedCount = 0
             var failedCount = 0
-            
+
             // Delete each inventory item
             inventoryItems.forEach { inventoryItem ->
                 try {
@@ -1031,12 +1061,12 @@ class ProductsViewModel(
                     println("   - ❌ Error deleting inventory item ${inventoryItem.barcodeId}: ${e.message}")
                 }
             }
-            
+
             println("🗑️ INVENTORY DELETION COMPLETE")
             println("   - Product ID: $productId")
             println("   - Inventory Items Deleted: $deletedCount")
             println("   - Inventory Items Failed: $failedCount")
-            
+
             // Return true if at least some items were deleted successfully
             deletedCount > 0
         } catch (e: Exception) {
@@ -1045,7 +1075,7 @@ class ProductsViewModel(
             false
         }
     }
-    
+
     /**
      * Test method to verify delete functionality works
      * This bypasses all UI and directly tests the repository methods
@@ -1053,7 +1083,7 @@ class ProductsViewModel(
     fun testDeleteFunctionality(productId: String) {
         println("🧪 TEST DELETE FUNCTIONALITY START")
         println("   - Product ID: $productId")
-        
+
         viewModelScope.launch {
             try {
                 // Test 1: Check if product exists
@@ -1065,12 +1095,12 @@ class ProductsViewModel(
                     println("   - ❌ Product not found")
                     return@launch
                 }
-                
+
                 // Test 2: Check inventory items
                 println("🧪 TEST 2: Checking inventory items")
                 val inventoryItems = inventoryRepository?.getInventoryItemsByProductId(productId) ?: emptyList()
                 println("   - Found ${inventoryItems.size} inventory items")
-                
+
                 // Test 3: Try to delete inventory items
                 println("🧪 TEST 3: Testing inventory deletion")
                 inventoryItems.forEach { item ->
@@ -1078,18 +1108,18 @@ class ProductsViewModel(
                     val success = inventoryRepository?.deleteInventoryItem(item.id) ?: false
                     println("   - Result: $success")
                 }
-                
+
                 // Test 4: Try to delete product
                 println("🧪 TEST 4: Testing product deletion")
                 val productDeleteSuccess = repository.deleteProduct(productId)
                 println("   - Product deletion result: $productDeleteSuccess")
-                
+
                 // Refresh data
                 loadProducts()
                 triggerInventoryRefresh()
-                
+
                 println("🧪 TEST DELETE FUNCTIONALITY COMPLETE")
-                
+
             } catch (e: Exception) {
                 println("🧪 TEST DELETE ERROR: ${e.message}")
                 e.printStackTrace()

@@ -258,18 +258,27 @@ class HtmlCssBillGenerator {
             val netWeight = grossWeight - lessWeight
             val quantity = item.quantity
             
-            // Use the same charge calculations as cart screen
+            // 🔧 FIX: Use Firestore order data directly for charges
+            // From Firestore: defaultMakingRate and vaCharges are total charges per item, not rates per gram
             val makingChargesPerGram = if (item.makingCharges > 0) item.makingCharges else item.product.defaultMakingRate
             val cwWeight = if (item.cwWeight > 0) item.cwWeight else item.product.cwWeight
             val stoneRate = if (item.stoneRate > 0) item.stoneRate else item.product.stoneRate
             val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else item.product.stoneQuantity
             val vaCharges = if (item.va > 0) item.va else item.product.vaCharges
             
-            // Calculate amounts using the same logic as cart screen
+            // Calculate amounts - use Firestore data directly for making and VA charges
             val baseAmount = netWeight * metalRate * quantity
-            val makingCharges = netWeight * makingChargesPerGram * quantity
+            // 🔧 FIX: Making charges should be rate per gram × weight × quantity
+            val makingCharges = makingChargesPerGram * netWeight * quantity  // Rate per gram × weight × quantity
             val stoneAmount = stoneRate * stoneQuantity * cwWeight
-            val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+            val totalVaCharges = vaCharges * quantity  // Total VA charge per item × quantity
+            val totalCharges = baseAmount + makingCharges + stoneAmount + totalVaCharges
+            
+            println("📄 HTML BILL CALCULATION for ${item.product.name}:")
+            println("   - Base amount: ${baseAmount}")
+            println("   - Making charges (${makingChargesPerGram} × ${netWeight}g × ${quantity}): ${makingCharges}")
+            println("   - VA charges (${vaCharges} × ${quantity}): ${totalVaCharges}")
+            println("   - Total charges: ${totalCharges}")
             
             """
             <tr>
@@ -288,7 +297,7 @@ class HtmlCssBillGenerator {
                     <div class="charge-item">Base: Rs ${String.format("%.2f", baseAmount)}</div>
                     ${if (makingCharges > 0) "<div class=\"charge-item\">Making: Rs ${String.format("%.2f", makingCharges)}</div>" else ""}
                     ${if (stoneAmount > 0) "<div class=\"charge-item\">Stone: Rs ${String.format("%.2f", stoneAmount)}</div>" else ""}
-                    ${if (vaCharges > 0) "<div class=\"charge-item\">VA: Rs ${String.format("%.2f", vaCharges)}</div>" else ""}
+                    ${if (totalVaCharges > 0) "<div class=\"charge-item\">VA: Rs ${String.format("%.2f", totalVaCharges)}</div>" else ""}
                 </td>
                 <td class="total-amount">Rs ${String.format("%.2f", totalCharges)}</td>
             </tr>
@@ -706,20 +715,26 @@ class HtmlCssBillGenerator {
         return items.joinToString("") { item ->
             val product = products.find { it.id == item.productId }
             if (product != null) {
+                // 🔧 FIX: Use actual order data from Firestore instead of hardcoded values
+                println("📄 HTML BILL: Using Firestore order data for item ${item.productId}")
+                println("   - Making charges: ${item.defaultMakingRate}")
+                println("   - VA charges: ${item.vaCharges}")
+                println("   - Material type: ${item.materialType}")
+                
                 generateItemsRows(listOf(org.example.project.data.CartItem(
                     productId = item.productId,
                     quantity = item.quantity,
                     selectedBarcodeIds = listOf(item.barcodeId),
                     product = product,
-                    metal = product.materialType,
+                    metal = item.materialType.ifEmpty { product.materialType }, // Use order material type
                     grossWeight = parseWeight(product.weight),
                     totalWeight = parseWeight(product.weight),
                     lessWeight = 0.0,
-                    makingCharges = 0.0,
+                    makingCharges = item.defaultMakingRate, // ✅ Use actual making charges from Firestore
                     stoneRate = 0.0,
                     stoneQuantity = 0.0,
                     cwWeight = 0.0,
-                    va = 0.0
+                    va = item.vaCharges // ✅ Use actual VA charges from Firestore
                 )))
             } else {
                 generateSimplifiedItemsRows(listOf(item))

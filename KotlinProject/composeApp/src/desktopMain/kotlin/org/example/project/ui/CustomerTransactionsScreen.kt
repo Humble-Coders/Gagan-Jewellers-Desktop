@@ -924,7 +924,14 @@ fun UnifiedTransactionCard(
                     text = "₹${String.format("%.2f", transaction.finalAmount)}",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFFB8973D)
+                    color = if (transaction.transactionType == TransactionType.CASH && transaction.cashTransactionType != null) {
+                        when (transaction.cashTransactionType) {
+                            CashTransactionType.GIVE -> Color(0xFFDC2626)
+                            CashTransactionType.RECEIVE -> Color(0xFF16A34A)
+                        }
+                    } else {
+                        Color(0xFFB8973D)
+                    }
                 )
             }
 
@@ -950,8 +957,8 @@ fun UnifiedTransactionCard(
                             },
                             fontSize = 12.sp,
                             color = when (transaction.cashTransactionType) {
-                                CashTransactionType.GIVE -> Color(0xFF16A34A)
-                                CashTransactionType.RECEIVE -> Color(0xFFDC2626)
+                                CashTransactionType.GIVE -> Color(0xFFDC2626)
+                                CashTransactionType.RECEIVE -> Color(0xFF16A34A)
                             },
                             fontWeight = FontWeight.Medium
                         )

@@ -228,7 +228,7 @@ fun PreviewGradientHeaderWithBangles(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                "Vishal Gems and Jewels Pvt. Ltd.",
+                "Gagan Jewellers Pvt.Ltd.",
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White

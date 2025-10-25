@@ -1,4 +1,3 @@
-// Updated PaymentRepository.kt - Handle making charges
 package org.example.project.data
 
 import com.google.cloud.firestore.Firestore
@@ -7,133 +6,64 @@ import kotlinx.coroutines.withContext
 
 interface PaymentRepository {
     suspend fun saveOrder(order: Order): Boolean
-    suspend fun getOrderById(orderId: String): Order?
-    suspend fun getOrdersByCustomer(customerId: String): List<Order>
-    suspend fun updateOrderStatus(orderId: String, status: OrderStatus): Boolean
 }
 
 class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepository {
-
+    
     override suspend fun saveOrder(order: Order): Boolean = withContext(Dispatchers.IO) {
         try {
+            println("💾 PAYMENT REPOSITORY: Saving order to Firestore")
+            println("   - Order ID: ${order.orderId}")
+            println("   - Customer ID: ${order.customerId}")
+            println("   - Total Amount: ₹${String.format("%.2f", order.totalAmount)}")
+            
             val orderMap = mapOf(
-                "id" to order.id,
-                "customerId" to order.customerId,
-                "paymentMethod" to order.paymentMethod.name,
-                "subtotal" to order.subtotal, // Metal cost
-                "makingCharges" to order.makingCharges, // Making charges
+                "orderId" to order.orderId,
+                "customerId" to order.customerId, // Reference to users collection
+                "paymentStatus" to order.paymentStatus.name,
+                "subtotal" to order.subtotal,
                 "discountAmount" to order.discountAmount,
+                "discountPercent" to order.discountPercent,
+                "taxableAmount" to order.taxableAmount,
                 "gstAmount" to order.gstAmount,
                 "totalAmount" to order.totalAmount,
-                "status" to order.status.name,
-                "timestamp" to order.timestamp,
+                "finalAmount" to order.finalAmount,
                 "isGstIncluded" to order.isGstIncluded,
+                "status" to order.status.name,
+                "createdAt" to order.createdAt,
+                "updatedAt" to order.updatedAt,
+                "completedAt" to order.completedAt,
+                "transactionDate" to order.transactionDate,
+                "notes" to order.notes,
+                "metalRatesReference" to order.metalRatesReference, // Reference to rates collection
                 "items" to order.items.map { item ->
                     mapOf(
                         "productId" to item.productId,
-                        "productName" to item.product.name,
-                        "quantity" to item.quantity,
-                        "weight" to item.selectedWeight,
-                        "materialType" to item.product.materialType,
-                        "pricePerGram" to when {
-                            item.product.materialType.contains("gold", ignoreCase = true) -> 6080.0 // Store current gold price
-                            item.product.materialType.contains("silver", ignoreCase = true) -> 75.0 // Store current silver price
-                            else -> 6080.0
-                        },
-                        "itemTotal" to (item.selectedWeight * item.quantity * when {
-                            item.product.materialType.contains("gold", ignoreCase = true) -> 6080.0
-                            item.product.materialType.contains("silver", ignoreCase = true) -> 75.0
-                            else -> 6080.0
-                        })
+                        "barcodeId" to item.barcodeId,
+                        "quantity" to item.quantity
+                    )
+                },
+                "paymentSplit" to order.paymentSplit?.let { split ->
+                    mapOf(
+                        "cashAmount" to split.cashAmount,
+                        "cardAmount" to split.cardAmount,
+                        "bankAmount" to split.bankAmount,
+                        "onlineAmount" to split.onlineAmount,
+                        "dueAmount" to split.dueAmount,
+                        "totalAmount" to split.totalAmount
                     )
                 }
             )
-
-            firestore.collection("orders")
-                .document(order.id)
-                .set(orderMap)
-                .get()
-
+            
+            firestore.collection("orders").document(order.orderId).set(orderMap).get()
+            
+            println("✅ PAYMENT REPOSITORY: Order saved successfully")
+            println("   - Document ID: ${order.orderId}")
             true
         } catch (e: Exception) {
-            println("Error saving order: ${e.message}")
-            false
-        }
-    }
-
-    override suspend fun getOrderById(orderId: String): Order? = withContext(Dispatchers.IO) {
-        try {
-            val docRef = firestore.collection("orders").document(orderId)
-            val document = docRef.get().get()
-
-            if (document.exists()) {
-                val data = document.data ?: return@withContext null
-
-                Order(
-                    id = data["id"] as? String ?: "",
-                    customerId = data["customerId"] as? String ?: "",
-                    paymentMethod = PaymentMethod.valueOf(data["paymentMethod"] as? String ?: "CARD"),
-                    subtotal = (data["subtotal"] as? Number)?.toDouble() ?: 0.0,
-                    makingCharges = (data["makingCharges"] as? Number)?.toDouble() ?: 0.0,
-                    discountAmount = (data["discountAmount"] as? Number)?.toDouble() ?: 0.0,
-                    gstAmount = (data["gstAmount"] as? Number)?.toDouble() ?: 0.0,
-                    totalAmount = (data["totalAmount"] as? Number)?.toDouble() ?: 0.0,
-                    status = OrderStatus.valueOf(data["status"] as? String ?: "CONFIRMED"),
-                    timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    isGstIncluded = data["isGstIncluded"] as? Boolean ?: false,
-                    items = emptyList() // Items would need to be reconstructed if needed
-                )
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            println("Error fetching order: ${e.message}")
-            null
-        }
-    }
-
-    override suspend fun getOrdersByCustomer(customerId: String): List<Order> = withContext(Dispatchers.IO) {
-        try {
-            val querySnapshot = firestore.collection("orders")
-                .whereEqualTo("customerId", customerId)
-                .orderBy("timestamp", com.google.cloud.firestore.Query.Direction.DESCENDING)
-                .get()
-                .get()
-
-            querySnapshot.documents.mapNotNull { document ->
-                val data = document.data ?: return@mapNotNull null
-
-                Order(
-                    id = data["id"] as? String ?: "",
-                    customerId = data["customerId"] as? String ?: "",
-                    paymentMethod = PaymentMethod.valueOf(data["paymentMethod"] as? String ?: "CARD"),
-                    subtotal = (data["subtotal"] as? Number)?.toDouble() ?: 0.0,
-                    makingCharges = (data["makingCharges"] as? Number)?.toDouble() ?: 0.0,
-                    discountAmount = (data["discountAmount"] as? Number)?.toDouble() ?: 0.0,
-                    gstAmount = (data["gstAmount"] as? Number)?.toDouble() ?: 0.0,
-                    totalAmount = (data["totalAmount"] as? Number)?.toDouble() ?: 0.0,
-                    status = OrderStatus.valueOf(data["status"] as? String ?: "CONFIRMED"),
-                    timestamp = (data["timestamp"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    isGstIncluded = data["isGstIncluded"] as? Boolean ?: false,
-                    items = emptyList() // Items would need to be reconstructed if needed
-                )
-            }
-        } catch (e: Exception) {
-            println("Error fetching customer orders: ${e.message}")
-            emptyList()
-        }
-    }
-
-    override suspend fun updateOrderStatus(orderId: String, status: OrderStatus): Boolean = withContext(Dispatchers.IO) {
-        try {
-            firestore.collection("orders")
-                .document(orderId)
-                .update("status", status.name)
-                .get()
-
-            true
-        } catch (e: Exception) {
-            println("Error updating order status: ${e.message}")
+            println("❌ PAYMENT REPOSITORY: Failed to save order")
+            println("   - Error: ${e.message}")
+            e.printStackTrace()
             false
         }
     }

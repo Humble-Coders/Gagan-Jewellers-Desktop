@@ -29,6 +29,9 @@ fun BarcodeEditScreen(
     onBack: () -> Unit,
     onSave: () -> Unit
 ) {
+    println("✏️ BARCODE EDIT SCREEN OPENED")
+    println("   - Barcode ID: $barcodeId")
+    println("   - Timestamp: ${System.currentTimeMillis()}")
     var product by remember { mutableStateOf<Product?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var isSaving by remember { mutableStateOf(false) }

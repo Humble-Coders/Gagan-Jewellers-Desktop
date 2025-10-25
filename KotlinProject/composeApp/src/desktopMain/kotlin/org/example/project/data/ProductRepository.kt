@@ -11,15 +11,12 @@ import java.net.URL
 interface ProductRepository {
     suspend fun getAllProducts(): List<Product>
     suspend fun getProductById(id: String): Product?
-    suspend fun getProductByBarcodeId(barcodeId: String): Product?
     suspend fun addProduct(product: Product): String
     suspend fun updateProduct(product: Product): Boolean
     suspend fun deleteProduct(id: String): Boolean
     suspend fun getCategories(): List<Category>
     suspend fun getMaterials(): List<Material>
     suspend fun getProductImage(url: String): ByteArray?
-    suspend fun generateUniqueBarcodes(quantity: Int, digits: Int): List<String>
-    fun generateBarcode(digits: Int): String
     // New: suggestion management
     suspend fun addCategory(name: String): String
     suspend fun addMaterial(name: String): String
@@ -92,11 +89,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     else -> false
                 },
                 images = (data["images"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                barcodeIds = when (val barcodeData = data["barcode_ids"]) {
-                    is String -> if (barcodeData.isNotEmpty()) listOf(barcodeData) else emptyList()
-                    is List<*> -> barcodeData.filterIsInstance<String>()
-                    else -> emptyList()
-                },
                 autoGenerateId = when (val value = data["auto_generate_id"]) {
                     is Boolean -> value
                     is String -> value.toBoolean()
@@ -197,11 +189,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                         else -> false
                     },
                     images = (data?.get("images") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                    barcodeIds = when (val barcodeData = data?.get("barcode_ids")) {
-                        is String -> if (barcodeData.isNotEmpty()) listOf(barcodeData) else emptyList()
-                        is List<*> -> barcodeData.filterIsInstance<String>()
-                        else -> emptyList()
-                    },
                     autoGenerateId = when (val value = data?.get("auto_generate_id")) {
                         is Boolean -> value
                         is String -> value.toBoolean()
@@ -242,151 +229,9 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
         }
     }
 
-    override suspend fun getProductByBarcodeId(barcodeId: String): Product? = withContext(Dispatchers.IO) {
-        try {
-            val productsCollection = firestore.collection("products")
-            val query = productsCollection.whereArrayContains("barcode_ids", barcodeId)
-            val future = query.get()
-            val snapshot = future.get()
-
-            if (!snapshot.isEmpty) {
-                val document = snapshot.documents.first()
-                val data = document.data
-                val showMap = (data?.get("show") as? Map<*, *>)?.mapValues { entry ->
-                    when (val v = entry.value) {
-                        is Boolean -> v
-                        is String -> v.toBoolean()
-                        else -> true
-                    }
-                } ?: emptyMap()
-
-                Product(
-                    id = document.id,
-                    name = data?.get("name") as? String ?: "",
-                    description = data?.get("description") as? String ?: "",
-                    price = (data?.get("price") as? String)?.toDoubleOrNull() ?: 0.0,
-                    categoryId = data?.get("category_id") as? String ?: "",
-                    materialId = data?.get("material_id") as? String ?: "",
-                    materialType = data?.get("material_type") as? String ?: "",
-                    quantity = (data?.get("quantity") as? String)?.toIntOrNull() ?: 0,
-                    totalWeight = (data?.get("total_weight") as? String)?.toDoubleOrNull() ?: 0.0,
-                    defaultMakingRate = (data?.get("default_making_rate") as? String)?.toDoubleOrNull() ?: 0.0,
-                    isOtherThanGold = when (val value = data?.get("is_other_than_gold")) {
-                        is Boolean -> value
-                        is String -> value.toBoolean()
-                        else -> false
-                    },
-                    lessWeight = (data?.get("less_weight") as? String)?.toDoubleOrNull() ?: 0.0,
-                    hasStones = when (val value = data?.get("has_stones")) {
-                        is Boolean -> value
-                        is String -> value.toBoolean()
-                        else -> false
-                    },
-                    stoneName = data?.get("stone_name") as? String ?: "",
-                    stoneQuantity = (data?.get("stone_quantity") as? String)?.toDoubleOrNull() ?: 0.0,
-                    stoneRate = (data?.get("stone_rate") as? String)?.toDoubleOrNull() ?: 0.0,
-                    cwWeight = (data?.get("cw_weight") as? String)?.toDoubleOrNull() ?: 0.0,
-                    stoneAmount = (data?.get("stone_amount") as? String)?.toDoubleOrNull() ?: 0.0,
-                    vaCharges = (data?.get("va_charges") as? String)?.toDoubleOrNull() ?: 0.0,
-                    netWeight = (data?.get("net_weight") as? String)?.toDoubleOrNull() ?: 0.0,
-                    totalProductCost = (data?.get("total_product_cost") as? String)?.toDoubleOrNull() ?: 0.0,
-                    hasCustomPrice = when (val value = data?.get("has_custom_price")) {
-                        is Boolean -> value
-                        is String -> value.toBoolean()
-                        else -> false
-                    },
-                    customPrice = (data?.get("custom_price") as? String)?.toDoubleOrNull() ?: 0.0,
-                    available = when (val value = data?.get("available")) {
-                        is Boolean -> value
-                        is String -> value.toBoolean()
-                        else -> true
-                    },
-                    featured = when (val value = data?.get("featured")) {
-                        is Boolean -> value
-                        is String -> value.toBoolean()
-                        else -> false
-                    },
-                    images = (data?.get("images") as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
-                    barcodeIds = when (val barcodeData = data?.get("barcode_ids")) {
-                        is String -> if (barcodeData.isNotEmpty()) listOf(barcodeData) else emptyList()
-                        is List<*> -> barcodeData.filterIsInstance<String>()
-                        else -> emptyList()
-                    },
-                    autoGenerateId = when (val value = data?.get("auto_generate_id")) {
-                        is Boolean -> value
-                        is String -> value.toBoolean()
-                        else -> false
-                    },
-                    customProductId = data?.get("custom_product_id") as? String ?: "",
-                    commonId = data?.get("common_id") as? String,
-                    createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    show = ProductShowConfig(
-                        name = showMap["name"] as? Boolean ?: true,
-                        description = showMap["description"] as? Boolean ?: true,
-                        category = showMap["category_id"] as? Boolean ?: true,
-                        material = showMap["material_id"] as? Boolean ?: true,
-                        materialType = showMap["material_type"] as? Boolean ?: true,
-                        quantity = showMap["quantity"] as? Boolean ?: true,
-                        totalWeight = showMap["total_weight"] as? Boolean ?: true,
-                        price = showMap["price"] as? Boolean ?: true,
-                        defaultMakingRate = showMap["default_making_rate"] as? Boolean ?: true,
-                        vaCharges = showMap["va_charges"] as? Boolean ?: true,
-                        isOtherThanGold = showMap["is_other_than_gold"] as? Boolean ?: true,
-                        lessWeight = showMap["less_weight"] as? Boolean ?: true,
-                        hasStones = showMap["has_stones"] as? Boolean ?: true,
-                        stoneName = showMap["stone_name"] as? Boolean ?: true,
-                        stoneQuantity = showMap["stone_quantity"] as? Boolean ?: true,
-                        stoneRate = showMap["stone_rate"] as? Boolean ?: true,
-                        cwWeight = showMap["cw_weight"] as? Boolean ?: true,
-                        stoneAmount = showMap["stone_amount"] as? Boolean ?: true,
-                        netWeight = showMap["net_weight"] as? Boolean ?: true,
-                        totalProductCost = showMap["total_product_cost"] as? Boolean ?: true,
-                        customPrice = showMap["custom_price"] as? Boolean ?: true,
-                        images = showMap["images"] as? Boolean ?: true,
-                        available = showMap["available"] as? Boolean ?: true,
-                        featured = showMap["featured"] as? Boolean ?: true
-                    )
-                )
-            } else null
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun generateRandomBarcode(digits: Int): String {
-        val sb = StringBuilder(digits)
-        repeat(digits) {
-            val d = (0..9).random()
-            sb.append(d)
-        }
-        return sb.toString()
-    }
-    
-    override fun generateBarcode(digits: Int): String {
-        return generateRandomBarcode(digits)
-    }
-
-    private fun isBarcodeUnique(barcode: String): Boolean {
-        val productsCollection = firestore.collection("products")
-        val query = productsCollection.whereArrayContains("barcode_ids", barcode)
-        val snapshot = query.get().get()
-        return snapshot.isEmpty
-    }
-
-    override suspend fun generateUniqueBarcodes(quantity: Int, digits: Int): List<String> = withContext(Dispatchers.IO) {
-        val result = mutableSetOf<String>()
-        while (result.size < quantity) {
-            val code = generateRandomBarcode(digits)
-            if (isBarcodeUnique(code)) {
-                result.add(code)
-            }
-        }
-        result.toList()
-    }
-
     override suspend fun addProduct(product: Product): String = withContext(Dispatchers.IO) {
         println("=== ProductRepository.addProduct() called ===")
-        println("Product details - Name: '${product.name}', ID: '${product.id}', BarcodeIds: ${product.barcodeIds}")
+        println("Product details - Name: '${product.name}', ID: '${product.id}'")
         try {
             val productsCollection = firestore.collection("products")
             val docRef = productsCollection.document()
@@ -425,8 +270,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["available"] = product.available
         productMap["featured"] = product.featured
         productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
-        // Store barcodeIds as single string instead of array for new products
-        productMap["barcode_ids"] = product.barcodeIds.firstOrNull() ?: ""
         productMap["auto_generate_id"] = product.autoGenerateId
         productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
         productMap["common_id"] = product.commonId
@@ -461,7 +304,7 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["show"] = showMap
 
         println("📝 Product data prepared for Firestore: ${productMap.keys}")
-        println("📝 Key values - Name: '${productMap["name"]}', BarcodeIds: ${productMap["barcode_ids"]}")
+        println("📝 Key values - Name: '${productMap["name"]}'")
         println("📝 Note: total_product_cost is not stored in Firestore")
 
         docRef.set(productMap).get()
@@ -548,8 +391,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["available"] = product.available
             productMap["featured"] = product.featured
             productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
-            // Store barcodeIds as single string instead of array for consistency with addProduct
-            productMap["barcode_ids"] = product.barcodeIds.firstOrNull() ?: ""
             productMap["auto_generate_id"] = product.autoGenerateId
             productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
         productMap["common_id"] = product.commonId

@@ -24,6 +24,8 @@ import org.example.project.data.MetalRateRepository
 import org.example.project.data.FirestoreMetalRateRepository
 import org.example.project.data.StonesRepository
 import org.example.project.data.FirestoreStonesRepository
+import org.example.project.data.InventoryRepository
+import org.example.project.data.FirestoreInventoryRepository
 import org.example.project.data.AvailabilityRepository
 import org.example.project.data.BookingRepository
 import org.example.project.data.FirestoreAvailabilityRepository
@@ -71,6 +73,7 @@ object JewelryAppInitializer {
     private var bookingRepository: BookingRepository? = null
     private var appointmentViewModel: AppointmentViewModel? = null
     private var availabilityRepository: AvailabilityRepository? = null
+    private var inventoryRepository: InventoryRepository? = null
 
 
     /**
@@ -121,7 +124,8 @@ object JewelryAppInitializer {
             // Create dependencies
             repository = FirestoreProductRepository(firestore, storage)
             val stonesRepository: StonesRepository = FirestoreStonesRepository(firestore)
-            viewModel = ProductsViewModel(repository!!, stonesRepository)
+            inventoryRepository = FirestoreInventoryRepository(firestore)
+            viewModel = ProductsViewModel(repository!!, stonesRepository, inventoryRepository)
             imageLoader = ImageLoader(repository!!)
             customerRepository = FirestoreCustomerRepository(firestore)
             customerViewModel = CustomerViewModel(customerRepository!!)
@@ -171,6 +175,16 @@ object JewelryAppInitializer {
         return metalRateViewModel!!
     }
 
+    fun getProductRepository(): ProductRepository {
+        checkInitialized()
+        return repository!!
+    }
+
+    fun getInventoryRepository(): InventoryRepository {
+        checkInitialized()
+        return inventoryRepository!!
+    }
+
     fun getAppointmentViewModel(): AppointmentViewModel {
         checkInitialized()
         return appointmentViewModel!!
@@ -179,6 +193,11 @@ object JewelryAppInitializer {
     fun getAvailabilityRepository(): AvailabilityRepository {
         checkInitialized()
         return availabilityRepository!!
+    }
+    
+    fun getCustomerRepository(): CustomerRepository {
+        checkInitialized()
+        return customerRepository!!
     }
 
     /**

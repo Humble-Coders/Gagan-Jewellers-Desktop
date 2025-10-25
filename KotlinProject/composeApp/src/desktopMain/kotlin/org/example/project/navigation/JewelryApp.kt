@@ -47,6 +47,10 @@ import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.TextButton
+import androidx.compose.material.TextFieldDefaults
+import androidx.compose.material.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.AddCircle
@@ -59,6 +63,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.lightColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -89,16 +94,20 @@ import kotlinx.coroutines.launch
 import org.example.project.JewelryAppInitializer
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.viewModels.CustomizationViewModel
+import org.example.project.viewModels.ProfileViewModel
 import org.example.project.data.FirestoreCustomizationRepository
+import org.example.project.data.OrderRepository
+import org.example.project.data.FirestoreOrderRepository
 import org.example.project.ui.AddEditProductScreen
 import org.example.project.ui.BarcodeEditScreen
 import org.example.project.ui.BillingScreen
 import org.example.project.ui.DashboardScreen
+import org.example.project.ui.ProfileScreen
+import org.example.project.ui.CustomerTransactionsScreen
 import org.example.project.ui.ProductDetailScreen
 import org.example.project.ui.SettingsScreen
 import org.example.project.ui.GoldRateScreen
 import org.example.project.ui.CategoryManagementScreen
-import org.example.project.ui.InvoiceConfigScreen
 import org.example.project.ui.CustomizationScreen
 import org.example.project.ui.AppointmentScreen
 import org.jetbrains.compose.resources.painterResource
@@ -114,6 +123,11 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     var snackbarAction by remember { mutableStateOf<String?>(null) }
     var snackbarActionCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
     var currentBarcodeId by remember { mutableStateOf("") }
+    var showBarcodeDeleteDialog by remember { mutableStateOf(false) }
+    var barcodeToDelete by remember { mutableStateOf("") }
+    var showBarcodeEditDialog by remember { mutableStateOf(false) }
+    var barcodeToEdit by remember { mutableStateOf("") }
+    var newBarcodeId by remember { mutableStateOf("") }
 
     val coroutineScope = rememberCoroutineScope()
     val imageLoader = JewelryAppInitializer.getImageLoader()
@@ -124,6 +138,10 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     val availabilityRepository = JewelryAppInitializer.getAvailabilityRepository()
     val customizationViewModel = CustomizationViewModel(
         FirestoreCustomizationRepository(JewelryAppInitializer.getFirestore())
+    )
+    val profileViewModel = ProfileViewModel(
+        JewelryAppInitializer.getCustomerRepository(),
+        FirestoreOrderRepository(JewelryAppInitializer.getFirestore())
     )
 
     // Function to show snackbar
@@ -197,7 +215,9 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                         onRefresh = {
                             coroutineScope.launch {
                                 viewModel.loadProducts()
-                                showSnackbar("Data refreshed successfully")
+                                showSnackbar("Data refreshed successfully", "PROFILE", {
+                                    currentScreen = Screen.PROFILE
+                                })
                             }
                         }
                     )
@@ -217,9 +237,23 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                     viewModel.selectProduct(productId)
                                     currentScreen = Screen.PRODUCT_DETAIL
                                 },
-                                onEditBarcode = { barcodeId ->
-                                    currentBarcodeId = barcodeId
-                                    currentScreen = Screen.BARCODE_EDIT
+            onEditBarcode = { barcodeId ->
+                println("✏️ NAVIGATION: Edit Barcode Request")
+                println("   - Barcode ID: $barcodeId")
+                println("   - Timestamp: ${System.currentTimeMillis()}")
+                barcodeToEdit = barcodeId
+                newBarcodeId = barcodeId
+                showBarcodeEditDialog = true
+                println("   - Showing barcode edit dialog")
+            },
+                                onDeleteBarcode = { barcodeId ->
+                                    println("🗑️ NAVIGATION: Delete Barcode Request")
+                                    println("   - Barcode ID: $barcodeId")
+                                    println("   - Timestamp: ${System.currentTimeMillis()}")
+                                    // Show confirmation dialog for barcode deletion
+                                    barcodeToDelete = barcodeId
+                                    showBarcodeDeleteDialog = true
+                                    println("   - Showing delete confirmation dialog")
                                 },
                                 onDuplicateProduct = { productId, barcodeId ->
                                     // Create a duplicate product with the new barcode
@@ -295,10 +329,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 onBack = { currentScreen = Screen.DASHBOARD }
                             )
 
-                            Screen.INVOICE_CONFIG -> InvoiceConfigScreen(
-                                onBack = { currentScreen = Screen.DASHBOARD }
-                            )
-
                             Screen.CUSTOMIZATION -> CustomizationScreen(
                                 viewModel = customizationViewModel,
                                 onBack = { currentScreen = Screen.DASHBOARD }
@@ -317,6 +347,36 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 imageLoader = imageLoader,
                                 paymentViewModel = paymentViewModel
                             )
+
+                            Screen.PROFILE -> ProfileScreen(
+                                viewModel = profileViewModel,
+                                onBack = { currentScreen = Screen.DASHBOARD },
+                                onCustomerClick = { customer ->
+                                    profileViewModel.selectCustomer(customer)
+                                    currentScreen = Screen.CUSTOMER_TRANSACTIONS
+                                }
+                            )
+
+                            Screen.CUSTOMER_TRANSACTIONS -> {
+                                val selectedCustomer = profileViewModel.selectedCustomer.value
+                                if (selectedCustomer != null) {
+                                    CustomerTransactionsScreen(
+                                        customer = selectedCustomer,
+                                        viewModel = profileViewModel,
+                                        onBack = { currentScreen = Screen.PROFILE }
+                                    )
+                                } else {
+                                    // Fallback to profile screen if no customer selected
+                                    ProfileScreen(
+                                        viewModel = profileViewModel,
+                                        onBack = { currentScreen = Screen.DASHBOARD },
+                                        onCustomerClick = { customer ->
+                                            profileViewModel.selectCustomer(customer)
+                                            currentScreen = Screen.CUSTOMER_TRANSACTIONS
+                                        }
+                                    )
+                                }
+                            }
                         }
 
                         // Loading indicator overlay
@@ -350,6 +410,194 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                     }
                                 }
                             }
+        }
+
+        // Barcode Edit Dialog
+        if (showBarcodeEditDialog) {
+            println("✏️ BARCODE EDIT DIALOG SHOWN")
+            println("   - Barcode to edit: $barcodeToEdit")
+            println("   - New barcode ID: $newBarcodeId")
+            println("   - Timestamp: ${System.currentTimeMillis()}")
+
+            androidx.compose.material.AlertDialog(
+                onDismissRequest = {
+                    println("✏️ BARCODE EDIT DIALOG DISMISSED")
+                    println("   - Barcode: $barcodeToEdit")
+                    showBarcodeEditDialog = false
+                },
+                title = {
+                    Text(
+                        "Edit Barcode ID",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column {
+                        Text("Current barcode ID:")
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = barcodeToEdit,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colors.primary
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("New barcode ID:")
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = newBarcodeId,
+                            onValueChange = { newBarcodeId = it },
+                            placeholder = { Text("Enter new barcode ID") },
+                            singleLine = true,
+                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = TextFieldDefaults.outlinedTextFieldColors(
+                                focusedBorderColor = MaterialTheme.colors.primary,
+                                unfocusedBorderColor = Color(0xFFE0E0E0)
+                            )
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            "⚠️ Please match the barcode ID on the product",
+                            color = Color(0xFFFFA500),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            println("✏️ BARCODE EDIT CONFIRMED - Proceeding with update")
+                            println("   - Old barcode: $barcodeToEdit")
+                            println("   - New barcode: $newBarcodeId")
+                            println("   - Timestamp: ${System.currentTimeMillis()}")
+                            
+                            if (newBarcodeId.isNotBlank() && newBarcodeId != barcodeToEdit) {
+                                // TODO: Implement barcode update logic
+                                coroutineScope.launch {
+                                    try {
+                                        // Find the inventory item with the old barcode
+                                        val inventoryItem = viewModel.getInventoryItemByBarcodeId(barcodeToEdit)
+                                        if (inventoryItem != null) {
+                                            // Update the barcode in the inventory item
+                                            val updatedInventoryItem = inventoryItem.copy(barcodeId = newBarcodeId)
+                                            val inventoryId = viewModel.updateInventoryItem(updatedInventoryItem)
+                                            if (inventoryId != null) {
+                                                showSnackbar("Barcode updated successfully")
+                                                println("✅ Barcode updated successfully")
+                                            } else {
+                                                showSnackbar("Failed to update barcode")
+                                                println("❌ Failed to update barcode")
+                                            }
+                                        } else {
+                                            showSnackbar("Inventory item not found")
+                                            println("❌ Inventory item not found for barcode: $barcodeToEdit")
+                                        }
+                                    } catch (e: Exception) {
+                                        showSnackbar("Failed to update barcode: ${e.message}")
+                                        println("❌ Failed to update barcode: ${e.message}")
+                                    }
+                                }
+                            } else {
+                                showSnackbar("Please enter a valid new barcode ID")
+                                println("❌ Invalid new barcode ID")
+                            }
+                            
+                            showBarcodeEditDialog = false
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colors.primary
+                        )
+                    ) {
+                        Text("Update")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            println("✏️ BARCODE EDIT CANCELLED")
+                            println("   - Barcode: $barcodeToEdit")
+                            println("   - Timestamp: ${System.currentTimeMillis()}")
+                            showBarcodeEditDialog = false
+                        }
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            )
+        }
+
+        // Barcode Delete Confirmation Dialog
+        if (showBarcodeDeleteDialog) {
+                            println("🗑️ DELETE CONFIRMATION DIALOG SHOWN")
+                            println("   - Barcode to delete: $barcodeToDelete")
+                            println("   - Timestamp: ${System.currentTimeMillis()}")
+                            
+                            androidx.compose.material.AlertDialog(
+                                onDismissRequest = { 
+                                    println("🗑️ DELETE CONFIRMATION DIALOG DISMISSED")
+                                    println("   - Barcode: $barcodeToDelete")
+                                    showBarcodeDeleteDialog = false 
+                                },
+                                title = {
+                                    Text(
+                                        "Delete Product",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                },
+                                text = {
+                                    Column {
+                                        Text("Are you sure you want to delete the product with barcode:")
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text = barcodeToDelete,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colors.error
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            "⚠️ Please match the barcode ID on the product",
+                                            color = Color(0xFFFFA500),
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(
+                                        onClick = {
+                                            println("🗑️ DELETE CONFIRMED - Proceeding with deletion")
+                                            println("   - Barcode to delete: $barcodeToDelete")
+                                            println("   - Timestamp: ${System.currentTimeMillis()}")
+                                            viewModel.deleteProductByBarcodeId(barcodeToDelete)
+                                            showBarcodeDeleteDialog = false
+                                            showSnackbar("Barcode removed successfully")
+                                            println("   - Delete request sent to ViewModel")
+                                        },
+                                        colors = ButtonDefaults.textButtonColors(
+                                            contentColor = MaterialTheme.colors.error
+                                        )
+                                    ) {
+                                        Text("Delete")
+                                    }
+                                },
+                                dismissButton = {
+                                    TextButton(
+                                        onClick = { 
+                                            println("🗑️ DELETE CANCELLED")
+                                            println("   - Barcode: $barcodeToDelete")
+                                            println("   - Timestamp: ${System.currentTimeMillis()}")
+                                            showBarcodeDeleteDialog = false 
+                                        }
+                                    ) {
+                                        Text("Cancel")
+                                    }
+                                }
+                            )
                         }
 
                         // Professional SnackBar
@@ -376,10 +624,11 @@ enum class Screen {
     SETTINGS,
     GOLD_RATES,
     CATEGORIES,
-    INVOICE_CONFIG,
     BILLING,
     CUSTOMIZATION,
-    APPOINTMENTS
+    APPOINTMENTS,
+    PROFILE,
+    CUSTOMER_TRANSACTIONS
 }
 
 @Composable
@@ -712,6 +961,11 @@ private fun NavigationItems(
             screen = Screen.BILLING
         ),
         NavigationItemData(
+            icon = Icons.Default.Person,
+            title = "Customer Profiles",
+            screen = Screen.PROFILE
+        ),
+        NavigationItemData(
             icon = Icons.Default.AccountBox,
             title = "Gold Rates",
             screen = Screen.GOLD_RATES
@@ -720,11 +974,6 @@ private fun NavigationItems(
             icon = Icons.Default.AccountBox,
             title = "Categories",
             screen = Screen.CATEGORIES
-        ),
-        NavigationItemData(
-            icon = Icons.Default.AccountBox,
-            title = "Invoice Config",
-            screen = Screen.INVOICE_CONFIG
         ),
         NavigationItemData(
             icon = Icons.Default.Build,

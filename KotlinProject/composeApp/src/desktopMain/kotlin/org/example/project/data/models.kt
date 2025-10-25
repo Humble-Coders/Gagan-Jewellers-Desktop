@@ -14,7 +14,6 @@ data class Product(
     val available: Boolean = true,
     val featured: Boolean = false,
     val images: List<String> = emptyList(),
-    val barcodeIds: List<String> = emptyList(), // Unique barcodes for each unit
     val quantity: Int = 0,
     val commonId: String? = null, // Common ID for grouped products (null for single products)
     val createdAt: Long = System.currentTimeMillis(),
@@ -121,18 +120,42 @@ data class User(
     val name: String = "",
     val phone: String = "",
     val address: String = "",
-    val createdAt: Long = System.currentTimeMillis()
+    val notes: String = "",
+    val balance: Double = 0.0,
+    val customerId: String = "", // Auto-generated document ID from Firestore
+    val createdAt: Long = System.currentTimeMillis(),
+    // Additional fields from the image (keeping as null initially)
+    val googleId: String? = null,
+    val fcmToken: String? = null,
+    val isGoogleSignIn: Boolean? = null,
+    val lastTokenUpdate: Long? = null,
+    val profilePictureUrl: String? = null
+    // Note: recentlyViewed and wishlist are now subcollections, not fields
 )
 
+// Data classes for subcollections
+data class RecentlyViewedItem(
+    val id: String = "",
+    val productId: String = "",
+    val viewedAt: Long = System.currentTimeMillis()
+)
+
+data class WishlistItem(
+    val id: String = "",
+    val productId: String = "",
+    val addedAt: Long = System.currentTimeMillis()
+)
 
 data class CartItem(
     val productId: String,
     val product: Product,
     val quantity: Int = 1,
+    val selectedBarcodeIds: List<String> = emptyList(), // Selected barcode IDs for this cart item
     val metal: String = "", // Metal type (22K, 18K, etc.)
     val customGoldRate: Double = 0.0, // Custom gold rate per gram
     val selectedWeight: Double = 0.0, // in grams
     val grossWeight: Double = 0.0, // Gross weight in grams
+    val totalWeight: Double = 0.0, // Total weight in grams
     val lessWeight: Double = 0.0, // Less weight in grams
     val netWeight: Double = 0.0, // Net weight in grams (auto-calculated)
     val makingCharges: Double = 0.0, // Making charges per gram
@@ -286,6 +309,21 @@ data class MetalRates(
             else -> silverRates.rate999 // Default to 999
         }
     }
+    
+    fun toMap(): Map<String, Double> {
+        return mapOf(
+            "gold_24k" to goldRates.rate24k,
+            "gold_22k" to goldRates.rate22k,
+            "gold_20k" to goldRates.rate20k,
+            "gold_18k" to goldRates.rate18k,
+            "gold_14k" to goldRates.rate14k,
+            "gold_10k" to goldRates.rate10k,
+            "silver_999" to silverRates.rate999,
+            "silver_925" to silverRates.rate925,
+            "silver_900" to silverRates.rate900,
+            "silver_800" to silverRates.rate800
+        )
+    }
 }
 
 
@@ -340,22 +378,45 @@ enum class DiscountType {
     TOTAL_PAYABLE // New: Enter total payable amount, system calculates discount
 }
 
+data class OrderItem(
+    val productId: String = "",
+    val barcodeId: String = "",
+    val quantity: Int = 1
+)
+
 data class Order(
-    val id: String = "",
-    val customerId: String = "",
-    val paymentMethod: PaymentMethod = PaymentMethod.CARD,
-    val paymentSplit: PaymentSplit? = null, // New: Detailed payment splitting
-    val subtotal: Double = 0.0,
-    val makingCharges: Double = 0.0, // Making charges for the order
+    val orderId: String = "",
+    val customerId: String = "", // Reference to users collection
+    
+    // Payment Information
+    val paymentSplit: PaymentSplit? = null,
+    val paymentStatus: PaymentStatus = PaymentStatus.PENDING,
+    
+    // Financial Details
+    val subtotal: Double = 0.0, // Base metal cost
     val discountAmount: Double = 0.0,
+    val discountPercent: Double = 0.0,
+    val taxableAmount: Double = 0.0,
     val gstAmount: Double = 0.0,
-    val gstRate: Double = 0.0, // GST rate applied (e.g., 0.03 for 3%)
     val totalAmount: Double = 0.0,
-    val isGstIncluded: Boolean = true, // Whether GST is included in the price
-    val status: OrderStatus = OrderStatus.CONFIRMED,
-    val timestamp: Long = System.currentTimeMillis(),
-    val items: List<CartItem> = emptyList(),
-    val goldRateUsed: GoldRates? = null // Track which gold rates were used
+    val finalAmount: Double = 0.0,
+    val isGstIncluded: Boolean = true,
+    
+    // Order Items - Simplified references for Firestore storage
+    val items: List<OrderItem> = emptyList(),
+    
+    // Metal Rates Reference - Reference to rates collection
+    val metalRatesReference: String = "", // Reference to the rates document used for this order
+    
+    // Timestamps
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val completedAt: Long? = null,
+    val transactionDate: String = "",
+    
+    // Additional Information
+    val notes: String = "",
+    val status: OrderStatus = OrderStatus.CONFIRMED
 )
 
 data class PaymentTransaction(
@@ -367,7 +428,6 @@ data class PaymentTransaction(
     val makingCharges: Double = 0.0, // Making charges for the transaction
     val discountAmount: Double = 0.0,
     val gstAmount: Double = 0.0,
-    val gstRate: Double = 0.0, // GST rate applied (e.g., 0.03 for 3%)
     val totalAmount: Double = 0.0,
     val isGstIncluded: Boolean = true, // Whether GST is included in the price
     val status: PaymentStatus = PaymentStatus.PENDING,
@@ -496,6 +556,30 @@ data class AppointmentWithUser(
     val booking: Booking,
     val user: User? = null
 )
+
+// Inventory Management Models
+data class InventoryItem(
+    val id: String = "",
+    val productId: String = "", // Reference to the product in products collection
+    val barcodeId: String = "", // Unique barcode for this inventory item
+    val status: InventoryStatus = InventoryStatus.AVAILABLE,
+    val location: String = "", // Physical location in store
+    val notes: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val soldAt: Long? = null, // When this item was sold
+    val soldTo: String? = null // Customer ID who bought this item
+)
+
+enum class InventoryStatus {
+    AVAILABLE,      // Available for sale
+    SOLD,          // Sold to customer
+    RESERVED,      // Reserved for a customer
+    DAMAGED,       // Damaged and not sellable
+    RETURNED,      // Returned by customer
+    LOST,          // Lost or stolen
+    REPAIR         // Under repair
+}
 
 // Availability Slot Models
 data class AvailabilitySlot(

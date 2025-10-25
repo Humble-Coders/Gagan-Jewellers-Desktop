@@ -35,7 +35,7 @@ class BillPDFGenerator {
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             println("🔄 ========== PDFBOX PDF GENERATION STARTED ==========")
-            println("📋 Order ID: ${order.id}")
+            println("📋 Order ID: ${order.orderId}")
             println("👤 Customer: ${customer.name} (ID: ${customer.id})")
             println("📄 Output path: $outputPath")
             println("💰 Order total: ₹${String.format("%.2f", order.totalAmount)}")
@@ -45,7 +45,7 @@ class BillPDFGenerator {
             println("🥈 Silver rate: ₹${String.format("%.2f", silverPricePerGram)}/g")
             
             // Validate inputs
-            if (order.id.isBlank()) {
+            if (order.orderId.isBlank()) {
                 throw IllegalArgumentException("Order ID is blank")
             }
             if (customer.name.isBlank()) {
@@ -72,6 +72,10 @@ class BillPDFGenerator {
             
             println("🔧 Creating PDDocument...")
             PDDocument().use { document ->
+                // Fetch product details for PDF generation
+                val products = fetchProductDetails(order.items.map { it.productId })
+                println("📦 Fetched ${products.size} product details for PDF generation")
+                
                 println("🔧 Adding A4 page...")
                 val page = PDPage(PDRectangle.A4)
                 document.addPage(page)
@@ -102,7 +106,7 @@ class BillPDFGenerator {
 
                     println("🔧 Drawing items table...")
                     yPosition = drawCorrectItemsTable(
-                        contentStream, order, goldPricePerGram, silverPricePerGram, margin, yPosition, pageWidth
+                        contentStream, order, products, goldPricePerGram, silverPricePerGram, margin, yPosition, pageWidth
                     )
                     println("✅ Items table drawn, yPosition: $yPosition")
 
@@ -244,12 +248,12 @@ class BillPDFGenerator {
             var rightY = startY - 20f
 
             val dateFormat = SimpleDateFormat("dd/MM/yyyy h:mm a", Locale.getDefault())
-            val invoiceDate = dateFormat.format(Date(order.timestamp))
+            val invoiceDate = dateFormat.format(Date(order.createdAt))
 
             contentStream.setFont(helveticaBold, 10f)
             contentStream.beginText()
             contentStream.newLineAtOffset(rightColumnX, rightY)
-            contentStream.showText("DOC//SAL/${order.id.takeLast(4)} Date : $invoiceDate")
+            contentStream.showText("DOC//SAL/${order.orderId.takeLast(4)} Date : $invoiceDate")
             contentStream.endText()
             rightY -= 25f
 
@@ -293,7 +297,7 @@ class BillPDFGenerator {
 
             contentStream.beginText()
             contentStream.newLineAtOffset(rightColumnX, rightY)
-            contentStream.showText("Order Id : ${order.id}")
+            contentStream.showText("Order Id : ${order.orderId}")
             contentStream.endText()
 
             yPos -= 30f
@@ -308,6 +312,7 @@ class BillPDFGenerator {
     private fun drawCorrectItemsTable(
         contentStream: PDPageContentStream,
         order: Order,
+        products: List<org.example.project.data.Product>,
         goldPricePerGram: Double,
         silverPricePerGram: Double,
         margin: Float,
@@ -381,7 +386,6 @@ class BillPDFGenerator {
             var totalQty = 0
             var totalWeight = 0.0
             val totalMetalCost = order.subtotal
-            val totalMakingCharges = order.makingCharges
             val totalGst = order.gstAmount
             val grandTotal = order.totalAmount
 
@@ -397,10 +401,13 @@ class BillPDFGenerator {
                 contentStream.stroke()
 
                 xPos = margin + 1f
-                val weight = parseWeight(item.product.weight)
+                
+                // Get product details for this item
+                val product = products.find { it.id == item.productId }
+                val weight = if (product != null) parseWeight(product.weight) else 5.0
                 val pricePerGram = when {
-                    item.product.materialType.contains("gold", ignoreCase = true) -> goldPricePerGram
-                    item.product.materialType.contains("silver", ignoreCase = true) -> silverPricePerGram
+                    product?.materialType?.contains("gold", ignoreCase = true) == true -> goldPricePerGram
+                    product?.materialType?.contains("silver", ignoreCase = true) == true -> silverPricePerGram
                     else -> goldPricePerGram
                 }
                 val metalCost = weight * item.quantity * pricePerGram
@@ -413,8 +420,8 @@ class BillPDFGenerator {
                 totalWeight += weight * item.quantity
 
                 val values = listOf(
-                    truncateText(item.product.name, 20),
-                    item.product.materialType,
+                    product?.name ?: "Product ${item.productId}",
+                    product?.materialType ?: "Unknown",
                     "${item.quantity}",
                     String.format("%.2f", weight * item.quantity),
                     formatCurrency(pricePerGram),
@@ -466,8 +473,8 @@ class BillPDFGenerator {
 
             val totalValues = listOf(
                 "TOTAL", "", "${totalQty}", String.format("%.2f", totalWeight),
-                "", formatCurrency(totalMetalCost), formatCurrency(totalMakingCharges),
-                formatCurrency(totalMetalCost + totalMakingCharges),
+                "", formatCurrency(totalMetalCost), "",
+                formatCurrency(totalMetalCost),
                 if (order.isGstIncluded) formatCurrency(totalGst) else "0.00",
                 formatCurrency(grandTotal)
             )
@@ -544,16 +551,6 @@ class BillPDFGenerator {
             contentStream.endText()
             yPos -= 15f
 
-            contentStream.beginText()
-            contentStream.newLineAtOffset(margin, yPos)
-            contentStream.showText("Making Charges:")
-            contentStream.endText()
-            contentStream.beginText()
-            contentStream.newLineAtOffset(margin + 120f, yPos)
-            contentStream.showText("Rs.${formatCurrency(order.makingCharges)}")
-            contentStream.endText()
-            yPos -= 15f
-
             if (order.discountAmount > 0) {
                 contentStream.beginText()
                 contentStream.newLineAtOffset(margin, yPos)
@@ -611,7 +608,7 @@ class BillPDFGenerator {
             contentStream.setFont(helvetica, 9f)
             contentStream.beginText()
             contentStream.newLineAtOffset(rightColumnX, rightY)
-            contentStream.showText("Payment Method: ${formatPaymentMethod(order.paymentMethod)}")
+            contentStream.showText("Payment Status: ${order.paymentStatus.name}")
             contentStream.endText()
             rightY -= 15f
 
@@ -663,18 +660,6 @@ class BillPDFGenerator {
         }
     }
 
-    private fun formatPaymentMethod(paymentMethod: org.example.project.data.PaymentMethod): String {
-        return when (paymentMethod) {
-            org.example.project.data.PaymentMethod.CASH -> "Cash"
-            org.example.project.data.PaymentMethod.CARD -> "Credit/Debit Card"
-            org.example.project.data.PaymentMethod.UPI -> "UPI"
-            org.example.project.data.PaymentMethod.NET_BANKING -> "Net Banking"
-            org.example.project.data.PaymentMethod.BANK_TRANSFER -> "Bank Transfer"
-            org.example.project.data.PaymentMethod.CASH_ON_DELIVERY -> "Cash on Delivery"
-            org.example.project.data.PaymentMethod.DUE -> "Due Payment"
-        }
-    }
-
     private fun getTextWidth(text: String, font: PDType1Font, fontSize: Float): Float {
         return try {
             font.getStringWidth(text) * fontSize / 1000f
@@ -707,6 +692,22 @@ class BillPDFGenerator {
             text.substring(0, maxLength - 3) + "..."
         } else {
             text
+        }
+    }
+    
+    private fun fetchProductDetails(productIds: List<String>): List<org.example.project.data.Product> {
+        return try {
+            val productRepository = org.example.project.JewelryAppInitializer.getProductRepository()
+            if (productRepository != null) {
+                kotlinx.coroutines.runBlocking {
+                    val allProducts = productRepository.getAllProducts()
+                    allProducts.filter { productIds.contains(it.id) }
+                }
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 }

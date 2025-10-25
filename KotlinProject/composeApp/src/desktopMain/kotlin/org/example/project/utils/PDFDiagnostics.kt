@@ -1,5 +1,6 @@
 package org.example.project.utils
 
+import org.example.project.data.OrderItem
 import org.example.project.data.Order
 import org.example.project.data.User
 import org.example.project.data.CartItem
@@ -35,18 +36,22 @@ object PDFDiagnostics {
         )
         
         return Order(
-            id = "TEST-ORDER-${System.currentTimeMillis()}",
-            customerId = "test-customer",
-            paymentMethod = PaymentMethod.CASH,
+            orderId = "TEST-ORDER-${System.currentTimeMillis()}",
+            customerId = "test-customer", // Reference to users collection
             subtotal = 25000.0,
             discountAmount = 0.0,
             gstAmount = 4500.0,
             totalAmount = 29500.0,
-            items = listOf(testCartItem),
-            timestamp = System.currentTimeMillis(),
+            items = listOf(OrderItem(
+                productId = testCartItem.productId,
+                barcodeId = testCartItem.selectedBarcodeIds.firstOrNull() ?: "TEST-BARCODE",
+                quantity = testCartItem.quantity
+            )),
+            metalRatesReference = "current", // Reference to rates collection - TODO: Update based on actual collection structure
+            createdAt = System.currentTimeMillis(),
+            transactionDate = "19 October 2025 at 10:30:14 UTC+5:30",
             status = org.example.project.data.OrderStatus.CONFIRMED,
-            isGstIncluded = true,
-            makingCharges = 500.0
+            isGstIncluded = true
         )
     }
     

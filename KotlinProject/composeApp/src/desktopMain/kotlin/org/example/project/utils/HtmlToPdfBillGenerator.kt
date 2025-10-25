@@ -33,8 +33,11 @@ class HtmlToPdfBillGenerator {
     }
 
     private fun generatePdfCompatibleHtml(order: Order, customer: User): String {
+        // Fetch product details for PDF generation
+        val products = fetchProductDetails(order.items.map { it.productId })
+        
         val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-        val orderDate = dateFormat.format(Date(order.timestamp))
+        val orderDate = dateFormat.format(Date(order.createdAt))
 
         val subtotal = order.subtotal
         val gstAmount = order.gstAmount
@@ -48,7 +51,7 @@ class HtmlToPdfBillGenerator {
         <html xmlns="http://www.w3.org/1999/xhtml">
         <head>
             <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
-            <title>Invoice ${escapeXml(order.id)}</title>
+            <title>Invoice ${escapeXml(order.orderId)}</title>
             <style type="text/css">
                 ${getPdfCompatibleStyles()}
             </style>
@@ -66,7 +69,7 @@ class HtmlToPdfBillGenerator {
                     <div class="invoice-meta">
                         <h2>INVOICE</h2>
                         <table class="meta-table">
-                            <tr><td><strong>Invoice No:</strong></td><td>${escapeXml(order.id)}</td></tr>
+                            <tr><td><strong>Invoice No:</strong></td><td>${escapeXml(order.orderId)}</td></tr>
                             <tr><td><strong>Date:</strong></td><td>${escapeXml(orderDate)}</td></tr>
                         </table>
                     </div>
@@ -92,7 +95,7 @@ class HtmlToPdfBillGenerator {
                         </tr>
                     </thead>
                     <tbody>
-                        ${generateItemRows(order.items)}
+                        ${generateDetailedItemRows(order.items, products)}
                     </tbody>
                 </table>
                 
@@ -185,5 +188,54 @@ class HtmlToPdfBillGenerator {
         .thanks { color: #B8973D; font-size: 12pt; margin-bottom: 8px; }
         .footer p { font-size: 9pt; color: #888; }
         """.trimIndent()
+    }
+    
+    private fun generateSimplifiedItemRows(items: List<org.example.project.data.OrderItem>): String {
+        return items.joinToString("") { item ->
+            """
+            <tr>
+                <td>Product ${item.productId}</td>
+                <td>Barcode: ${item.barcodeId}</td>
+                <td>${item.quantity}</td>
+                <td>-</td>
+                <td>-</td>
+            </tr>
+            """.trimIndent()
+        }
+    }
+    
+    private fun generateDetailedItemRows(items: List<org.example.project.data.OrderItem>, products: List<org.example.project.data.Product>): String {
+        return items.joinToString("") { item ->
+            val product = products.find { it.id == item.productId }
+            if (product != null) {
+                """
+                <tr>
+                    <td>${product.name}</td>
+                    <td>${product.materialType}</td>
+                    <td>${item.quantity}</td>
+                    <td>₹${String.format("%.2f", parseWeight(product.weight) * item.quantity)}</td>
+                    <td>₹${String.format("%.2f", parseWeight(product.weight) * item.quantity * 100.0)}</td>
+                </tr>
+                """.trimIndent()
+            } else {
+                generateSimplifiedItemRows(listOf(item))
+            }
+        }
+    }
+    
+    private fun fetchProductDetails(productIds: List<String>): List<org.example.project.data.Product> {
+        return try {
+            val productRepository = org.example.project.JewelryAppInitializer.getProductRepository()
+            if (productRepository != null) {
+                kotlinx.coroutines.runBlocking {
+                    val allProducts = productRepository.getAllProducts()
+                    allProducts.filter { productIds.contains(it.id) }
+                }
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 }

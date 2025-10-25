@@ -85,8 +85,11 @@ class PdfGeneratorService {
     }
 
     private fun generateInvoiceHtml(order: Order, customer: User, invoiceConfig: InvoiceConfig): String {
+        // Fetch product details for PDF generation
+        val products = fetchProductDetails(order.items.map { it.productId })
+        
         val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-        val orderDate = dateFormat.format(Date(order.timestamp))
+        val orderDate = dateFormat.format(Date(order.createdAt))
         
         val subtotal = order.subtotal
         val gstAmount = order.gstAmount
@@ -100,7 +103,7 @@ class PdfGeneratorService {
         <head>
             <meta charset="UTF-8"/>
             <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-            <title>Invoice ${order.id}</title>
+            <title>Invoice ${order.orderId}</title>
             <style>
                 ${getPdfStyles()}
             </style>
@@ -122,7 +125,7 @@ class PdfGeneratorService {
                     <div class="invoice-info">
                         <h2 class="invoice-title">INVOICE</h2>
                         <div class="invoice-details">
-                            <p><strong>Invoice No:</strong> ${order.id}</p>
+                            <p><strong>Invoice No:</strong> ${order.orderId}</p>
                             <p><strong>Date:</strong> $orderDate</p>
                         </div>
                     </div>
@@ -155,7 +158,7 @@ class PdfGeneratorService {
                             </tr>
                         </thead>
                         <tbody>
-                            ${generateItemsRows(order.items)}
+                            ${generateDetailedItemsRows(order.items, products)}
                         </tbody>
                     </table>
                 </div>
@@ -639,5 +642,70 @@ class PdfGeneratorService {
         val threeDigits = Regex("(\\d{3})").find(s)?.groupValues?.getOrNull(1)?.toIntOrNull()
         if (threeDigits != null && threeDigits in listOf(900, 925, 999)) return threeDigits
         return 999
+    }
+    
+    private fun generateSimplifiedItemsRows(items: List<org.example.project.data.OrderItem>): String {
+        return items.joinToString("") { item ->
+            """
+            <tr>
+                <td>Product ${item.productId}</td>
+                <td>Barcode: ${item.barcodeId}</td>
+                <td>${item.quantity}</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+            </tr>
+            """.trimIndent()
+        }
+    }
+    
+    private fun generateDetailedItemsRows(items: List<org.example.project.data.OrderItem>, products: List<org.example.project.data.Product>): String {
+        return items.joinToString("") { item ->
+            val product = products.find { it.id == item.productId }
+            if (product != null) {
+                generateItemsRows(listOf(org.example.project.data.CartItem(
+                    productId = item.productId,
+                    quantity = item.quantity,
+                    selectedBarcodeIds = listOf(item.barcodeId),
+                    product = product,
+                    metal = product.materialType,
+                    grossWeight = parseWeight(product.weight),
+                    totalWeight = parseWeight(product.weight),
+                    lessWeight = 0.0,
+                    makingCharges = 0.0,
+                    stoneRate = 0.0,
+                    stoneQuantity = 0.0,
+                    cwWeight = 0.0,
+                    va = 0.0
+                )))
+            } else {
+                generateSimplifiedItemsRows(listOf(item))
+            }
+        }
+    }
+    
+    private fun parseWeight(weightString: String): Double {
+        return try {
+            weightString.replace("[^0-9.]".toRegex(), "").toDoubleOrNull() ?: 0.0
+        } catch (e: Exception) {
+            0.0
+        }
+    }
+    
+    private fun fetchProductDetails(productIds: List<String>): List<org.example.project.data.Product> {
+        return try {
+            val productRepository = org.example.project.JewelryAppInitializer.getProductRepository()
+            if (productRepository != null) {
+                kotlinx.coroutines.runBlocking {
+                    val allProducts = productRepository.getAllProducts()
+                    allProducts.filter { productIds.contains(it.id) }
+                }
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 }

@@ -10,10 +10,13 @@ import kotlinx.coroutines.launch
 import org.example.project.JewelryAppInitializer
 import org.example.project.data.*
 import org.example.project.utils.PdfGeneratorService
+import org.example.project.data.MetalRatesManager
 import java.awt.Desktop
 import java.io.File
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.text.SimpleDateFormat
+import java.util.*
 
 class PaymentViewModel(
     private val paymentRepository: PaymentRepository
@@ -91,61 +94,79 @@ class PaymentViewModel(
     ) {
         viewModelScope.launch {
             val errors = mutableListOf<String>()
+            val inventoryRepository = JewelryAppInitializer.getInventoryRepository()
 
             cart.items.forEach { cartItem ->
                 val currentProduct = products.find { it.id == cartItem.productId }
                 if (currentProduct == null) {
                     errors.add("${cartItem.product.name} is no longer available")
-                } else if (cartItem.quantity > currentProduct.quantity) {
-                    errors.add("${cartItem.product.name}: Only ${currentProduct.quantity} available")
+                } else {
+                    // Check inventory-based availability instead of product.quantity
+                    val availableInventoryCount = if (inventoryRepository != null) {
+                        inventoryRepository.getAvailableInventoryItemsByProductId(cartItem.productId).size
+                    } else {
+                        currentProduct.quantity // Fallback to product quantity if inventory repository is not available
+                    }
+                    
+                    println("🔍 STOCK VALIDATION for ${cartItem.product.name}")
+                    println("   - Cart quantity: ${cartItem.quantity}")
+                    println("   - Available inventory count: $availableInventoryCount")
+                    println("   - Product quantity (old): ${currentProduct.quantity}")
+                    
+                    if (cartItem.quantity > availableInventoryCount) {
+                        errors.add("${cartItem.product.name}: Only $availableInventoryCount available in inventory")
+                    }
                 }
             }
+
+            println("🔍 STOCK VALIDATION RESULT")
+            println("   - Errors count: ${errors.size}")
+            println("   - Errors: $errors")
+            println("   - Validation passed: ${errors.isEmpty()}")
 
             onValidationResult(errors.isEmpty(), errors)
         }
     }
 
     private suspend fun reduceStockAfterOrder(order: Order, productRepository: ProductRepository) {
-        order.items.forEach { cartItem ->
+        val inventoryRepository = JewelryAppInitializer.getInventoryRepository()
+        
+        order.items.forEach { orderItem ->
             try {
-                val product = productRepository.getProductById(cartItem.productId)
-                if (product != null) {
-                    // Reduce quantity
-                    val newQuantity = maxOf(0, product.quantity - cartItem.quantity)
-                    
-                    // For each sold item, nullify one barcode ID
-                    val updatedBarcodeIds = product.barcodeIds.toMutableList()
-                    val itemsToSell = minOf(cartItem.quantity, updatedBarcodeIds.size)
-                    
-                    // Remove barcode IDs for sold items (set to null by removing from list)
-                    repeat(itemsToSell) {
-                        if (updatedBarcodeIds.isNotEmpty()) {
-                            updatedBarcodeIds.removeAt(0) // Remove first barcode ID
+                println("🛒 Processing order item")
+                println("   - Product ID: ${orderItem.productId}")
+                println("   - Barcode ID: ${orderItem.barcodeId}")
+                println("   - Quantity: ${orderItem.quantity}")
+                
+                // Delete the barcode document from inventory collection
+                try {
+                    println("   - Deleting barcode: ${orderItem.barcodeId}")
+                    val inventoryItem = inventoryRepository?.getInventoryItemByBarcodeId(orderItem.barcodeId)
+                    if (inventoryItem != null) {
+                        val success = inventoryRepository.deleteInventoryItem(inventoryItem.id)
+                        if (success) {
+                            println("   - ✅ Barcode ${orderItem.barcodeId} deleted successfully")
+                        } else {
+                            println("   - ❌ Failed to delete barcode ${orderItem.barcodeId}")
                         }
-                    }
-                    
-                    // Set barcodeIds to empty string if all items are sold (for Firestore compatibility)
-                    val finalBarcodeIds = if (updatedBarcodeIds.isEmpty()) {
-                        emptyList() // Will be stored as empty string in Firestore
                     } else {
-                        updatedBarcodeIds
+                        println("   - ⚠️ Inventory item not found for barcode: ${orderItem.barcodeId}")
                     }
-                    
-                    val updatedProduct = product.copy(
-                        quantity = newQuantity,
-                        barcodeIds = finalBarcodeIds
-                    )
-                    productRepository.updateProduct(updatedProduct)
-                    
-                    println("🛒 Order Processing: Updated product ${product.name}")
-                    println("   - Original quantity: ${product.quantity}, New quantity: $newQuantity")
-                    println("   - Original barcodes: ${product.barcodeIds.size}, New barcodes: ${updatedBarcodeIds.size}")
-                    println("   - Items sold: $itemsToSell")
+                } catch (e: Exception) {
+                    println("   - ❌ Error deleting barcode ${orderItem.barcodeId}: ${e.message}")
                 }
+                
+                println("🛒 Order Processing: Completed processing order item")
+                println("   - Deleted barcode document: ${orderItem.barcodeId}")
+                println("   - Product document remains unchanged")
+                
             } catch (e: Exception) {
-                println("❌ Error processing product ${cartItem.productId}: ${e.message}")
+                println("❌ Error processing order item ${orderItem.productId}: ${e.message}")
             }
         }
+        
+        // Trigger inventory refresh to update dashboard quantities
+        JewelryAppInitializer.getViewModel().triggerInventoryRefresh()
     }
 
     fun setDiscountValue(value: String) {
@@ -225,19 +246,62 @@ class PaymentViewModel(
                 
                 val gstRate = if (subtotal > 0) gst / subtotal else 0.0
                 
+                // Convert CartItem objects to OrderItem objects (only store barcodeId and productId)
+                val orderItems = cart.items.flatMap { cartItem ->
+                    cartItem.selectedBarcodeIds.map { barcodeId ->
+                        OrderItem(
+                            productId = cartItem.productId,
+                            barcodeId = barcodeId,
+                            quantity = 1 // Each barcode represents 1 item
+                        )
+                    }
+                }
+                
+                println("📦 CREATING ORDER WITH SIMPLIFIED ITEMS")
+                println("   - Cart items count: ${cart.items.size}")
+                println("   - Order items count: ${orderItems.size}")
+                orderItems.forEach { orderItem ->
+                    println("   - OrderItem: productId=${orderItem.productId}, barcodeId=${orderItem.barcodeId}")
+                }
+                
+                // Get customer information
+                val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
+
+                // Calculate taxable amount (subtotal - discount amount)
+                val taxableAmount = subtotal - discountAmount
+
+                // Format transaction date
+                val dateFormat = SimpleDateFormat("dd MMMM yyyy 'at' HH:mm:ss z", Locale.getDefault())
+                val transactionDate = dateFormat.format(Date())
+
+                // Get metal rates reference - this should point to the actual rates collection
+                val metalRatesReference = getCurrentMetalRatesReference()
+
+                println("📦 ORDER CREATION DETAILS")
+                println("   - Customer ID: ${cart.customerId}")
+                println("   - Subtotal: $subtotal")
+                println("   - Discount Amount: $discountAmount")
+                println("   - Taxable Amount: $taxableAmount")
+                println("   - GST Amount: $gst")
+                println("   - Final Amount: $finalTotal")
+                println("   - Transaction Date: $transactionDate")
+                println("   - Metal Rates Reference: $metalRatesReference")
+
                 val order = Order(
-                    id = generateOrderId(),
-                    customerId = cart.customerId,
-                    paymentMethod = paymentMethod,
+                    orderId = generateOrderId(),
+                    customerId = cart.customerId, // Reference to users collection
                     paymentSplit = paymentSplit,
                     subtotal = subtotal,
                     discountAmount = discountAmount,
+                    taxableAmount = taxableAmount, // Set taxable amount
                     gstAmount = gst,
-                    gstRate = gstRate,
                     totalAmount = finalTotal,
-                    items = cart.items,
-                    timestamp = System.currentTimeMillis(),
-                    status = OrderStatus.CONFIRMED
+                    finalAmount = finalTotal, // Set final amount
+                    items = orderItems, // Simplified references for Firestore storage
+                    metalRatesReference = metalRatesReference, // Reference to rates collection
+                    transactionDate = transactionDate, // Set transaction date
+                    createdAt = System.currentTimeMillis(),
+                    paymentStatus = PaymentStatus.COMPLETED
                 )
 
                 // Save order to database
@@ -248,22 +312,24 @@ class PaymentViewModel(
                     val productRepository = JewelryAppInitializer.getViewModel().repository
                     reduceStockAfterOrder(order, productRepository)
 
+                    // Update customer balance with due amount
+                    updateCustomerBalance(order.customerId, order.paymentSplit?.dueAmount ?: 0.0)
+
                     // Refresh product list to update UI
                     JewelryAppInitializer.getViewModel().loadProducts()
 
                     // Create transaction record
                     _lastTransaction.value = PaymentTransaction(
-                        id = order.id,
+                        id = order.orderId,
                         cartId = order.customerId,
-                        paymentMethod = order.paymentMethod,
+                        paymentMethod = PaymentMethod.CASH, // Default payment method
                         paymentSplit = order.paymentSplit,
                         subtotal = order.subtotal,
                         discountAmount = order.discountAmount,
                         gstAmount = order.gstAmount,
-                        gstRate = order.gstRate,
                         totalAmount = order.totalAmount,
-                        items = order.items,
-                        timestamp = order.timestamp,
+                        items = cart.items, // Use CartItem objects for receipt display
+                        timestamp = order.createdAt,
                         status = PaymentStatus.COMPLETED
                     )
 
@@ -324,7 +390,7 @@ class PaymentViewModel(
                     throw Exception("Cannot write to bills directory: ${billsDirectory.absolutePath}")
                 }
 
-                val pdfFileName = "Invoice_${order.id}_${System.currentTimeMillis()}.pdf"
+                val pdfFileName = "Invoice_${order.orderId}_${System.currentTimeMillis()}.pdf"
                 val pdfOutputPath = File(billsDirectory, pdfFileName)
 
                 // Fetch invoice configuration directly; fall back to defaults if not found
@@ -408,19 +474,35 @@ class PaymentViewModel(
     // Public helper: generate PDF for the last successful transaction
     fun generatePdfForLastTransaction(customer: User) {
         val transaction = _lastTransaction.value ?: return
+        // Calculate taxable amount (subtotal - discount amount)
+        val taxableAmount = transaction.subtotal - transaction.discountAmount
+        
+        // Format transaction date
+        val dateFormat = SimpleDateFormat("dd MMMM yyyy 'at' HH:mm:ss z", Locale.getDefault())
+        val transactionDate = dateFormat.format(Date(transaction.timestamp))
+        
         val order = Order(
-            id = transaction.id,
-            customerId = transaction.cartId,
-            paymentMethod = transaction.paymentMethod,
+            orderId = transaction.id,
+            customerId = transaction.cartId, // Reference to users collection
             paymentSplit = transaction.paymentSplit,
             subtotal = transaction.subtotal,
             discountAmount = transaction.discountAmount,
+            taxableAmount = taxableAmount, // Set taxable amount
             gstAmount = transaction.gstAmount,
-            gstRate = transaction.gstRate,
             totalAmount = transaction.totalAmount,
-            items = transaction.items,
-            timestamp = transaction.timestamp,
-            status = OrderStatus.CONFIRMED
+            finalAmount = transaction.totalAmount, // Set final amount
+            items = transaction.items.map { cartItem ->
+                // Convert CartItem to OrderItem for PDF generation
+                OrderItem(
+                    productId = cartItem.productId,
+                    barcodeId = cartItem.selectedBarcodeIds.firstOrNull() ?: "",
+                    quantity = cartItem.quantity
+                )
+            },
+            metalRatesReference = getCurrentMetalRatesReference(), // Reference to rates collection
+            transactionDate = transactionDate, // Set transaction date
+            createdAt = transaction.timestamp,
+            paymentStatus = PaymentStatus.COMPLETED
         )
         generateOrderPDF(order, customer)
     }
@@ -568,17 +650,41 @@ class PaymentViewModel(
                 val (dynamicSubtotal, dynamicGst, dynamicTotal) = calculateDynamicPrices(cart, goldPrice, silverPrice)
                 val discountAmount = calculateDiscountAmount(dynamicSubtotal, dynamicGst)
 
+                // Convert CartItem objects to OrderItem objects (only store barcodeId and productId)
+                val orderItems = cart.items.flatMap { cartItem ->
+                    cartItem.selectedBarcodeIds.map { barcodeId ->
+                        OrderItem(
+                            productId = cartItem.productId,
+                            barcodeId = barcodeId,
+                            quantity = 1 // Each barcode represents 1 item
+                        )
+                    }
+                }
+                
+                // Get customer information
+                val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
+
+                // Calculate taxable amount (subtotal - discount amount)
+                val taxableAmount = dynamicSubtotal - discountAmount
+
+                // Format transaction date
+                val dateFormat = SimpleDateFormat("dd MMMM yyyy 'at' HH:mm:ss z", Locale.getDefault())
+                val transactionDate = dateFormat.format(Date())
+
                 val order = Order(
-                    id = generateOrderId(),
-                    customerId = cart.customerId,
-                    paymentMethod = _selectedPaymentMethod.value!!,
+                    orderId = generateOrderId(),
+                    customerId = cart.customerId, // Reference to users collection
                     subtotal = dynamicSubtotal,
                     discountAmount = discountAmount,
+                    taxableAmount = taxableAmount, // Set taxable amount
                     gstAmount = dynamicGst,
                     totalAmount = dynamicTotal,
-                    items = cart.items,
-                    timestamp = System.currentTimeMillis(),
-                    status = OrderStatus.CONFIRMED
+                    finalAmount = dynamicTotal, // Set final amount
+                    items = orderItems, // Simplified references for Firestore storage
+                    metalRatesReference = getCurrentMetalRatesReference(), // Reference to rates collection
+                    transactionDate = transactionDate, // Set transaction date
+                    createdAt = System.currentTimeMillis(),
+                    paymentStatus = PaymentStatus.COMPLETED
                 )
 
                 // Save order to database
@@ -589,19 +695,22 @@ class PaymentViewModel(
                     val productRepository = JewelryAppInitializer.getViewModel().repository
                     reduceStockAfterOrder(order, productRepository)
 
+                    // Update customer balance with due amount
+                    updateCustomerBalance(order.customerId, order.paymentSplit?.dueAmount ?: 0.0)
+
                     // Refresh product list to update UI
                     JewelryAppInitializer.getViewModel().loadProducts()
 
                     _lastTransaction.value = PaymentTransaction(
-                        id = order.id,
+                        id = order.orderId,
                         cartId = order.customerId,
-                        paymentMethod = order.paymentMethod,
+                        paymentMethod = PaymentMethod.CASH, // Default payment method
                         subtotal = order.subtotal,
                         discountAmount = order.discountAmount,
                         gstAmount = order.gstAmount,
                         totalAmount = order.totalAmount,
-                        items = order.items,
-                        timestamp = order.timestamp,
+                        items = cart.items, // Use CartItem objects for receipt display
+                        timestamp = order.createdAt,
                         status = PaymentStatus.COMPLETED
                     )
                     onSuccess()
@@ -614,5 +723,40 @@ class PaymentViewModel(
                 _isProcessing.value = false
             }
         }
+    }
+    
+    /**
+     * Updates customer balance with due amount after bill processing
+     * This adds the final amount to the customer's outstanding balance in the users collection
+     */
+    private suspend fun updateCustomerBalance(customerId: String, dueAmount: Double) {
+        try {
+            println("💰 PAYMENT VIEWMODEL: Updating customer balance")
+            println("   - Customer ID: $customerId")
+            println("   - Due Amount: $dueAmount")
+            
+            val customerRepository = JewelryAppInitializer.getCustomerRepository()
+            val success = customerRepository.addToCustomerBalance(customerId, dueAmount)
+            
+            if (success) {
+                println("✅ Customer balance updated successfully")
+            } else {
+                println("❌ Failed to update customer balance")
+            }
+        } catch (e: Exception) {
+            println("❌ Error updating customer balance: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+    
+    /**
+     * Gets the current metal rates reference for orders
+     * This should point to the actual rates collection document
+     */
+    private fun getCurrentMetalRatesReference(): String {
+        // TODO: This needs to be updated based on the actual collection structure
+        // For now, returning "current" but this should be the actual document ID
+        // from the rates collection that contains the current metal rates
+        return "current"
     }
 }

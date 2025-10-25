@@ -22,15 +22,15 @@ class HtmlCssBillGenerator {
     ): Boolean {
         return try {
             println("🔄 ========== HTML/CSS BILL GENERATION STARTED ==========")
-            println("📋 Order ID: ${order.id}")
+            println("📋 Order ID: ${order.orderId}")
             println("📄 Output path: $outputPath")
             println("👤 Customer: ${customer.name} (ID: ${customer.id})")
             println("💰 Order total: ₹${String.format("%.2f", order.totalAmount)}")
             println("📦 Items count: ${order.items.size}")
-            println("💳 Payment method: ${order.paymentMethod}")
+            println("💳 Payment status: ${order.paymentStatus}")
             
             // Validate inputs
-            if (order.id.isBlank()) {
+            if (order.orderId.isBlank()) {
                 throw IllegalArgumentException("Order ID is blank")
             }
             if (customer.name.isBlank()) {
@@ -39,6 +39,10 @@ class HtmlCssBillGenerator {
             if (order.items.isEmpty()) {
                 throw IllegalArgumentException("Order has no items")
             }
+            
+            // Fetch product details for PDF generation
+            val products = fetchProductDetails(order.items.map { it.productId })
+            println("📦 Fetched ${products.size} product details for PDF generation")
             
             // Check output directory
             val htmlFile = outputPath.toFile()
@@ -57,7 +61,7 @@ class HtmlCssBillGenerator {
             
             // Generate HTML content
             println("🔧 Generating HTML content...")
-            val htmlContent = generateHtmlContent(order, customer, invoiceConfig)
+            val htmlContent = generateHtmlContent(order, customer, products, invoiceConfig)
             println("📄 Generated HTML content length: ${htmlContent.length} characters")
             
             if (htmlContent.isBlank()) {
@@ -96,9 +100,9 @@ class HtmlCssBillGenerator {
         }
     }
 
-    private fun generateHtmlContent(order: Order, customer: User, invoiceConfig: InvoiceConfig): String {
+    private fun generateHtmlContent(order: Order, customer: User, products: List<org.example.project.data.Product>, invoiceConfig: InvoiceConfig): String {
         val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-        val orderDate = dateFormat.format(Date(order.timestamp))
+        val orderDate = dateFormat.format(Date(order.createdAt))
         
         // Calculate totals
         val subtotal = order.subtotal
@@ -115,7 +119,7 @@ class HtmlCssBillGenerator {
         <head>
             <meta charset="UTF-8" />
             <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-            <title>Invoice ${order.id}</title>
+            <title>Invoice ${order.orderId}</title>
             <link rel="stylesheet" href="bill-styles.css">
         </head>
         <body>
@@ -135,7 +139,7 @@ class HtmlCssBillGenerator {
                     <div class="invoice-info">
                         <h2 class="invoice-title">INVOICE</h2>
                         <div class="invoice-details">
-                            <p><strong>Invoice No:</strong> ${order.id}</p>
+                            <p><strong>Invoice No:</strong> ${order.orderId}</p>
                             <p><strong>Date:</strong> $orderDate</p>
                         </div>
                     </div>
@@ -168,7 +172,7 @@ class HtmlCssBillGenerator {
                             </tr>
                         </thead>
                         <tbody>
-                            ${generateItemsRows(order.items)}
+                            ${generateDetailedItemsRows(order.items, products)}
                         </tbody>
                     </table>
                 </div>
@@ -680,5 +684,74 @@ class HtmlCssBillGenerator {
         val threeDigits = Regex("(\\d{3})").find(s)?.groupValues?.getOrNull(1)?.toIntOrNull()
         if (threeDigits != null && threeDigits in listOf(900, 925, 999)) return threeDigits
         return 999
+    }
+    
+    private fun generateSimplifiedItemsRows(items: List<org.example.project.data.OrderItem>): String {
+        return items.joinToString("") { item ->
+            """
+            <tr>
+                <td>Product ${item.productId}</td>
+                <td>Barcode: ${item.barcodeId}</td>
+                <td>${item.quantity}</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+                <td>-</td>
+            </tr>
+            """.trimIndent()
+        }
+    }
+    
+    private fun generateDetailedItemsRows(items: List<org.example.project.data.OrderItem>, products: List<org.example.project.data.Product>): String {
+        return items.joinToString("") { item ->
+            val product = products.find { it.id == item.productId }
+            if (product != null) {
+                generateItemsRows(listOf(org.example.project.data.CartItem(
+                    productId = item.productId,
+                    quantity = item.quantity,
+                    selectedBarcodeIds = listOf(item.barcodeId),
+                    product = product,
+                    metal = product.materialType,
+                    grossWeight = parseWeight(product.weight),
+                    totalWeight = parseWeight(product.weight),
+                    lessWeight = 0.0,
+                    makingCharges = 0.0,
+                    stoneRate = 0.0,
+                    stoneQuantity = 0.0,
+                    cwWeight = 0.0,
+                    va = 0.0
+                )))
+            } else {
+                generateSimplifiedItemsRows(listOf(item))
+            }
+        }
+    }
+    
+    private fun parseWeight(weightString: String): Double {
+        return try {
+            weightString.replace("[^0-9.]".toRegex(), "").toDoubleOrNull() ?: 0.0
+        } catch (e: Exception) {
+            0.0
+        }
+    }
+    
+    private fun fetchProductDetails(productIds: List<String>): List<org.example.project.data.Product> {
+        return try {
+            // Get the product repository from JewelryAppInitializer
+            val productRepository = org.example.project.JewelryAppInitializer.getProductRepository()
+            if (productRepository != null) {
+                // Fetch all products and filter by the required IDs
+                kotlinx.coroutines.runBlocking {
+                    val allProducts = productRepository.getAllProducts()
+                    allProducts.filter { productIds.contains(it.id) }
+                }
+            } else {
+                println("⚠️ Product repository not available, using empty list")
+                emptyList()
+            }
+        } catch (e: Exception) {
+            println("❌ Error fetching product details: ${e.message}")
+            emptyList()
+        }
     }
 }

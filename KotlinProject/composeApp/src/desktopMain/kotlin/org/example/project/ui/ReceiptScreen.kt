@@ -701,15 +701,15 @@ private fun PaymentSummaryBreakdown(
     
     // Apply discount to subtotal
     val discountAmount = transaction.discountAmount
-    val subtotalWithGst = itemSubtotal + (itemSubtotal * transaction.gstRate)
+    val gstAmount = transaction.gstAmount
+    val subtotalWithGst = itemSubtotal + gstAmount
     val taxableAmount = subtotalWithGst - discountAmount
     
-    // Calculate GST on original subtotal (not on discounted amount)
-    val gstPercentage = (transaction.gstRate * 100).toInt() // Convert from decimal to percentage
-    val gst = itemSubtotal * transaction.gstRate
+    // Calculate GST percentage from gstAmount
+    val gstPercentage = if (itemSubtotal > 0) ((gstAmount / itemSubtotal) * 100).toInt() else 0
     
     // Final total = subtotal + GST - discount
-    val finalTotal = itemSubtotal + gst - discountAmount
+    val finalTotal = itemSubtotal + gstAmount - discountAmount
 
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -727,10 +727,10 @@ private fun PaymentSummaryBreakdown(
             )
         }
 
-        if (gst > 0) {
+        if (gstAmount > 0) {
             AmountRow(
                 label = "GST (${gstPercentage}%)",
-                amount = gst
+                amount = gstAmount
             )
         }
 
@@ -762,7 +762,7 @@ private fun PaymentSummaryBreakdown(
         // Add GST status indicator
 //        Spacer(modifier = Modifier.height(8.dp))
 //        Text(
-//            if (gst > 0) "* GST (${gstPercentage}%) included in total amount" else "* No GST applied",
+//            if (gstAmount > 0) "* GST (${gstPercentage}%) included in total amount" else "* No GST applied",
 //            fontSize = 12.sp,
 //            color = Color(0xFF666666),
 //            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
@@ -775,7 +775,7 @@ private fun PriceBreakdown(
     subtotal: Double,
     makingCharges: Double,
     discountAmount: Double,
-    gst: Double,
+    gstAmount: Double,
     total: Double,
     isGstIncluded: Boolean,
     transaction: PaymentTransaction? = null
@@ -825,12 +825,12 @@ private fun PriceBreakdown(
         }
 
         // Calculate GST percentage dynamically
-        val gstPercentage = if (subtotal > 0) (gst / subtotal * 100).toInt() else 0
+        val gstPercentage = if (subtotal > 0) (gstAmount / subtotal * 100).toInt() else 0
         
-        if (gst > 0) {
+        if (gstAmount > 0) {
             AmountRow(
                 label = "GST (${gstPercentage}%)",
-                amount = gst
+                amount = gstAmount
             )
         }
 
@@ -859,7 +859,7 @@ private fun PriceBreakdown(
         // Add GST status indicator
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            if (gst > 0) "* GST (${gstPercentage}%) included in total amount" else "* No GST applied",
+            if (gstAmount > 0) "* GST (${gstPercentage}%) included in total amount" else "* No GST applied",
             fontSize = 12.sp,
             color = Color(0xFF666666),
             fontStyle = androidx.compose.ui.text.font.FontStyle.Italic

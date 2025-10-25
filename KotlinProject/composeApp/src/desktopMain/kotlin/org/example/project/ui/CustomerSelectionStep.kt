@@ -256,6 +256,7 @@ fun AddCustomerDialog(
     var email by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
 
     // Validation states
     var nameError by remember { mutableStateOf(false) }
@@ -361,6 +362,21 @@ fun AddCustomerDialog(
                     maxLines = 3,
                     textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
                 )
+
+                // Notes field (optional)
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = {
+                        Text(
+                            "Notes (Optional)",
+                            fontSize = 12.sp  // Reduced font size
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 3,
+                    textStyle = LocalTextStyle.current.copy(fontSize = 13.sp)  // Reduced text size
+                )
             }
         },
         confirmButton = {
@@ -374,7 +390,10 @@ fun AddCustomerDialog(
                             email = email,
                             name = name,
                             phone = phone,
-                            address = address
+                            address = address,
+                            notes = notes,
+                            balance = 0.0, // Initialize balance to 0
+                            customerId = "" // Will be set by the repository
                         )
                         onAddCustomer(customer)
                     }

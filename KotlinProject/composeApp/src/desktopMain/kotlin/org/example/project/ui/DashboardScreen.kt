@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,25 +84,42 @@ fun DashboardScreen(
     onAddProduct: () -> Unit,
     onViewProductDetails: (String) -> Unit,
     onEditBarcode: (String) -> Unit = {},
+    onDeleteBarcode: (String) -> Unit = {},
     onDuplicateProduct: (String, String) -> Unit = { _, _ -> }
 ) {
     val products by remember { viewModel.products }
-    val groupedProducts = remember(products) { viewModel.getGroupedProducts() }
+    val inventoryRefreshTrigger by remember { viewModel.inventoryRefreshTrigger }
+    val groupedProducts = remember(products, inventoryRefreshTrigger) { 
+        println("🔄 Dashboard: Recalculating grouped products (trigger: $inventoryRefreshTrigger)")
+        viewModel.getGroupedProducts() 
+    }
     val showDeleteDialog = remember { mutableStateOf(false) }
     val productToDelete = remember { mutableStateOf<String?>(null) }
+    val groupedProductToDelete = remember { mutableStateOf<GroupedProduct?>(null) }
     val showDuplicateDialog = remember { mutableStateOf(false) }
     val productToDuplicate = remember { mutableStateOf<String?>(null) }
     
-    // Add logging to verify dashboard shows products with 0 quantity
-    println("📊 DEBUG: Dashboard screen loaded")
+    // Ensure rates are loaded when dashboard loads and observe rate changes
+    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+    val metalRatesList by ratesVM.metalRates.collectAsState()
+    val metalRates by MetalRatesManager.metalRates
+    
+    LaunchedEffect(Unit) {
+        ratesVM.loadMetalRates()
+    }
+    
+    // Add logging to verify dashboard shows products with inventory-based quantity
+    println("📊 DEBUG: Dashboard screen loaded with inventory-based quantities")
     println("   - Total products: ${products.size}")
     println("   - Grouped products: ${groupedProducts.size}")
+    println("   - Inventory refresh trigger: $inventoryRefreshTrigger")
     groupedProducts.forEach { groupedProduct ->
         println("   📦 Product: ${groupedProduct.baseProduct.name}")
-        println("      - Quantity: ${groupedProduct.quantity}")
+        println("      - Inventory Quantity: ${groupedProduct.quantity}")
         println("      - Available: ${groupedProduct.baseProduct.available}")
+        println("      - Barcode IDs: ${groupedProduct.barcodeIds}")
         if (groupedProduct.quantity == 0) {
-            println("      - ⚠️ Product has 0 quantity but still displayed in dashboard")
+            println("      - ⚠️ Product has 0 inventory quantity but still displayed in dashboard")
         }
     }
 
@@ -119,13 +137,18 @@ fun DashboardScreen(
                 fontWeight = FontWeight.Bold
             )
 
-            Button(
-                onClick = onAddProduct,
-                colors = ButtonDefaults.buttonColors(MaterialTheme.colors.primary)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Add, contentDescription = "Add")
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Add New Product")
+                Button(
+                    onClick = onAddProduct,
+                    colors = ButtonDefaults.buttonColors(MaterialTheme.colors.primary)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add")
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Add New Product")
+                }
             }
         }
 
@@ -185,16 +208,27 @@ fun DashboardScreen(
                             groupedProduct = groupedProduct,
                             viewModel = viewModel,
                             imageLoader = imageLoader,
+                            metalRates = metalRates,
                             onDelete = {
-                                // For grouped products, delete all products in the group
+                                // For grouped products, delete all products in the group except parent
+                                println("🗑️ DASHBOARD: Delete button clicked")
+                                println("   - Product ID: ${groupedProduct.baseProduct.id}")
+                                println("   - Product Name: ${groupedProduct.baseProduct.name}")
+                                println("   - Common ID: ${groupedProduct.commonId}")
+                                println("   - Quantity: ${groupedProduct.quantity}")
+                                println("   - Current dialog state: ${showDeleteDialog.value}")
                                 productToDelete.value = groupedProduct.baseProduct.id
+                                groupedProductToDelete.value = groupedProduct
                                 showDeleteDialog.value = true
+                                println("   - Dialog state set to: ${showDeleteDialog.value}")
+                                println("   - Delete dialog should be shown")
                             },
                             onClick = { 
                                 // For grouped products, show details of the first product
                                 onViewProductDetails(groupedProduct.baseProduct.id) 
                             },
                             onEditBarcode = onEditBarcode,
+                            onDeleteBarcode = onDeleteBarcode,
                             onDuplicateProduct = { productId ->
                                 productToDuplicate.value = productId
                                 showDuplicateDialog.value = true
@@ -208,16 +242,39 @@ fun DashboardScreen(
     }
 
     // Delete confirmation dialog
+    println("🔍 DIALOG STATE CHECK: showDeleteDialog = ${showDeleteDialog.value}")
     if (showDeleteDialog.value) {
+        println("🗑️ DELETE DIALOG IS SHOWING")
         AlertDialog(
-            onDismissRequest = { showDeleteDialog.value = false },
+            onDismissRequest = { 
+                showDeleteDialog.value = false
+                productToDelete.value = null
+                groupedProductToDelete.value = null
+            },
             title = { Text("Confirm Deletion") },
-            text = { Text("Are you sure you want to delete this product? This action cannot be undone.") },
+            text = { 
+                val groupedProduct = groupedProductToDelete.value
+                if (groupedProduct?.commonId != null) {
+                    Text("Are you sure you want to delete this grouped product? This will delete all products in the group except the parent product. This action cannot be undone.")
+                } else {
+                    Text("Are you sure you want to delete this product? This action cannot be undone.")
+                }
+            },
             confirmButton = {
                 Button(
                     onClick = {
-                        productToDelete.value?.let { viewModel.deleteProduct(it) }
+                        println("🗑️ DASHBOARD: Delete confirmed in dialog")
+                        groupedProductToDelete.value?.let { groupedProduct ->
+                            println("   - Calling deleteGroupedProduct for: ${groupedProduct.baseProduct.name}")
+                            viewModel.deleteGroupedProduct(groupedProduct)
+                        } ?: productToDelete.value?.let { productId ->
+                            println("   - Calling deleteProduct for ID: $productId")
+                            viewModel.deleteProduct(productId)
+                        }
                         showDeleteDialog.value = false
+                        productToDelete.value = null
+                        groupedProductToDelete.value = null
+                        println("   - Delete dialog closed")
                     },
                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.Red)
                 ) {
@@ -225,7 +282,11 @@ fun DashboardScreen(
                 }
             },
             dismissButton = {
-                OutlinedButton(onClick = { showDeleteDialog.value = false }) {
+                OutlinedButton(onClick = { 
+                    showDeleteDialog.value = false
+                    productToDelete.value = null
+                    groupedProductToDelete.value = null
+                }) {
                     Text("Cancel")
                 }
             }
@@ -257,9 +318,11 @@ private fun GroupedProductRow(
     groupedProduct: GroupedProduct,
     viewModel: ProductsViewModel,
     imageLoader: ImageLoader,
+    metalRates: org.example.project.data.MetalRates,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onEditBarcode: (String) -> Unit,
+    onDeleteBarcode: (String) -> Unit,
     onDuplicateProduct: (String) -> Unit
 ) {
     val product = groupedProduct.baseProduct
@@ -344,13 +407,18 @@ private fun GroupedProductRow(
             modifier = Modifier.weight(1.5f)
         )
 
-        // Price - Show custom price if enabled, otherwise calculated total cost
-        val displayPrice = if (product.hasCustomPrice) {
-            product.customPrice
-        } else if (product.totalProductCost > 0) {
-            product.totalProductCost
-        } else {
-            calculateProductTotalCost(product)
+        // Price - Always calculate using current rates (same as cart screen)
+        // Only use custom price if explicitly enabled, otherwise always recalculate
+        val displayPrice = remember(product, metalRates) {
+            println("💰 DASHBOARD PRICE CALCULATION for ${product.name}")
+            if (product.hasCustomPrice) {
+                println("   - Using custom price: ${product.customPrice}")
+                product.customPrice
+            } else {
+                val calculatedPrice = calculateProductTotalCost(product)
+                println("   - Calculated price: $calculatedPrice")
+                calculatedPrice
+            }
         }
         Text(
             text = "₹${formatCurrency(displayPrice)}",
@@ -391,7 +459,15 @@ private fun GroupedProductRow(
             
             Row(
                 modifier = Modifier
-                    .clickable { expanded = true }
+                    .clickable { 
+                        println("📋 BARCODE DROPDOWN OPENED")
+                        println("   - Product Name: ${groupedProduct.baseProduct.name}")
+                        println("   - Product ID: ${groupedProduct.baseProduct.id}")
+                        println("   - Barcode Count: ${groupedProduct.barcodeIds.size}")
+                        println("   - Barcodes: ${groupedProduct.barcodeIds}")
+                        println("   - Timestamp: ${System.currentTimeMillis()}")
+                        expanded = true 
+                    }
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -411,7 +487,12 @@ private fun GroupedProductRow(
             
             DropdownMenu(
                 expanded = expanded,
-                onDismissRequest = { expanded = false },
+                onDismissRequest = { 
+                    println("📋 BARCODE DROPDOWN DISMISSED")
+                    println("   - Product Name: ${groupedProduct.baseProduct.name}")
+                    println("   - Timestamp: ${System.currentTimeMillis()}")
+                    expanded = false 
+                },
                 modifier = Modifier.widthIn(min = 180.dp, max = 200.dp)
             ) {
                 Text(
@@ -422,35 +503,85 @@ private fun GroupedProductRow(
                 )
                 Divider()
                 groupedProduct.barcodeIds.forEach { barcode ->
+                    // Barcode header
                     DropdownMenuItem(
                         onClick = { expanded = false }
                     ) {
+                        Text(
+                            text = barcode,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    
+                    // Edit option
+                    DropdownMenuItem(
+                        onClick = {
+                            println("✏️ BARCODE EDIT CLICKED")
+                            println("   - Barcode ID: $barcode")
+                            println("   - Product Name: ${groupedProduct.baseProduct.name}")
+                            println("   - Product ID: ${groupedProduct.baseProduct.id}")
+                            println("   - Timestamp: ${System.currentTimeMillis()}")
+                            expanded = false
+                            onEditBarcode(barcode)
+                        }
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = barcode,
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                modifier = Modifier.weight(1f)
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = "Edit barcode $barcode",
+                                tint = MaterialTheme.colors.primary,
+                                modifier = Modifier.size(14.dp)
                             )
-                            IconButton(
-                                onClick = {
-                                    expanded = false
-                                    onEditBarcode(barcode)
-                                },
-                                modifier = Modifier.size(16.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Edit,
-                                    contentDescription = "Edit barcode $barcode",
-                                    tint = MaterialTheme.colors.primary,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Edit",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colors.primary
+                            )
                         }
+                    }
+                    
+                    // Delete option
+                    DropdownMenuItem(
+                        onClick = {
+                            println("🗑️ BARCODE DELETE CLICKED")
+                            println("   - Barcode ID: $barcode")
+                            println("   - Product Name: ${groupedProduct.baseProduct.name}")
+                            println("   - Product ID: ${groupedProduct.baseProduct.id}")
+                            println("   - All Barcodes: ${groupedProduct.barcodeIds}")
+                            println("   - Timestamp: ${System.currentTimeMillis()}")
+                            expanded = false
+                            onDeleteBarcode(barcode)
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Delete barcode $barcode",
+                                tint = Color.Red,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Delete",
+                                fontSize = 12.sp,
+                                color = Color.Red
+                            )
+                        }
+                    }
+                    
+                    // Divider between barcodes
+                    if (barcode != groupedProduct.barcodeIds.last()) {
+                        Divider(modifier = Modifier.padding(horizontal = 8.dp))
                     }
                 }
             }
@@ -479,7 +610,14 @@ private fun GroupedProductRow(
                 
                 // Delete button
                 IconButton(
-                    onClick = onDelete,
+                    onClick = {
+                        println("🗑️ DELETE BUTTON CLICKED - DIRECT CLICK DETECTED")
+                        println("   - Product ID: ${product.id}")
+                        println("   - Product Name: ${product.name}")
+                        println("   - Calling onDelete callback")
+                        onDelete()
+                        println("   - onDelete callback completed")
+                    },
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
@@ -498,6 +636,7 @@ fun ProductRow(
     product: Product,
     viewModel: ProductsViewModel,
     imageLoader: ImageLoader,
+    metalRates: org.example.project.data.MetalRates,
     onDelete: () -> Unit,
     onClick: () -> Unit
 ) {
@@ -590,13 +729,18 @@ fun ProductRow(
             modifier = Modifier.weight(1.5f)
         )
 
-        // Price - Show custom price if enabled, otherwise calculated total cost
-        val displayPrice = if (product.hasCustomPrice) {
-            product.customPrice
-        } else if (product.totalProductCost > 0) {
-            product.totalProductCost
-        } else {
-            calculateProductTotalCost(product)
+        // Price - Always calculate using current rates (same as cart screen)
+        // Only use custom price if explicitly enabled, otherwise always recalculate
+        val displayPrice = remember(product, metalRates) {
+            println("💰 DASHBOARD PRICE CALCULATION for ${product.name}")
+            if (product.hasCustomPrice) {
+                println("   - Using custom price: ${product.customPrice}")
+                product.customPrice
+            } else {
+                val calculatedPrice = calculateProductTotalCost(product)
+                println("   - Calculated price: $calculatedPrice")
+                calculatedPrice
+            }
         }
         Text(
             text = "₹${formatCurrency(displayPrice)}",
@@ -735,52 +879,86 @@ private fun formatCurrency(amount: Double): String {
  * This returns Total Charges (without GST) to match the item detail screen display
  */
 private fun calculateProductTotalCost(product: Product): Double {
+    println("🧮 DASHBOARD TOTAL COST CALCULATION for ${product.name}:")
+    
     // Calculate net weight (total weight - less weight)
     val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
+    println("   - Net Weight: $netWeight (total: ${product.totalWeight}, less: ${product.lessWeight})")
     
-    // Material cost (net weight × material rate × quantity)
+    // Material cost (net weight × material rate × quantity = 1 for per-unit pricing)
     val materialRate = getMaterialRateForProduct(product)
+    val quantity = 1 // Dashboard shows per-unit price, not total price
     val baseAmount = when {
-        product.materialType.contains("gold", ignoreCase = true) -> netWeight * materialRate * product.quantity
-        product.materialType.contains("silver", ignoreCase = true) -> netWeight * materialRate * product.quantity
-        else -> netWeight * materialRate * product.quantity // Default to gold rate
+        product.materialType.contains("gold", ignoreCase = true) -> netWeight * materialRate * quantity
+        product.materialType.contains("silver", ignoreCase = true) -> netWeight * materialRate * quantity
+        else -> netWeight * materialRate * quantity // Default to gold rate
     }
+    println("   - Base Amount: $baseAmount (netWeight: $netWeight × materialRate: $materialRate × quantity: $quantity)")
     
-    // Making charges (net weight × making rate × quantity)
-    val makingCharges = netWeight * product.defaultMakingRate * product.quantity
+    // Making charges (net weight × making rate × quantity = 1 for per-unit pricing)
+    val makingCharges = netWeight * product.defaultMakingRate * quantity
+    println("   - Making Charges: $makingCharges (netWeight: $netWeight × makingRate: ${product.defaultMakingRate} × quantity: $quantity)")
     
-    // Stone amount (if has stones) - STONE_RATE × STONE_QUANTITY × CW_WT × QTY
-    val stoneAmount = if (product.hasStones) {
-        if (product.cwWeight > 0 && product.stoneRate > 0) {
-            product.stoneRate * (product.stoneQuantity.takeIf { it > 0 } ?: 1.0) * product.cwWeight * product.quantity
-        } else 0.0
-    } else 0.0
+    // Stone amount calculation - same as cart screen: stoneRate × stoneQuantity × cwWeight × quantity
+    val stoneAmount = if (product.hasStones && product.cwWeight > 0 && product.stoneRate > 0) {
+        val amount = product.stoneRate * product.stoneQuantity * product.cwWeight * quantity
+        println("   - Stone Amount: $amount (stoneRate: ${product.stoneRate} × stoneQuantity: ${product.stoneQuantity} × cwWeight: ${product.cwWeight} × quantity: $quantity)")
+        amount
+    } else {
+        println("   - Stone Amount: 0.0 (no stones or invalid stone data)")
+        0.0
+    }
     
     // Total Charges = Base Amount + Making Charges + Stone Amount + VA Charges
     // This matches the "Total Charges" display in cart item detail screen
-    return baseAmount + makingCharges + stoneAmount + product.vaCharges
+    val totalCharges = baseAmount + makingCharges + stoneAmount + product.vaCharges
+    println("   - VA Charges: ${product.vaCharges}")
+    println("   - TOTAL CHARGES: $totalCharges")
+    println("🧮 DASHBOARD CALCULATION END")
+    
+    return totalCharges
 }
 
 /**
  * Get material rate for a product based on material and type
- * Uses MetalRatesManager to get current rates from Firestore
+ * Uses price_per_gram from rates collection to align with cart screen calculation
  */
 private fun getMaterialRateForProduct(product: Product): Double {
     val metalRates = MetalRatesManager.metalRates.value
-    // Prefer collection rate from rate view model (same as cart detail)
+    // Use collection rate from rate view model (same as cart detail screen)
     val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
     val karat = extractKaratFromMaterialTypeString(product.materialType)
+    
+    println("💰 DASHBOARD RATE CALCULATION for ${product.name}:")
+    println("   - Material ID: ${product.materialId}")
+    println("   - Material Type: ${product.materialType}")
+    println("   - Karat: $karat")
+    println("   - Total Metal Rates Available: ${ratesVM.metalRates.value.size}")
+    
+    // Get price_per_gram from rates collection (same as cart screen)
     val collectionRate = try {
-        ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
-    } catch (e: Exception) { 0.0 }
+        val rate = ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
+        println("   - Collection Rate: $rate")
+        rate
+    } catch (e: Exception) { 
+        println("   - Collection Rate Error: ${e.message}")
+        0.0 
+    }
 
-    if (collectionRate > 0) return collectionRate
+    // Always prefer collection rate if available, otherwise fallback to metal rates
+    if (collectionRate > 0) {
+        println("   - Using Collection Rate: $collectionRate")
+        return collectionRate
+    }
 
-    return when {
+    // Fallback to metal rates if collection rate not available
+    val fallbackRate = when {
         product.materialType.contains("gold", ignoreCase = true) -> metalRates.getGoldRateForKarat(karat)
         product.materialType.contains("silver", ignoreCase = true) -> metalRates.getSilverRateForPurity(999)
         else -> metalRates.getGoldRateForKarat(22)
     }
+    println("   - Using Fallback Rate: $fallbackRate")
+    return fallbackRate
 }
 
 /**

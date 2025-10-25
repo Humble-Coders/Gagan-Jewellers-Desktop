@@ -59,6 +59,7 @@ import org.example.project.utils.ImageLoader
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.data.Product
 import org.example.project.data.MetalRatesManager
+import org.example.project.JewelryAppInitializer
 import org.jetbrains.skia.Image
 import java.text.NumberFormat
 import java.util.Locale
@@ -341,7 +342,7 @@ fun ProductDetailScreen(
                         )
 
                         Text(
-                            text = "₹${formatCurrency(if (p.hasCustomPrice) p.customPrice else if (p.totalProductCost > 0) p.totalProductCost else calculateProductTotalCost(p))}",
+                            text = "₹${formatCurrency(calculateProductTotalCost(p))}",
                             fontSize = 24.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colors.primary
@@ -513,26 +514,44 @@ private fun calculateProductTotalCost(product: Product): Double {
 
 /**
  * Get material rate for a product based on material and type
- * Uses MetalRatesManager to get current rates from Firestore
+ * Uses price_per_gram from rates collection to align with cart screen calculation
  */
 private fun getMaterialRateForProduct(product: Product): Double {
     val metalRates = MetalRatesManager.metalRates.value
+    // Use collection rate from rate view model (same as cart detail screen)
+    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+    val karat = extractKaratFromMaterialTypeString(product.materialType)
     
-    return when {
-        product.materialType.contains("gold", ignoreCase = true) -> {
-            // Extract karat and use appropriate gold rate
-            val karat = extractKaratFromMaterialTypeString(product.materialType)
-            metalRates.getGoldRateForKarat(karat)
-        }
-        product.materialType.contains("silver", ignoreCase = true) -> {
-            // Use silver rate
-            metalRates.getSilverRateForPurity(999) // Default to 999 purity
-        }
-        else -> {
-            // Fallback to a reasonable rate
-            metalRates.getGoldRateForKarat(22) // Default to 22K gold rate
-        }
+    println("💰 PRODUCT DETAIL RATE CALCULATION for ${product.name}:")
+    println("   - Material ID: ${product.materialId}")
+    println("   - Material Type: ${product.materialType}")
+    println("   - Karat: $karat")
+    println("   - Total Metal Rates Available: ${ratesVM.metalRates.value.size}")
+    
+    // Get price_per_gram from rates collection (same as cart screen)
+    val collectionRate = try {
+        val rate = ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
+        println("   - Collection Rate: $rate")
+        rate
+    } catch (e: Exception) { 
+        println("   - Collection Rate Error: ${e.message}")
+        0.0 
     }
+
+    // Always prefer collection rate if available, otherwise fallback to metal rates
+    if (collectionRate > 0) {
+        println("   - Using Collection Rate: $collectionRate")
+        return collectionRate
+    }
+
+    // Fallback to metal rates if collection rate not available
+    val fallbackRate = when {
+        product.materialType.contains("gold", ignoreCase = true) -> metalRates.getGoldRateForKarat(karat)
+        product.materialType.contains("silver", ignoreCase = true) -> metalRates.getSilverRateForPurity(999)
+        else -> metalRates.getGoldRateForKarat(22)
+    }
+    println("   - Using Fallback Rate: $fallbackRate")
+    return fallbackRate
 }
 
 /**

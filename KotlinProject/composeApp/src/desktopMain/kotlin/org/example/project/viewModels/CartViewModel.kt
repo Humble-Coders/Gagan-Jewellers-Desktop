@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.example.project.data.Cart
 import org.example.project.data.CartItem
@@ -18,6 +19,7 @@ import org.example.project.data.Product
 import org.example.project.data.ProductRepository
 import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.utils.ImageLoader
+import org.example.project.JewelryAppInitializer
 import org.jetbrains.skia.Image
 import java.util.concurrent.ConcurrentHashMap
 
@@ -51,10 +53,11 @@ class CartViewModel(
     val cartImages: State<Map<String, ImageBitmap>> = _cartImages
 
 
-    fun addToCart(product: Product) {
+    fun addToCart(product: Product, selectedBarcodeIds: List<String> = emptyList()) {
         println("🛒 DEBUG: addToCart called for product: ${product.name}")
         println("   - Product ID: ${product.id}")
-        println("   - Product Quantity: ${product.quantity}")
+        println("   - Selected Barcode IDs: $selectedBarcodeIds")
+        println("   - Product Quantity (from document): ${product.quantity}")
         println("   - Product Available: ${product.available}")
         println("   - Product Category: ${product.categoryId}")
         println("   - Product Material Type: ${product.materialType}")
@@ -66,10 +69,21 @@ class CartViewModel(
         println("   - Current quantity in cart: $currentQuantityInCart")
         println("   - Existing item found: ${existingItem != null}")
 
-        // Check if we can add more to cart
-        if (currentQuantityInCart >= product.quantity) {
-            println("   - ❌ Cannot add more items. Only ${product.quantity} available in stock.")
-            _error.value = "Cannot add more items. Only ${product.quantity} available in stock."
+        // Get inventory-based quantity instead of product.quantity
+        val inventoryRepository = JewelryAppInitializer.getInventoryRepository()
+        val availableInventoryCount = if (inventoryRepository != null) {
+            runBlocking { inventoryRepository.getAvailableInventoryItemsByProductId(product.id).size }
+        } else {
+            product.quantity // Fallback to product quantity if inventory repository is not available
+        }
+        
+        println("   - Available inventory count: $availableInventoryCount")
+        println("   - Selected barcodes count: ${selectedBarcodeIds.size}")
+
+        // Check if we can add more to cart based on inventory availability
+        if (currentQuantityInCart >= availableInventoryCount) {
+            println("   - ❌ Cannot add more items. Only $availableInventoryCount available in inventory.")
+            _error.value = "Cannot add more items. Only $availableInventoryCount available in inventory."
             return
         }
 
@@ -81,7 +95,8 @@ class CartViewModel(
             println("   - Updating existing item quantity")
             currentCart.items.toMutableList().apply {
                 this[existingItemIndex] = this[existingItemIndex].copy(
-                    quantity = this[existingItemIndex].quantity + 1
+                    quantity = this[existingItemIndex].quantity + 1,
+                    selectedBarcodeIds = selectedBarcodeIds
                 )
             }
         } else {
@@ -96,6 +111,7 @@ class CartViewModel(
                 productId = product.id,
                 product = product,
                 quantity = 1,
+                selectedBarcodeIds = selectedBarcodeIds,
                 metal = "${extractKaratFromMaterialType(product.materialType)}K", // Set metal from product materialType
                 customGoldRate = currentGoldRate, // Initialize with current gold rate
                 selectedWeight = productWeight,
@@ -114,6 +130,10 @@ class CartViewModel(
             items = updatedItems,
             updatedAt = System.currentTimeMillis()
         )
+        println("   - Cart state updated")
+        println("   - New cart items count: ${_cart.value.items.size}")
+        println("   - New cart item IDs: ${_cart.value.items.map { it.productId }}")
+        println("   - Cart state hash: ${_cart.value.hashCode()}")
 
         // Clear error if successful
         _error.value = null
@@ -197,9 +217,24 @@ class CartViewModel(
 
 
     fun clearCart() {
-        _cart.value = Cart()
+        val currentCustomerId = _cart.value.customerId // Preserve customer ID
+        _cart.value = Cart(customerId = currentCustomerId) // Keep customer ID when clearing
         imageCache.clear()
         _cartImages.value = emptyMap()
+        println("🛒 Cart cleared but customer ID preserved: $currentCustomerId")
+    }
+    
+    /**
+     * Sets the customer ID for the current cart
+     * This ensures the cart has a proper reference to the users collection
+     */
+    fun setCustomerId(customerId: String) {
+        val currentCart = _cart.value
+        _cart.value = currentCart.copy(
+            customerId = customerId,
+            updatedAt = System.currentTimeMillis()
+        )
+        println("🛒 Cart customer ID set: $customerId")
     }
 
     fun updateCartItem(index: Int, updatedItem: CartItem) {

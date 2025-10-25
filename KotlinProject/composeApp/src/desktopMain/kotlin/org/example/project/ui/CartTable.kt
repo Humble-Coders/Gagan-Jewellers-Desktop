@@ -111,34 +111,15 @@ fun CartTable(
         isLoadingProduct = true
         fetchedProduct = null
 
-        val barcodeId = cartItem.product.barcodeIds.firstOrNull()
-        if (barcodeId != null) {
-            coroutineScope.launch {
-                try {
-                    val product = productsViewModel.getProductByBarcodeId(barcodeId)
-                    fetchedProduct = product
-                } catch (e: Exception) {
-                    println("Failed to fetch product by barcode ID: $barcodeId - ${e.message}")
-                    try {
-                        val product = productsViewModel.repository.getProductById(cartItem.productId)
-                        fetchedProduct = product
-                    } catch (e2: Exception) {
-                        println("Failed to fetch product by ID: ${cartItem.productId} - ${e2.message}")
-                    }
-                } finally {
-                    isLoadingProduct = false
-                }
-            }
-        } else {
-            coroutineScope.launch {
-                try {
-                    val product = productsViewModel.repository.getProductById(cartItem.productId)
-                    fetchedProduct = product
-                } catch (e: Exception) {
-                    println("Failed to fetch product by ID: ${cartItem.productId} - ${e.message}")
-                } finally {
-                    isLoadingProduct = false
-                }
+        // Try to get the product by ID directly since barcodes are now in inventory
+        coroutineScope.launch {
+            try {
+                val product = productsViewModel.repository.getProductById(cartItem.productId)
+                fetchedProduct = product
+            } catch (e: Exception) {
+                println("Failed to fetch product by ID: ${cartItem.productId} - ${e.message}")
+            } finally {
+                isLoadingProduct = false
             }
         }
     }
@@ -729,7 +710,7 @@ private fun DetailPanel(
                     Spacer(modifier = Modifier.height(4.dp))
                     InfoRow("Category", productsViewModel.getCategoryName(currentProduct.categoryId), Icons.Default.CheckCircle)
                     Spacer(modifier = Modifier.height(4.dp))
-                    InfoRow("Barcode ID", currentProduct.barcodeIds.joinToString(", "), Icons.Default.Code)
+                    InfoRow("Product ID", currentProduct.id, Icons.Default.Code)
                 }
             }
 

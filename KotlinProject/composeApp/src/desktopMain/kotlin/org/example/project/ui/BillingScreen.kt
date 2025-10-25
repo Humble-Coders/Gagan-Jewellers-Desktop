@@ -91,7 +91,10 @@ fun BillingScreen(
                 when (currentStep) {
                     BillingStep.CUSTOMER -> CustomerSelectionStep(
                         viewModel = customerViewModel,
-                        onCustomerSelected = { /* Select the customer */ },
+                        onCustomerSelected = { customer ->
+                            // Set the customer ID in the cart to ensure proper reference to users collection
+                            cartViewModel.setCustomerId(customer.id)
+                        },
                         onContinue = {
                             // Clear cart when continuing to next step
                             cartViewModel.clearCart()

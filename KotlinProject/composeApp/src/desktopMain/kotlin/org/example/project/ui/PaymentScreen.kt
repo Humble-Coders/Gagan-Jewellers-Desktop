@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import org.example.project.data.CartItem
 import org.example.project.data.MetalRatesManager
+import org.example.project.JewelryAppInitializer
 import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.CustomerViewModel
@@ -78,18 +79,128 @@ fun PaymentScreen(
     var dueAmount by remember { mutableStateOf("") }
     var paymentSplit by remember { mutableStateOf<PaymentSplit?>(null) }
     
-    // Calculate GST amount using split model (3% base, 5% making) via CartViewModel
-    val gstAmount = cartViewModel.getGST()
+    // Calculate totals using the EXACT same logic as cart screen
+    val metalRates by MetalRatesManager.metalRates
+    val subtotal = remember(cart, metalRates) {
+        val total = cart.items.sumOf { cartItem ->
+            val currentProduct = cartItem.product
+            val metalKarat = if (cartItem.metal.isNotEmpty()) {
+                cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
+            } else {
+                extractKaratFromMaterialType(currentProduct.materialType)
+            }
+            
+            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
+            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else currentProduct.lessWeight
+            val netWeight = grossWeight - lessWeight
+            
+            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+            val collectionRate = try {
+                ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
+            } catch (e: Exception) { 0.0 }
+            
+            val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+            val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
+            val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
+            
+            val metalRate = if (collectionRate > 0) collectionRate else when {
+                currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
+                currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
+                else -> goldRate
+            }
+            
+            val quantity = cartItem.quantity
+            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else currentProduct.defaultMakingRate
+            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else currentProduct.cwWeight
+            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else currentProduct.stoneRate
+            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else currentProduct.stoneQuantity
+            val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.vaCharges
+            
+            val baseAmount = netWeight * metalRate * quantity
+            val makingCharges = netWeight * makingChargesPerGram * quantity
+            val stoneAmount = stoneRate * stoneQuantity * cwWeight
+            val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+            
+            println("💰 PAYMENT SCREEN DEBUG: ${cartItem.product.name} = $totalCharges")
+            totalCharges
+        }
+        println("💰 PAYMENT SCREEN TOTAL CALCULATION: Total = $total")
+        total
+    }
+    
+    // Calculate GST amount using split model (3% on metal, 5% on making charges)
+    val gstAmount = remember(cart, metalRates) {
+        val total = cart.items.sumOf { cartItem ->
+            val currentProduct = cartItem.product
+            val metalKarat = if (cartItem.metal.isNotEmpty()) {
+                cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
+            } else {
+                extractKaratFromMaterialType(currentProduct.materialType)
+            }
+
+            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
+            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else currentProduct.lessWeight
+            val netWeight = grossWeight - lessWeight
+
+            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+            val collectionRate = try {
+                ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
+            } catch (e: Exception) { 0.0 }
+
+            val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+            val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
+            val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
+
+            val metalRate = if (collectionRate > 0) collectionRate else when {
+                currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
+                currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
+                else -> goldRate
+            }
+
+            val quantity = cartItem.quantity
+            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else currentProduct.defaultMakingRate
+
+            // Calculate base amount (metal cost)
+            val baseAmount = netWeight * metalRate * quantity
+            // Calculate making charges
+            val makingCharges = netWeight * makingChargesPerGram * quantity
+
+            // Apply discount if any (assuming discount is applied proportionally)
+            val discountPercent = cartItem.discountPercent
+            val totalCharges = baseAmount + makingCharges
+            val discountAmount = totalCharges * (discountPercent / 100.0)
+            val taxableAmount = totalCharges - discountAmount
+
+            val discountFactor = if (totalCharges > 0) (taxableAmount / totalCharges) else 1.0
+            val discountedBase = baseAmount * discountFactor
+            val discountedMaking = makingCharges * discountFactor
+
+            // Calculate GST: 3% on metal, 5% on making charges
+            val gstOnBase = discountedBase * 0.03
+            val gstOnMaking = discountedMaking * 0.05
+            val itemGST = gstOnBase + gstOnMaking
+
+            println("💰 GST CALCULATION DEBUG: ${cartItem.product.name}")
+            println("   - Base Amount: $baseAmount, Making Charges: $makingCharges")
+            println("   - Discount Factor: $discountFactor")
+            println("   - Discounted Base: $discountedBase, Discounted Making: $discountedMaking")
+            println("   - GST on Base (3%): $gstOnBase, GST on Making (5%): $gstOnMaking")
+            println("   - Total GST: $itemGST")
+            itemGST
+        }
+        println("💰 TOTAL GST CALCULATION: $total")
+        total
+    }
     
     // Calculate discount amount using the new method that includes GST
     val calculatedDiscountAmount = if (discountValue.isNotEmpty()) {
-        paymentViewModel.calculateDiscountAmount(cartViewModel.getTotalCharges(), gstAmount)
+        paymentViewModel.calculateDiscountAmount(subtotal, gstAmount)
     } else {
         0.0
     }
     
     // Calculate total amount for payment split
-    val totalAmountForSplit = cartViewModel.getTotalCharges() + gstAmount - calculatedDiscountAmount - exchangeGoldValue
+    val totalAmountForSplit = subtotal + gstAmount - calculatedDiscountAmount - exchangeGoldValue
 
     // Calculate due amount automatically
     val calculatedDueAmount = remember(cashAmount, cardAmount, bankAmount, onlineAmount, totalAmountForSplit) {
@@ -143,10 +254,10 @@ fun PaymentScreen(
                 if (isValid) {
                     paymentViewModel.saveOrderWithPaymentMethod(
                         cart = cart,
-                        subtotal = cartViewModel.getTotalCharges(),
+                        subtotal = subtotal,
                         discountAmount = calculatedDiscountAmount,
                         gst = gstAmount,
-                        finalTotal = cartViewModel.getTotalCharges() + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
+                        finalTotal = subtotal + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
                         paymentSplit = paymentSplit,
                         onSuccess = onPaymentComplete
                     )
@@ -223,10 +334,10 @@ fun PaymentScreen(
                 modifier = Modifier.weight(0.4f),
                 cartItems = cart.items,
                 cartImages = cartImages,
-                subtotal = cartViewModel.getTotalCharges(),
+                subtotal = subtotal,
                 discountAmount = calculatedDiscountAmount,
                 gst = gstAmount,
-                total = cartViewModel.getTotalCharges() + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
+                total = subtotal + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
                 paymentSplit = paymentSplit,
                 exchangeGoldValue = exchangeGoldValue,
                 cartViewModel = cartViewModel,
@@ -995,9 +1106,50 @@ private fun OrderSummaryItem(
             )
         }
 
-        // Price (base amount without GST to match subtotal)
-        val metalRates = MetalRatesManager.metalRates.value
-        val baseAmount = cartViewModel.calculateItemTotalCharges(cartItem, metalRates)
+        // Price (base amount without GST to match subtotal) - using same calculation as main subtotal
+        val metalRates by MetalRatesManager.metalRates
+        val baseAmount = remember(cartItem, metalRates) {
+            val currentProduct = cartItem.product
+            val metalKarat = if (cartItem.metal.isNotEmpty()) {
+                cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
+            } else {
+                extractKaratFromMaterialType(currentProduct.materialType)
+            }
+
+            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
+            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else currentProduct.lessWeight
+            val netWeight = grossWeight - lessWeight
+
+            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+            val collectionRate = try {
+                ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
+            } catch (e: Exception) { 0.0 }
+
+            val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+            val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
+            val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
+
+            val metalRate = if (collectionRate > 0) collectionRate else when {
+                currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
+                currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
+                else -> goldRate
+            }
+
+            val quantity = cartItem.quantity
+            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else currentProduct.defaultMakingRate
+            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else currentProduct.cwWeight
+            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else currentProduct.stoneRate
+            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else currentProduct.stoneQuantity
+            val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.vaCharges
+
+            val baseAmount = netWeight * metalRate * quantity
+            val makingCharges = netWeight * makingChargesPerGram * quantity
+            val stoneAmount = stoneRate * stoneQuantity * cwWeight
+            val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+
+            println("💰 ORDER SUMMARY ITEM DEBUG: ${cartItem.product.name} = $totalCharges")
+            totalCharges
+        }
         Text(
             "₹${formatCurrency(baseAmount)}",
             fontSize = 12.sp,

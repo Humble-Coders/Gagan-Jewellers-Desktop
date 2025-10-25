@@ -40,6 +40,8 @@ import org.example.project.viewModels.ProductsViewModel
 import org.example.project.data.MetalRatesManager
 import org.example.project.viewModels.MetalRateViewModel
 import org.example.project.ui.AutoCompleteTextField
+import org.example.project.data.InventoryItem
+import org.example.project.data.InventoryStatus
 import kotlinx.coroutines.launch
 
 // Helper function to extract karat from material type
@@ -96,9 +98,9 @@ fun AddEditProductScreen(
     val focusManager = LocalFocusManager.current
 
     // Form state
-    var autoGenerateId by remember { mutableStateOf(if (isEditing) product.barcodeIds.isNotEmpty() else true) }
-    var customProductId by remember { mutableStateOf(if (isEditing && product.barcodeIds.isNotEmpty()) product.barcodeIds.first() else "") }
-    var generatedBarcodes by remember { mutableStateOf(if (isEditing) product.barcodeIds else emptyList()) }
+    var autoGenerateId by remember { mutableStateOf(true) }
+    var customProductId by remember { mutableStateOf("") }
+    var generatedBarcodes by remember { mutableStateOf(emptyList<String>()) }
     var name by remember { mutableStateOf(product.name) }
     var description by remember { mutableStateOf(product.description ?: "") }
 
@@ -373,11 +375,11 @@ fun AddEditProductScreen(
             }
 
 
-            // Product Identification (Barcode-centric)
+            // Product Identification (Inventory-based)
             SectionCard(title = "Product Identification") {
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    if (isEditing && product.barcodeIds.isNotEmpty()) {
-                        // Show existing barcodes in edit mode
+                    if (isEditing) {
+                        // Show existing inventory information in edit mode
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             backgroundColor = Color(0xFFF5F5F5),
@@ -398,47 +400,23 @@ fun AddEditProductScreen(
                                         modifier = Modifier.size(20.dp)
                                     )
                                     Text(
-                                        "Existing Barcodes (${product.barcodeIds.size})",
+                                        "Product Information",
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = Color(0xFF2E7D32)
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
-                                Column {
-                                    product.barcodeIds.forEach { code ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                code,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 14.sp,
-                                                color = MaterialTheme.colors.primary,
-                                                modifier = Modifier.padding(vertical = 2.dp)
-                                            )
-                                            IconButton(
-                                                onClick = {
-                                                    // Navigate to edit screen for this barcode
-                                                    onEditBarcode(code)
-                                                },
-                                                modifier = Modifier.size(24.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Edit,
-                                                    contentDescription = "Edit barcode $code",
-                                                    tint = MaterialTheme.colors.primary,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                                Text(
+                                    "Product ID: ${product.id}",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colors.primary,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "Note: Barcodes cannot be changed when editing. Use 'Add Product' to create new barcodes.",
+                                    "Note: Product information is separate from inventory items. Inventory items with barcodes are managed separately.",
                                     fontSize = 12.sp,
                                     color = Color.Gray,
                                     fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
@@ -446,7 +424,7 @@ fun AddEditProductScreen(
                             }
                         }
                     } else {
-                        // Show barcode generation options for new products
+                        // Show inventory creation options for new products
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -464,7 +442,7 @@ fun AddEditProductScreen(
                                         selectedColor = MaterialTheme.colors.primary
                                     )
                                 )
-                                Text("Auto Generate Barcodes", modifier = Modifier.padding(start = 8.dp))
+                                Text("Auto Generate Inventory Items", modifier = Modifier.padding(start = 8.dp))
                             }
 
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -479,12 +457,12 @@ fun AddEditProductScreen(
                                         selectedColor = MaterialTheme.colors.primary
                                     )
                                 )
-                                Text("Custom Barcode (single)", modifier = Modifier.padding(start = 8.dp))
+                                Text("Single Inventory Item", modifier = Modifier.padding(start = 8.dp))
                             }
                         }
                     }
 
-                    if (!isEditing || product.barcodeIds.isEmpty()) {
+                    if (!isEditing) {
                         if (autoGenerateId) {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1065,7 +1043,7 @@ fun AddEditProductScreen(
                                         color = Color(0xFF555555)
                                     )
                                     Text(
-                                        "${String.format("%.2f", netWeightAfterCW)} g",
+                                        "${String.format("%.2f", netWeight)} g",
                                         fontSize = 15.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         color = Color(0xFF2D2D2D)
@@ -1373,11 +1351,11 @@ fun AddEditProductScreen(
                         println("Validation results - Name: $nameError, Category: $categoryError, Material: $materialError, MaterialRate: $materialRateError, CustomId: $customIdError")
 
                         if (!nameError && !materialRateError && !categoryError && !materialError && !customIdError) {
-                            println("✅ Basic validation passed, checking barcode requirements...")
+                            println("✅ Basic validation passed, checking inventory requirements...")
 
-                            // Skip barcode validation when editing existing products
-                            if (isEditing && product.barcodeIds.isNotEmpty()) {
-                                println("✅ Editing mode: skipping barcode validation - using existing barcodes")
+                            // Skip inventory validation when editing existing products
+                            if (isEditing) {
+                                println("✅ Editing mode: skipping inventory validation - updating product only")
                             } else if (autoGenerateId) {
                                 println("Auto-generate mode: checking quantity and barcode requirements")
                                 if (quantity < 1) {
@@ -1401,7 +1379,7 @@ fun AddEditProductScreen(
                                 println("✅ Custom barcode mode validation passed")
                             }
 
-                            println("🚀 All validation passed, creating product...")
+                            println("🚀 All validation passed, creating product and inventory...")
                             isSaving = true
 
                             println("📝 Creating product object with form data...")
@@ -1434,14 +1412,13 @@ fun AddEditProductScreen(
                                     } else 0.0
                                 } else 0.0,
                                 vaCharges = vaCharges.toDoubleOrNull() ?: 0.0,
-                                netWeight = netWeightAfterCW,
+                                netWeight = netWeight,
                                 totalProductCost = totalProductCost,
                                 hasCustomPrice = hasCustomPrice,
                                 customPrice = customPrice.toDoubleOrNull() ?: 0.0,
                                 available = available,
                                 featured = featured,
                                 images = images,
-                                barcodeIds = if (isEditing) product.barcodeIds else if (autoGenerateId) generatedBarcodes else listOf(customProductId),
                                 autoGenerateId = autoGenerateId,
                                 customProductId = customProductId,
                                 createdAt = product.createdAt,
@@ -1476,15 +1453,19 @@ fun AddEditProductScreen(
                             println("✅ Product object created successfully: ${updatedProduct.name} (ID: ${updatedProduct.id})")
 
                             if (isEditing) {
-                                // For editing, always use updateProduct regardless of barcode mode
-                                println("🔄 Editing mode: updating existing product")
+                                // For editing, use bulk update to update all products with same commonId
+                                println("🔄 Editing mode: updating product and all products with same commonId")
                                 scope.launch {
                                     try {
                                         if (updatedProduct != null) {
-                                            println("📤 Updating product...")
-                                            val result = viewModel.updateProduct(updatedProduct)
-                                            println("📥 Update result: $result")
-                                            println("✅ Product updated successfully")
+                                            println("📤 Updating product and related products...")
+                                            println("   - Product ID: ${updatedProduct.id}")
+                                            println("   - Common ID: ${updatedProduct.commonId}")
+                                            println("   - Product Name: ${updatedProduct.name}")
+                                            
+                                            // Use the new bulk update method
+                                            viewModel.updateProductsWithCommonId(updatedProduct)
+                                            println("✅ Product and related products updated successfully")
                                             isSaving = false
                                             onSave()
                                         } else {
@@ -1498,25 +1479,46 @@ fun AddEditProductScreen(
                                     }
                                 }
                             } else if (autoGenerateId) {
-                                println("🔄 Using auto-generate mode with ${generatedBarcodes.size} barcodes")
+                                println("🔄 Using auto-generate mode with ${generatedBarcodes.size} inventory items")
                                 println("Generated barcodes: $generatedBarcodes")
                                 scope.launch {
                                     try {
                                         if (updatedProduct != null) {
-                                            println("📤 Calling viewModel.addProductsBatch...")
-                                            viewModel.addProductsBatch(
-                                                baseProduct = updatedProduct.copy(barcodeIds = emptyList()),
-                                                barcodes = generatedBarcodes
-                                            ) {
-                                                println("✅ Products added successfully via batch")
+                                            println("📤 Creating product and inventory items...")
+                                            // First create the product
+                                            val productId = viewModel.addProductSync(updatedProduct)
+                                            if (productId != null) {
+                                                println("✅ Product created with ID: $productId")
+                                                
+                                                // Then create inventory items for each barcode
+                                                for (barcode in generatedBarcodes) {
+                                                    val inventoryItem = InventoryItem(
+                                                        productId = productId,
+                                                        barcodeId = barcode,
+                                                        status = InventoryStatus.AVAILABLE,
+                                                        location = "",
+                                                        notes = ""
+                                                    )
+                                                    val inventoryId = viewModel.addInventoryItem(inventoryItem)
+                                                    if (inventoryId != null) {
+                                                        println("✅ Inventory item created for barcode: $barcode")
+                                                    } else {
+                                                        println("❌ Failed to create inventory item for barcode: $barcode")
+                                                    }
+                                                }
+                                                
+                                                println("✅ Product and inventory items added successfully")
                                                 isSaving = false
                                                 onSave()
+                                            } else {
+                                                println("❌ Failed to create product")
+                                                isSaving = false
                                             }
                                         } else {
                                             println("❌ updatedProduct is null!")
                                         }
                                     } catch (e: Exception) {
-                                        println("💥 Error adding products: ${e.message}")
+                                        println("💥 Error adding product and inventory: ${e.message}")
                                         e.printStackTrace()
                                         isSaving = false
                                     }
@@ -1524,22 +1526,44 @@ fun AddEditProductScreen(
                             } else {
                                 // Custom barcode mode for new products only
                                 println("🔄 Using custom barcode mode: '$customProductId'")
-                                val finalProduct = updatedProduct?.copy(barcodeIds = listOf(customProductId))
-                                println("📝 Final product for custom barcode: ${finalProduct?.name}")
+                                println("📝 Final product for custom barcode: ${updatedProduct?.name}")
                                 scope.launch {
                                     try {
-                                        println("📤 Adding single product...")
-                                        if (finalProduct != null) {
-                                            val result = viewModel.addProduct(finalProduct)
-                                            println("📥 Add result: $result")
-                                            println("✅ Product added successfully")
+                                        println("📤 Adding single product and inventory item...")
+                                        if (updatedProduct != null) {
+                                            // First create the product
+                                            val productId = viewModel.addProductSync(updatedProduct)
+                                            if (productId != null) {
+                                                println("✅ Product created with ID: $productId")
+                                                
+                                                // Then create inventory item for the custom barcode
+                                                val inventoryItem = InventoryItem(
+                                                    productId = productId,
+                                                    barcodeId = customProductId,
+                                                    status = InventoryStatus.AVAILABLE,
+                                                    location = "",
+                                                    notes = ""
+                                                )
+                                                val inventoryId = viewModel.addInventoryItem(inventoryItem)
+                                                if (inventoryId != null) {
+                                                    println("✅ Inventory item created for barcode: $customProductId")
+                                                } else {
+                                                    println("❌ Failed to create inventory item for barcode: $customProductId")
+                                                }
+                                                
+                                                println("✅ Product and inventory item added successfully")
+                                                isSaving = false
+                                                onSave()
+                                            } else {
+                                                println("❌ Failed to create product")
+                                                isSaving = false
+                                            }
                                         } else {
-                                            println("❌ finalProduct is null for add!")
+                                            println("❌ updatedProduct is null for add!")
+                                            isSaving = false
                                         }
-                                        isSaving = false
-                                        onSave()
                                     } catch (e: Exception) {
-                                        println("Error adding product: ${e.message}")
+                                        println("Error adding product and inventory: ${e.message}")
                                         e.printStackTrace()
                                         isSaving = false
                                     }

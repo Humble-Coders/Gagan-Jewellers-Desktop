@@ -98,6 +98,8 @@ import org.example.project.viewModels.ProfileViewModel
 import org.example.project.data.FirestoreCustomizationRepository
 import org.example.project.data.OrderRepository
 import org.example.project.data.FirestoreOrderRepository
+import org.example.project.data.CashAmountRepository
+import org.example.project.data.FirestoreCashAmountRepository
 import org.example.project.ui.AddEditProductScreen
 import org.example.project.ui.BarcodeEditScreen
 import org.example.project.ui.BillingScreen
@@ -141,7 +143,8 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     )
     val profileViewModel = ProfileViewModel(
         JewelryAppInitializer.getCustomerRepository(),
-        FirestoreOrderRepository(JewelryAppInitializer.getFirestore())
+        FirestoreOrderRepository(JewelryAppInitializer.getFirestore()),
+        FirestoreCashAmountRepository(JewelryAppInitializer.getFirestore())
     )
 
     // Function to show snackbar

@@ -7,14 +7,21 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import org.example.project.data.CustomerRepository
 import org.example.project.data.OrderRepository
+import org.example.project.data.CashAmountRepository
+import org.example.project.data.FirestoreCashAmountRepository
 import org.example.project.data.User
 import org.example.project.data.Order
+import org.example.project.data.UnifiedTransaction
+import org.example.project.data.toUnifiedTransaction
+import org.example.project.JewelryAppInitializer
 
 class ProfileViewModel(
     private val customerRepository: CustomerRepository,
-    private val orderRepository: OrderRepository
+    private val orderRepository: OrderRepository,
+    private val cashAmountRepository: CashAmountRepository
 ) {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -35,8 +42,9 @@ class ProfileViewModel(
     val selectedCustomer: State<User?> = _selectedCustomer
 
     // State for customer orders
-    private val _customerOrders = mutableStateOf<List<Order>>(emptyList())
-    val customerOrders: State<List<Order>> = _customerOrders
+    // Orders for selected customer - now unified transactions
+    private val _customerTransactions = mutableStateOf<List<UnifiedTransaction>>(emptyList())
+    val customerTransactions: State<List<UnifiedTransaction>> = _customerTransactions
 
     // Loading state
     private val _loading = mutableStateOf(false)
@@ -81,20 +89,43 @@ class ProfileViewModel(
     fun selectCustomer(customer: User?) {
         _selectedCustomer.value = customer
         if (customer != null) {
-            loadCustomerOrders(customer.id)
+            println("👤 PROFILE VIEWMODEL: Selected customer - ID: ${customer.id}, CustomerID: ${customer.customerId}")
+            loadCustomerTransactions(customer.customerId)
         } else {
-            _customerOrders.value = emptyList()
+            _customerTransactions.value = emptyList()
         }
     }
 
-    fun loadCustomerOrders(customerId: String) {
+    fun loadCustomerTransactions(customerId: String) {
         viewModelScope.launch {
             _loading.value = true
             try {
-                _customerOrders.value = orderRepository.getOrdersByCustomerId(customerId)
+                println("🔄 PROFILE VIEWMODEL: Loading transactions for customer $customerId")
+                
+                // Fetch orders and cash transactions in parallel
+                val ordersDeferred = async { orderRepository.getOrdersByCustomerId(customerId) }
+                val cashTransactionsDeferred = async { cashAmountRepository.getCashTransactionsByCustomerId(customerId) }
+                
+                val orders = ordersDeferred.await()
+                val cashTransactions = cashTransactionsDeferred.await()
+                
+                println("📊 PROFILE VIEWMODEL: Found ${orders.size} orders and ${cashTransactions.size} cash transactions")
+                
+                // Convert to unified transactions
+                val unifiedOrders = orders.map { it.toUnifiedTransaction() }
+                val unifiedCashTransactions = cashTransactions.map { it.toUnifiedTransaction() }
+                
+                // Combine and sort by creation date (newest first)
+                val allTransactions = (unifiedOrders + unifiedCashTransactions)
+                    .sortedByDescending { it.createdAt }
+                
+                println("🔄 PROFILE VIEWMODEL: Total unified transactions: ${allTransactions.size}")
+                
+                _customerTransactions.value = allTransactions
                 _error.value = null
             } catch (e: Exception) {
-                _error.value = "Failed to load customer orders: ${e.message}"
+                _error.value = "Failed to load customer transactions: ${e.message}"
+                println("❌ PROFILE VIEWMODEL: Error loading customer transactions: ${e.message}")
             } finally {
                 _loading.value = false
             }

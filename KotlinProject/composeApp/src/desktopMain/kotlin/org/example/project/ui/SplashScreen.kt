@@ -147,7 +147,7 @@ fun SplashScreenDesktop(onFinished: () -> Unit) {
                 ) {
                     // Company name
                     Text(
-                        text = "Vishal Gems & Jewels",
+                        text = "Gagan Jewellers",
                         color = Color.White,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,

@@ -87,9 +87,9 @@ data class Category(
     val imageUrl: String = "",
     val hasGenderVariants: Boolean = false,
     val order: Int = 0,
-    val categoryType: CategoryType = CategoryType.JEWELRY, // New field for better categorization
-    val isActive: Boolean = true, // New field to enable/disable categories
-    val parentCategoryId: String? = null // New field for hierarchical categories
+    val categoryType: String = "JEWELRY", // Changed to String to match Firestore
+    val isActive: Boolean = true,
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 enum class CategoryType {

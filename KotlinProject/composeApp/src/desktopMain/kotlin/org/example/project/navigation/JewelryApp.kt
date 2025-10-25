@@ -205,7 +205,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                     EnhancedTopAppBar(
                         title = {
                             Text(
-                                "Vishal Gems & Jewels Pvt Ltd",
+                                "Gagan Jewellers Pvt Ltd",
                                 fontWeight = FontWeight.Medium
                             )
                         },
@@ -867,7 +867,7 @@ fun EnhancedSidebar(
                                 ) {
                                     // Brand name with multiple styles
                                     Text(
-                                        "Vishal",
+                                        "Gagan",
                                         color = Color.White,
                                         fontSize = 28.sp,
                                         fontWeight = FontWeight.Bold,
@@ -881,7 +881,7 @@ fun EnhancedSidebar(
                                         )
                                     )
                                     Text(
-                                        "Gems & Jewels",
+                                        "Jewellers",
                                         color = Color.White,
                                         fontSize = 22.sp,
                                         fontWeight = FontWeight.Medium,

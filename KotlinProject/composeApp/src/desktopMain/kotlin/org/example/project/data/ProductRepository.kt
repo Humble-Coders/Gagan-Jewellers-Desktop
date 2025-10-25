@@ -19,6 +19,9 @@ interface ProductRepository {
     suspend fun getProductImage(url: String): ByteArray?
     // New: suggestion management
     suspend fun addCategory(name: String): String
+    suspend fun addCompleteCategory(category: Category): String
+    suspend fun updateCategory(category: Category): Boolean
+    suspend fun deleteCategory(categoryId: String): Boolean
     suspend fun addMaterial(name: String): String
     suspend fun addMaterialType(materialId: String, type: String): Boolean
     // Featured products management
@@ -530,15 +533,11 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 imageUrl = data["image_url"] as? String ?: "",
                 hasGenderVariants = data["has_gender_variants"] as? Boolean ?: false,
                 order = (data["order"] as? Number)?.toInt() ?: 0,
-                categoryType = try {
-                    org.example.project.data.CategoryType.valueOf(data["category_type"] as? String ?: "JEWELRY")
-                } catch (e: Exception) {
-                    org.example.project.data.CategoryType.JEWELRY
-                },
+                categoryType = data["category_type"] as? String ?: "JEWELRY",
                 isActive = data["is_active"] as? Boolean ?: true,
-                parentCategoryId = data["parent_category_id"] as? String
+                createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
             )
-        }
+        }.sortedBy { it.order } // Sort by order field
     }
 
     override suspend fun getMaterials(): List<Material> = withContext(Dispatchers.IO) {
@@ -567,12 +566,67 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             "image_url" to "",
             "has_gender_variants" to false,
             "order" to 0,
-            "category_type" to CategoryType.JEWELRY.name,
+            "category_type" to "JEWELRY",
             "is_active" to true,
             "created_at" to System.currentTimeMillis()
         )
         docRef.set(data).get()
         id
+    }
+
+    override suspend fun addCompleteCategory(category: Category): String = withContext(Dispatchers.IO) {
+        val categoriesCollection = firestore.collection("categories")
+        val docRef = categoriesCollection.document()
+        val id = docRef.id
+        val data = mapOf(
+            "name" to category.name,
+            "description" to category.description,
+            "image_url" to category.imageUrl,
+            "has_gender_variants" to category.hasGenderVariants,
+            "order" to category.order,
+            "category_type" to category.categoryType,
+            "is_active" to category.isActive,
+            "created_at" to category.createdAt
+        )
+        docRef.set(data).get()
+        println("✅ Category created in Firestore with ID: $id")
+        id
+    }
+
+    override suspend fun updateCategory(category: Category): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val categoriesCollection = firestore.collection("categories")
+            val docRef = categoriesCollection.document(category.id)
+            val data = mapOf(
+                "name" to category.name,
+                "description" to category.description,
+                "image_url" to category.imageUrl,
+                "has_gender_variants" to category.hasGenderVariants,
+                "order" to category.order,
+                "category_type" to category.categoryType,
+                "is_active" to category.isActive,
+                "created_at" to category.createdAt
+            )
+            docRef.set(data).get()
+            println("✅ Category updated in Firestore with ID: ${category.id}")
+            true
+        } catch (e: Exception) {
+            println("❌ Error updating category: ${e.message}")
+            false
+        }
+    }
+
+    override suspend fun deleteCategory(categoryId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val categoriesCollection = firestore.collection("categories")
+            val docRef = categoriesCollection.document(categoryId)
+            docRef.delete().get()
+            println("✅ Category deleted from Firestore with ID: $categoryId")
+            true
+        } catch (e: Exception) {
+            println("❌ Error deleting category: ${e.message}")
+            false
+        }
     }
 
     override suspend fun addMaterial(name: String): String = withContext(Dispatchers.IO) {

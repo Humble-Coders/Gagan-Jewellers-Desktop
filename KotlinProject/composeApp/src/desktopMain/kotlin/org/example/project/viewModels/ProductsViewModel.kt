@@ -269,6 +269,48 @@ class ProductsViewModel(
         }
     }
 
+    fun addCompleteCategory(category: Category, onComplete: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val id = repository.addCompleteCategory(category)
+                loadCategories()
+                onComplete(id)
+            } catch (e: Exception) {
+                _error.value = "Failed to add category: ${e.message}"
+            }
+        }
+    }
+
+    fun updateCategory(category: Category, onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val success = repository.updateCategory(category)
+                if (success) {
+                    loadCategories() // Refresh the list after updating
+                }
+                onComplete(success)
+            } catch (e: Exception) {
+                _error.value = "Failed to update category: ${e.message}"
+                onComplete(false)
+            }
+        }
+    }
+
+    fun deleteCategory(categoryId: String, onComplete: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val success = repository.deleteCategory(categoryId)
+                if (success) {
+                    loadCategories() // Refresh the list after deleting
+                }
+                onComplete(success)
+            } catch (e: Exception) {
+                _error.value = "Failed to delete category: ${e.message}"
+                onComplete(false)
+            }
+        }
+    }
+
     fun addMaterialSuggestion(name: String, onComplete: (String) -> Unit) {
         viewModelScope.launch {
             try {
@@ -848,7 +890,7 @@ class ProductsViewModel(
     }
 
     // Get categories by type
-    fun getCategoriesByType(categoryType: org.example.project.data.CategoryType): List<Category> {
+    fun getCategoriesByType(categoryType: String): List<Category> {
         return categories.value.filter { it.categoryType == categoryType && it.isActive }
     }
 

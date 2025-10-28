@@ -24,8 +24,7 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                 Order(
                     orderId = doc.id,
                     customerId = data["customerId"] as? String ?: "",
-                    paymentSplit = if (data["paymentSplit"] is Map<*, *>) {
-                        val paymentData = data["paymentSplit"] as Map<*, *>
+                    paymentSplit = (data["paymentSplit"] as? Map<*, *>)?.let { paymentData ->
                         PaymentSplit(
                             cashAmount = (paymentData["cashAmount"] as? Number)?.toDouble() ?: 0.0,
                             cardAmount = (paymentData["cardAmount"] as? Number)?.toDouble() ?: 0.0,
@@ -34,7 +33,7 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                             dueAmount = (paymentData["dueAmount"] as? Number)?.toDouble() ?: 0.0,
                             totalAmount = (paymentData["totalAmount"] as? Number)?.toDouble() ?: 0.0
                         )
-                    } else null,
+                    },
                     paymentStatus = PaymentStatus.valueOf(data["paymentStatus"] as? String ?: PaymentStatus.PENDING.name),
                     subtotal = (data["subtotal"] as? Number)?.toDouble() ?: 0.0,
                     discountAmount = (data["discountAmount"] as? Number)?.toDouble() ?: 0.0,
@@ -83,8 +82,7 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                 Order(
                     orderId = doc.id,
                     customerId = data["customerId"] as? String ?: "",
-                    paymentSplit = if (data["paymentSplit"] is Map<*, *>) {
-                        val paymentData = data["paymentSplit"] as Map<*, *>
+                    paymentSplit = (data["paymentSplit"] as? Map<*, *>)?.let { paymentData ->
                         PaymentSplit(
                             cashAmount = (paymentData["cashAmount"] as? Number)?.toDouble() ?: 0.0,
                             cardAmount = (paymentData["cardAmount"] as? Number)?.toDouble() ?: 0.0,
@@ -93,7 +91,7 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                             dueAmount = (paymentData["dueAmount"] as? Number)?.toDouble() ?: 0.0,
                             totalAmount = (paymentData["totalAmount"] as? Number)?.toDouble() ?: 0.0
                         )
-                    } else null,
+                    },
                     paymentStatus = PaymentStatus.valueOf(data["paymentStatus"] as? String ?: PaymentStatus.PENDING.name),
                     subtotal = (data["subtotal"] as? Number)?.toDouble() ?: 0.0,
                     discountAmount = (data["discountAmount"] as? Number)?.toDouble() ?: 0.0,
@@ -132,20 +130,16 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
 
     override suspend fun getOrderById(orderId: String): Order? = withContext(Dispatchers.IO) {
         try {
-            val orderDoc = firestore.collection("orders").document(orderId).get().get()
-            
-            if (!orderDoc.exists()) {
-                println("Order with ID $orderId not found")
-                return@withContext null
-            }
-            
-            val data = orderDoc.data ?: return@withContext null
-            
+            val docRef = firestore.collection("orders").document(orderId)
+            val snapshot = docRef.get().get()
+            if (!snapshot.exists()) return@withContext null
+
+            val data = snapshot.data ?: return@withContext null
+
             Order(
-                orderId = orderDoc.id,
+                orderId = snapshot.id,
                 customerId = data["customerId"] as? String ?: "",
-                paymentSplit = if (data["paymentSplit"] is Map<*, *>) {
-                    val paymentData = data["paymentSplit"] as Map<*, *>
+                paymentSplit = (data["paymentSplit"] as? Map<*, *>)?.let { paymentData ->
                     PaymentSplit(
                         cashAmount = (paymentData["cashAmount"] as? Number)?.toDouble() ?: 0.0,
                         cardAmount = (paymentData["cardAmount"] as? Number)?.toDouble() ?: 0.0,
@@ -154,7 +148,7 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                         dueAmount = (paymentData["dueAmount"] as? Number)?.toDouble() ?: 0.0,
                         totalAmount = (paymentData["totalAmount"] as? Number)?.toDouble() ?: 0.0
                     )
-                } else null,
+                },
                 paymentStatus = PaymentStatus.valueOf(data["paymentStatus"] as? String ?: PaymentStatus.PENDING.name),
                 subtotal = (data["subtotal"] as? Number)?.toDouble() ?: 0.0,
                 discountAmount = (data["discountAmount"] as? Number)?.toDouble() ?: 0.0,
@@ -185,7 +179,7 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                 status = OrderStatus.valueOf(data["status"] as? String ?: OrderStatus.CONFIRMED.name)
             )
         } catch (e: Exception) {
-            println("Error fetching order by ID $orderId: ${e.message}")
+            println("Error fetching order by ID: ${e.message}")
             null
         }
     }

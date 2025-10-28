@@ -636,7 +636,10 @@ class PaymentViewModel(
             actualWeight * cartItem.quantity * pricePerGram
         }
 
-        val gst = subtotal * 0.18
+        // Replace legacy 18% GST with split model where possible.
+        // Here we only have subtotal by metal rate and lack making/base split, so we fallback to 3% on subtotal as conservative placeholder.
+        // Note: Main payment and receipt flows already use split GST by item; this function is secondary.
+        val gst = subtotal * 0.03
         val subtotalWithGst = subtotal + gst
         val discountAmount = calculateDiscountAmount(subtotalWithGst, gst)
         val total = subtotalWithGst - discountAmount

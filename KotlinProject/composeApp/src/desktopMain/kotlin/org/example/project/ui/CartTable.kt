@@ -734,9 +734,20 @@ private fun DetailPanel(
         val totalCharges = baseAmount + makingCharges + stoneAmount + (vaCharges * quantity)
         val discountAmount = totalCharges * (discountPercent / 100)
         val taxableAmount = totalCharges - discountAmount
-        val cgst = taxableAmount * 0.015
-        val sgst = taxableAmount * 0.015
-        val totalGst = cgst + sgst
+
+        // Split GST model: 3% on base amount + 5% on making charges (after discount distributed proportionally)
+        val discountFactor = if (totalCharges > 0) (taxableAmount / totalCharges) else 1.0
+        val discountedBase = baseAmount * discountFactor
+        val discountedMaking = makingCharges * discountFactor
+
+        val gstOnBase = discountedBase * 0.03
+        val gstOnMaking = discountedMaking * 0.05
+        val totalGst = gstOnBase + gstOnMaking
+
+        // For intra-state representation, split total GST equally into CGST and SGST
+        val cgst = totalGst / 2
+        val sgst = totalGst / 2
+
         val finalAmount = taxableAmount + totalGst
 
         println("💵 Detail Panel Amount Breakdown:")
@@ -747,9 +758,9 @@ private fun DetailPanel(
         println("   Total Charges: $totalCharges")
         println("   Discount Amount: $discountAmount (${discountPercent}%)")
         println("   Taxable Amount: $taxableAmount")
-        println("   CGST: $cgst (1.5%)")
-        println("   SGST: $sgst (1.5%)")
-        println("   Total GST: $totalGst")
+        println("   CGST: $cgst (split of total GST)")
+        println("   SGST: $sgst (split of total GST)")
+        println("   Total GST (3% base + 5% making): $totalGst")
         println("   Final Amount: $finalAmount")
         println("🔍 DETAIL PANEL CALCULATION END")
 

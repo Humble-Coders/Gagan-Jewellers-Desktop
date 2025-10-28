@@ -223,6 +223,19 @@ fun AddEditProductScreen(
     var showIsCollectionProduct by remember { mutableStateOf(product.show.isCollectionProduct) }
     var showCollectionId by remember { mutableStateOf(product.show.collectionId) }
 
+    // Keep visibility flags consistent with hasCustomPrice selection
+    LaunchedEffect(hasCustomPrice) {
+        if (hasCustomPrice) {
+            // When using custom price, hide total product cost and show custom price field
+            showTotalProductCost = false
+            showCustomPrice = true
+        } else {
+            // When not using custom price, hide custom price field and show total product cost
+            showCustomPrice = false
+            showTotalProductCost = true
+        }
+    }
+
     // Calculated values
     val netWeight = remember(totalWeight, lessWeight) {
         val total = totalWeight.toDoubleOrNull() ?: 0.0
@@ -461,6 +474,60 @@ fun AddEditProductScreen(
                                     color = Color.Gray,
                                     fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                                 )
+
+                                // Show barcodes for this product with edit option (same behavior as dashboard)
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Divider(color = Color(0xFFE0E0E0))
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                val inventoryDataForProduct = viewModel.inventoryData.value[product.id]
+                                val barcodeIdsForProduct = inventoryDataForProduct?.barcodeIds ?: emptyList()
+
+                                Text(
+                                    text = "Barcodes (${barcodeIdsForProduct.size})",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = Color(0xFF2D2D2D)
+                                )
+
+                                if (barcodeIdsForProduct.isEmpty()) {
+                                    Text(
+                                        text = "No barcodes found for this product.",
+                                        fontSize = 12.sp,
+                                        color = Color.Gray,
+                                        modifier = Modifier.padding(top = 6.dp)
+                                    )
+                                } else {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        barcodeIdsForProduct.forEachIndexed { index, barcode ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = barcode,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    fontSize = 13.sp,
+                                                    color = MaterialTheme.colors.primary
+                                                )
+
+                                                IconButton(onClick = { onEditBarcode(barcode) }) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.Edit,
+                                                        contentDescription = "Edit barcode $barcode",
+                                                        tint = MaterialTheme.colors.primary
+                                                    )
+                                                }
+                                            }
+
+                                            if (index != barcodeIdsForProduct.lastIndex) {
+                                                Divider(color = Color(0xFFE0E0E0), modifier = Modifier.padding(vertical = 6.dp))
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     } else {
@@ -1452,7 +1519,6 @@ fun AddEditProductScreen(
                     StatusToggle("Show Available", "Display available status", showAvailable) { showAvailable = it }
                     StatusToggle("Show Featured", "Display featured status", showFeatured) { showFeatured = it }
                     StatusToggle("Show Collection Product", "Display collection product status", showIsCollectionProduct) { showIsCollectionProduct = it }
-                    StatusToggle("Show Collection ID", "Display collection information", showCollectionId) { showCollectionId = it }
                 }
             }
 

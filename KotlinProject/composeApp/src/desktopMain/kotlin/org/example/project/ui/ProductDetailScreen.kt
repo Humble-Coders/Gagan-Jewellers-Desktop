@@ -341,12 +341,23 @@ fun ProductDetailScreen(
                             fontWeight = FontWeight.Bold
                         )
 
-                        Text(
-                            text = "₹${formatCurrency(calculateProductTotalCost(p))}",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colors.primary
-                        )
+                        Column(
+                            horizontalAlignment = Alignment.End
+                        ) {
+                            Text(
+                                text = "₹${formatCurrency(calculateProductTotalCost(p))}",
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colors.primary
+                            )
+                            if (p.hasCustomPrice && p.customPrice > 0) {
+                                Text(
+                                    text = "Custom: ₹${formatCurrency(p.customPrice)}",
+                                    fontSize = 14.sp,
+                                    color = Color(0xFF6B7280)
+                                )
+                            }
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))

@@ -85,6 +85,7 @@ import org.example.project.data.Product
 import org.example.project.data.Category
 import org.example.project.data.GroupedProduct
 import org.example.project.data.MetalRatesManager
+import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.viewModels.ProductsViewModel
 import org.jetbrains.skia.Image
 import java.text.NumberFormat
@@ -118,7 +119,9 @@ fun DashboardScreen(
     onViewProductDetails: (String) -> Unit,
     onEditBarcode: (String) -> Unit = {},
     onDeleteBarcode: (String) -> Unit = {},
-    onDuplicateProduct: (String, String) -> Unit = { _, _ -> }
+    onDuplicateProduct: (String, String) -> Unit = { _, _ -> },
+    startInProductsView: Boolean = false,
+    initialSelectedCategoryId: String? = null
 ) {
     val products by remember { viewModel.products }
     val categories by remember { viewModel.categories }
@@ -127,8 +130,8 @@ fun DashboardScreen(
     val inventoryRefreshTrigger by remember { viewModel.inventoryRefreshTrigger }
 
     // State for view mode: true = category view, false = products view
-    var showCategoryView by remember { mutableStateOf(true) }
-    var selectedCategoryId by remember { mutableStateOf<String?>(null) }
+    var showCategoryView by remember(startInProductsView) { mutableStateOf(!startInProductsView) }
+    var selectedCategoryId by remember(startInProductsView, initialSelectedCategoryId) { mutableStateOf<String?>(initialSelectedCategoryId) }
 
     // Search state for categories
     var searchQuery by remember { mutableStateOf("") }
@@ -439,6 +442,7 @@ fun DashboardScreen(
                                 viewModel = viewModel,
                                 imageLoader = imageLoader,
                                 metalRates = metalRates,
+                                metalRatesList = metalRatesList,
                                 onDelete = {
                                     // For grouped products, delete all products in the group except parent
                                     println("🗑️ DASHBOARD: Delete button clicked")
@@ -550,6 +554,7 @@ private fun GroupedProductRow(
     viewModel: ProductsViewModel,
     imageLoader: ImageLoader,
     metalRates: org.example.project.data.MetalRates,
+    metalRatesList: List<org.example.project.data.MetalRate>,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onEditBarcode: (String) -> Unit,
@@ -638,32 +643,38 @@ private fun GroupedProductRow(
             modifier = Modifier.weight(1.5f)
         )
 
-        // Price - Use completely optimized calculation to prevent UI blocking
-        val displayPrice = remember(product.id, product.hasCustomPrice, product.customPrice) {
+        // Price - Always compute dynamic price; optionally show custom price as secondary
+        val dynamicPrice = remember(product.id, product.totalWeight, product.lessWeight, product.defaultMakingRate, product.cwWeight, product.stoneRate, product.stoneQuantity, product.vaCharges, metalRatesList) {
             try {
-                if (product.hasCustomPrice) {
-                    product.customPrice
-                } else {
-                    // Ultra-simplified calculation for dashboard display (no external calls)
-                    val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
-                    val baseAmount = netWeight * 11000.0 // Use fixed rate to avoid heavy calculations
-                    val makingCharges = netWeight * product.defaultMakingRate
-                    val stoneAmount = if (product.hasStones && product.cwWeight > 0 && product.stoneRate > 0) {
-                        product.stoneRate * product.stoneQuantity * product.cwWeight
-                    } else 0.0
-                    baseAmount + makingCharges + stoneAmount + product.vaCharges
-                }
+                val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
+                val materialRate = getMaterialRateForProduct(product, metalRatesList)
+                val baseAmount = netWeight * materialRate
+                val makingCharges = netWeight * product.defaultMakingRate
+                val stoneAmount = if (product.hasStones && product.cwWeight > 0 && product.stoneRate > 0) {
+                    product.stoneRate * product.stoneQuantity * product.cwWeight
+                } else 0.0
+                baseAmount + makingCharges + stoneAmount + product.vaCharges
             } catch (e: Exception) {
                 println("Error calculating price for ${product.name}: ${e.message}")
                 0.0
             }
         }
-        Text(
-            text = "₹${formatCurrency(displayPrice)}",
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1.2f)
-        )
+        Column(modifier = Modifier.weight(1.2f)) {
+            Text(
+                text = "₹${formatCurrency(dynamicPrice)}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (product.hasCustomPrice && product.customPrice > 0) {
+                Text(
+                    text = "Custom: ₹${formatCurrency(product.customPrice)}",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = Color(0xFF6B7280),
+                    fontSize = 12.sp
+                )
+            }
+        }
 
         // Availability status
         Box(
@@ -875,6 +886,7 @@ fun ProductRow(
     viewModel: ProductsViewModel,
     imageLoader: ImageLoader,
     metalRates: org.example.project.data.MetalRates,
+    metalRatesList: List<org.example.project.data.MetalRate>,
     onDelete: () -> Unit,
     onClick: () -> Unit
 ) {
@@ -967,32 +979,38 @@ fun ProductRow(
             modifier = Modifier.weight(1.5f)
         )
 
-        // Price - Use completely optimized calculation to prevent UI blocking
-        val displayPrice = remember(product.id, product.hasCustomPrice, product.customPrice) {
+        // Price - Always compute dynamic price; optionally show custom price as secondary
+        val dynamicPrice = remember(product.id, product.totalWeight, product.lessWeight, product.defaultMakingRate, product.cwWeight, product.stoneRate, product.stoneQuantity, product.vaCharges, metalRatesList) {
             try {
-                if (product.hasCustomPrice) {
-                    product.customPrice
-                } else {
-                    // Ultra-simplified calculation for dashboard display (no external calls)
-                    val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
-                    val baseAmount = netWeight * 11000.0 // Use fixed rate to avoid heavy calculations
-                    val makingCharges = netWeight * product.defaultMakingRate
-                    val stoneAmount = if (product.hasStones && product.cwWeight > 0 && product.stoneRate > 0) {
-                        product.stoneRate * product.stoneQuantity * product.cwWeight
-                    } else 0.0
-                    baseAmount + makingCharges + stoneAmount + product.vaCharges
-                }
+                val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
+                val materialRate = getMaterialRateForProduct(product, metalRatesList)
+                val baseAmount = netWeight * materialRate
+                val makingCharges = netWeight * product.defaultMakingRate
+                val stoneAmount = if (product.hasStones && product.cwWeight > 0 && product.stoneRate > 0) {
+                    product.stoneRate * product.stoneQuantity * product.cwWeight
+                } else 0.0
+                baseAmount + makingCharges + stoneAmount + product.vaCharges
             } catch (e: Exception) {
                 println("Error calculating price for ${product.name}: ${e.message}")
                 0.0
             }
         }
-        Text(
-            text = "₹${formatCurrency(displayPrice)}",
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1.2f)
-        )
+        Column(modifier = Modifier.weight(1.2f)) {
+            Text(
+                text = "₹${formatCurrency(dynamicPrice)}",
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (product.hasCustomPrice && product.customPrice > 0) {
+                Text(
+                    text = "Custom: ₹${formatCurrency(product.customPrice)}",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = Color(0xFF6B7280),
+                    fontSize = 12.sp
+                )
+            }
+        }
 
         // Availability status
         Box(
@@ -1524,5 +1542,33 @@ private fun CategoryCard(
                     )
             )
         }
+    }
+}
+
+/**
+ * Get material rate for a product based on material and type
+ * Uses dynamic metal rates from MetalRateViewModel (same as billing screen)
+ */
+private fun getMaterialRateForProduct(product: Product, metalRatesList: List<org.example.project.data.MetalRate>): Double {
+    val karat = extractKaratFromMaterialType(product.materialType)
+    
+    // Prefer collection rate from rate view model
+    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+    val collectionRate = try {
+        ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
+    } catch (e: Exception) { 
+        0.0 
+    }
+
+    if (collectionRate > 0) {
+        return collectionRate
+    }
+
+    // Fallback to metal rates manager
+    val metalRatesManager = MetalRatesManager.metalRates.value
+    return when {
+        product.materialType.contains("gold", ignoreCase = true) -> metalRatesManager.getGoldRateForKarat(karat)
+        product.materialType.contains("silver", ignoreCase = true) -> metalRatesManager.getSilverRateForPurity(999)
+        else -> metalRatesManager.getGoldRateForKarat(22)
     }
 }

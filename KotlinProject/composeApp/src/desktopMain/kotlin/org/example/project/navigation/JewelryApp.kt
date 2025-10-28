@@ -132,6 +132,11 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     var newBarcodeId by remember { mutableStateOf("") }
 
     val coroutineScope = rememberCoroutineScope()
+
+    // Dashboard view preferences to control what is shown when returning
+    var dashboardStartInProductsView by remember { mutableStateOf(false) }
+    var dashboardInitialSelectedCategoryId by remember { mutableStateOf<String?>(null) }
+    var lastViewedCategoryId by remember { mutableStateOf<String?>(null) }
     val imageLoader = JewelryAppInitializer.getImageLoader()
     val cartViewModel = JewelryAppInitializer.getCartViewModel()
     val customerViewModel = JewelryAppInitializer.getCustomerViewModel()
@@ -237,9 +242,17 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                     showSnackbar("Ready to add new product")
                                 },
                                 onViewProductDetails = { productId ->
+                                    // Capture the category for the selected product so we can return to it
+                                    val product = viewModel.products.value.find { it.id == productId }
+                                    lastViewedCategoryId = product?.categoryId
                                     viewModel.selectProduct(productId)
+                                    // Back should return to products list filtered by this category
+                                    dashboardStartInProductsView = true
+                                    dashboardInitialSelectedCategoryId = lastViewedCategoryId
                                     currentScreen = Screen.PRODUCT_DETAIL
                                 },
+                                startInProductsView = dashboardStartInProductsView,
+                                initialSelectedCategoryId = dashboardInitialSelectedCategoryId,
             onEditBarcode = { barcodeId ->
                 println("✏️ NAVIGATION: Edit Barcode Request")
                 println("   - Barcode ID: $barcodeId")
@@ -268,10 +281,15 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                             Screen.ADD_PRODUCT -> AddEditProductScreen(
                                 viewModel = viewModel,
                                 onSave = {
-                                    currentScreen = Screen.DASHBOARD
-                                    showSnackbar("Product saved successfully", "VIEW", {
-                                        currentScreen = Screen.PRODUCT_DETAIL
-                                    })
+                                    coroutineScope.launch {
+                                        // Ensure dashboard shows the new product immediately
+                                        viewModel.loadProducts()
+                                        viewModel.triggerInventoryRefresh()
+                                        currentScreen = Screen.DASHBOARD
+                                        showSnackbar("Product saved successfully", "VIEW", {
+                                            currentScreen = Screen.PRODUCT_DETAIL
+                                        })
+                                    }
                                 },
                                 onCancel = {
                                     viewModel.clearCurrentProduct()
@@ -279,18 +297,27 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                     showSnackbar("Product creation canceled")
                                 },
                                 onEditBarcode = { barcodeId ->
-                                    currentBarcodeId = barcodeId
-                                    currentScreen = Screen.BARCODE_EDIT
+                                    println("✏️ NAVIGATION: Edit Barcode Request (from Add Product)")
+                                    println("   - Barcode ID: $barcodeId")
+                                    println("   - Timestamp: ${System.currentTimeMillis()}")
+                                    barcodeToEdit = barcodeId
+                                    newBarcodeId = barcodeId
+                                    showBarcodeEditDialog = true
                                 }
                             )
 
                             Screen.EDIT_PRODUCT -> AddEditProductScreen(
                                 viewModel = viewModel,
                                 onSave = {
-                                    currentScreen = Screen.DASHBOARD
-                                    showSnackbar("Product updated successfully", "VIEW", {
-                                        currentScreen = Screen.PRODUCT_DETAIL
-                                    })
+                                    coroutineScope.launch {
+                                        // Ensure dashboard reflects updates immediately
+                                        viewModel.loadProducts()
+                                        viewModel.triggerInventoryRefresh()
+                                        currentScreen = Screen.DASHBOARD
+                                        showSnackbar("Product updated successfully", "VIEW", {
+                                            currentScreen = Screen.PRODUCT_DETAIL
+                                        })
+                                    }
                                 },
                                 onCancel = {
                                     viewModel.clearCurrentProduct()
@@ -298,8 +325,12 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                     showSnackbar("Editing canceled")
                                 },
                                 onEditBarcode = { barcodeId ->
-                                    currentBarcodeId = barcodeId
-                                    currentScreen = Screen.BARCODE_EDIT
+                                    println("✏️ NAVIGATION: Edit Barcode Request (from Edit Product)")
+                                    println("   - Barcode ID: $barcodeId")
+                                    println("   - Timestamp: ${System.currentTimeMillis()}")
+                                    barcodeToEdit = barcodeId
+                                    newBarcodeId = barcodeId
+                                    showBarcodeEditDialog = true
                                 },
                                 isEditing = true
                             )
@@ -308,14 +339,23 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 viewModel = viewModel,
                                 imageLoader = imageLoader,
                                 onEdit = { currentScreen = Screen.EDIT_PRODUCT },
-                                onBack = { currentScreen = Screen.DASHBOARD }
+                                onBack = {
+                                    // Return to products list filtered by last viewed category
+                                    dashboardStartInProductsView = true
+                                    dashboardInitialSelectedCategoryId = lastViewedCategoryId
+                                    currentScreen = Screen.DASHBOARD
+                                }
                             )
 
                             Screen.BARCODE_EDIT -> BarcodeEditScreen(
                                 barcodeId = currentBarcodeId,
                                 viewModel = viewModel,
-                                onBack = { currentScreen = Screen.DASHBOARD },
+                                onBack = { 
+                                    dashboardStartInProductsView = false
+                                    currentScreen = Screen.DASHBOARD 
+                                },
                                 onSave = {
+                                    dashboardStartInProductsView = false
                                     currentScreen = Screen.DASHBOARD
                                     showSnackbar("Barcode document updated successfully")
                                 }
@@ -324,23 +364,37 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                             Screen.SETTINGS -> SettingsScreen()
 
                             Screen.GOLD_RATES -> GoldRateScreen(
-                                onBack = { currentScreen = Screen.DASHBOARD }
+                                onBack = { 
+                                    // Always reset to category cards when coming back from Metal Rates
+                                    dashboardStartInProductsView = false
+                                    dashboardInitialSelectedCategoryId = null
+                                    currentScreen = Screen.DASHBOARD 
+                                }
                             )
 
                             Screen.CATEGORIES -> CategoryManagementScreen(
                                 productsViewModel = viewModel,
-                                onBack = { currentScreen = Screen.DASHBOARD }
+                                onBack = { 
+                                    dashboardStartInProductsView = false
+                                    currentScreen = Screen.DASHBOARD 
+                                }
                             )
 
                             Screen.CUSTOMIZATION -> CustomizationScreen(
                                 viewModel = customizationViewModel,
-                                onBack = { currentScreen = Screen.DASHBOARD }
+                                onBack = { 
+                                    dashboardStartInProductsView = false
+                                    currentScreen = Screen.DASHBOARD 
+                                }
                             )
 
                             Screen.APPOINTMENTS -> AppointmentScreen(
                                 viewModel = appointmentViewModel,
                                 availabilityRepository = availabilityRepository,
-                                onBack = { currentScreen = Screen.DASHBOARD }
+                                onBack = { 
+                                    dashboardStartInProductsView = false
+                                    currentScreen = Screen.DASHBOARD 
+                                }
                             )
 
                             Screen.BILLING -> BillingScreen(
@@ -353,7 +407,10 @@ fun JewelryApp(viewModel: ProductsViewModel) {
 
                             Screen.PROFILE -> ProfileScreen(
                                 viewModel = profileViewModel,
-                                onBack = { currentScreen = Screen.DASHBOARD },
+                                onBack = { 
+                                    dashboardStartInProductsView = false
+                                    currentScreen = Screen.DASHBOARD 
+                                },
                                 onCustomerClick = { customer ->
                                     profileViewModel.selectCustomer(customer)
                                     currentScreen = Screen.CUSTOMER_TRANSACTIONS

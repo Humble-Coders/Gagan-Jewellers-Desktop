@@ -622,12 +622,8 @@ fun GroupedProductCard(
             val stoneAmount = stoneRate * stoneQuantity * cwWeight
             baseAmount + makingCharges + stoneAmount + vaCharges
         } else {
-            // Not in cart: use dynamic calculation with current metal rates
-            if (product.hasCustomPrice) {
-                product.customPrice
-            } else {
-                calculateProductTotalCost(product, metalRates)
-            }
+            // Not in cart: always use dynamic calculation with current metal rates
+            calculateProductTotalCost(product, metalRates)
         }
     }
 

@@ -27,8 +27,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.example.project.data.*
-import java.text.NumberFormat
-import java.util.Locale
+import org.example.project.utils.CurrencyFormatter
 
 @Composable
 fun PreviewHomeScreen(
@@ -358,7 +357,7 @@ fun PreviewRecentlyViewedItem(
                 Spacer(modifier = Modifier.height(4.dp))
                 // totalProductCost removed from Product, using calculateProductTotalCost instead
                 Text(
-                    "₹${formatCurrency(if (product.hasCustomPrice) product.customPrice else calculateProductTotalCost(product))}",
+                    "${CurrencyFormatter.formatRupees(if (product.hasCustomPrice) product.customPrice else calculateProductTotalCost(product))}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF896C6C)
@@ -529,7 +528,7 @@ fun PreviewFeaturedProductCard(
                 Spacer(modifier = Modifier.height(4.dp))
                 // totalProductCost removed from Product, using calculateProductTotalCost instead
                 Text(
-                    "₹${formatCurrency(if (product.hasCustomPrice) product.customPrice else calculateProductTotalCost(product))}",
+                    "${CurrencyFormatter.formatRupees(if (product.hasCustomPrice) product.customPrice else calculateProductTotalCost(product))}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF896C6C)
@@ -830,11 +829,6 @@ fun PreviewShimmerCollectionsPlaceholder() {
     }
 }
 
-private fun formatCurrency(amount: Double): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
-    return formatter.format(amount)
-}
 
 /**
  * Calculate the total product cost using the same logic as cart item detail screen (total charges)

@@ -94,6 +94,7 @@ import java.util.Locale
 import java.net.URL
 import javax.imageio.ImageIO
 import org.example.project.JewelryAppInitializer
+import org.example.project.utils.CurrencyFormatter
 
 // Image cache to store loaded images
 object ImageCache {
@@ -790,13 +791,13 @@ private fun GroupedProductRow(
         }
         Column(modifier = Modifier.weight(1.2f)) {
             Text(
-                text = "₹${formatCurrency(dynamicPrice)}",
+                text = "${CurrencyFormatter.formatRupees(dynamicPrice)}",
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             if (product.hasCustomPrice && product.customPrice > 0) {
                 Text(
-                    text = "Custom: ₹${formatCurrency(product.customPrice)}",
+                    text = "Custom: ${CurrencyFormatter.formatRupees(product.customPrice)}",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = Color(0xFF6B7280),
@@ -1122,13 +1123,13 @@ fun ProductRow(
         }
         Column(modifier = Modifier.weight(1.2f)) {
             Text(
-                text = "₹${formatCurrency(dynamicPrice)}",
+                text = "${CurrencyFormatter.formatRupees(dynamicPrice)}",
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
             if (product.hasCustomPrice && product.customPrice > 0) {
                 Text(
-                    text = "Custom: ₹${formatCurrency(product.customPrice)}",
+                    text = "Custom: ${CurrencyFormatter.formatRupees(product.customPrice)}",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     color = Color(0xFF6B7280),
@@ -1254,12 +1255,6 @@ fun ProductRow(
             }
         }
     }
-}
-
-private fun formatCurrency(amount: Double): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
-    return formatter.format(amount)
 }
 
 // Removed heavy calculateProductTotalCost function to prevent UI blocking

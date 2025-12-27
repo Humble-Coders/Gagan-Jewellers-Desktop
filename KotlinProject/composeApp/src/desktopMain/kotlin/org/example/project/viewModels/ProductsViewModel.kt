@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.example.project.data.Category
@@ -93,27 +94,33 @@ class ProductsViewModel(
                 val allProducts = _products.value
                 val inventoryDataMap = mutableMapOf<String, InventoryData>()
 
-                // Load inventory data for each product
-                allProducts.forEach { product ->
-                    try {
-                        val availableItems = inventoryRepository.getAvailableInventoryItemsByProductId(product.id)
-                        val allItems = inventoryRepository.getInventoryItemsByProductId(product.id)
-                        val barcodeIds = allItems.map { it.barcodeId }
+                // Load inventory data in parallel for better performance
+                val deferredResults = allProducts.map { product ->
+                    async(Dispatchers.IO) {
+                        try {
+                            val availableItems = inventoryRepository.getAvailableInventoryItemsByProductId(product.id)
+                            val allItems = inventoryRepository.getInventoryItemsByProductId(product.id)
+                            val barcodeIds = allItems.map { it.barcodeId }
 
-                        inventoryDataMap[product.id] = InventoryData(
-                            availableCount = availableItems.size,
-                            barcodeIds = barcodeIds
-                        )
-                    } catch (e: Exception) {
-                        println("Error loading inventory for product ${product.id}: ${e.message}")
-                        inventoryDataMap[product.id] = InventoryData()
+                            product.id to InventoryData(
+                                availableCount = availableItems.size,
+                                barcodeIds = barcodeIds
+                            )
+                        } catch (e: Exception) {
+                            // Silently fail - will use default InventoryData
+                            product.id to InventoryData()
+                        }
                     }
                 }
 
+                // Wait for all parallel operations to complete
+                deferredResults.forEach { deferred ->
+                    val (productId, data) = deferred.await()
+                    inventoryDataMap[productId] = data
+                }
+
                 _inventoryData.value = inventoryDataMap
-                println("✅ Loaded inventory data for ${inventoryDataMap.size} products")
             } catch (e: Exception) {
-                println("❌ Error loading inventory data: ${e.message}")
                 _error.value = "Failed to load inventory data: ${e.message}"
             } finally {
                 _inventoryLoading.value = false

@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -46,6 +47,7 @@ import org.example.project.data.Product
 import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.ui.ProductPriceInputs
 import org.example.project.ui.calculateProductPrice
+import org.example.project.utils.CurrencyFormatter
 import org.example.project.viewModels.ProductsViewModel
 import java.text.DecimalFormat
 
@@ -91,6 +93,12 @@ fun CartTable(
     // Barcode selection dialog state
     var showBarcodeDialog by remember { mutableStateOf(false) }
     var selectedCartItem by remember { mutableStateOf<CartItem?>(null) }
+    
+    // Track unsaved changes state for preview in shopping cart (index, previewMakingPercent, previewLabourRate)
+    var unsavedChangesState by remember { mutableStateOf<Triple<Int, Double?, Double?>?>(null) }
+    
+    // Track save changes function from DetailPanel
+    var saveChangesFunction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     fun onEditingFieldChange(newField: String?) {
         println("🔄 EDITING FIELD CHANGE: $editingField -> $newField")
@@ -98,7 +106,7 @@ fun CartTable(
             if (currentField != newField) {
                 val currentValue = fieldValues[currentField]?.text ?: ""
                 if (currentValue.isNotEmpty()) {
-                    saveFieldValue(currentField, currentValue, cartItems, onItemUpdate)
+                saveFieldValue(currentField, currentValue, cartItems, onItemUpdate)
                 }
             }
         }
@@ -139,7 +147,7 @@ fun CartTable(
             println("💾 SAVE AND CLOSE: field=$currentField, value='$currentValue'")
             // Always save the value - for makingPercent and labourRate, allow empty to save as 0
             if (currentValue.isNotEmpty() || currentField.contains("makingPercent") || currentField.contains("labourRate")) {
-                saveFieldValue(currentField, currentValue, cartItems, onItemUpdate)
+            saveFieldValue(currentField, currentValue, cartItems, onItemUpdate)
             }
             editingField = null
             // Clear fieldValues for the saved field to ensure fresh value is loaded from updated product
@@ -193,6 +201,7 @@ fun CartTable(
                     cartImages = cartImages,
                     metalRates = metalRates,
                     fetchedProduct = fetchedProduct,
+                    unsavedChangesState = unsavedChangesState,
                     modifier = Modifier
                         .weight(0.6f)
                         .fillMaxHeight()
@@ -229,6 +238,17 @@ fun CartTable(
                             isLoadingProduct = false
                         },
                         cartImage = cartImages[cartItems[selectedItemIndex!!].productId],
+                        onUnsavedChangesStateChange = { hasChanges, previewMakingPercent, previewLabourRate ->
+                            // Store unsaved changes state for preview in shopping cart
+                            unsavedChangesState = if (hasChanges) {
+                                Triple(selectedItemIndex!!, previewMakingPercent, previewLabourRate)
+                            } else {
+                                null
+                            }
+                        },
+                        onSaveChangesFunctionChange = { saveFunc ->
+                            saveChangesFunction = saveFunc
+                        },
                         modifier = Modifier
                             .weight(0.4f)
                             .fillMaxHeight()
@@ -279,6 +299,47 @@ fun CartTable(
                         selectedCartItem = null
                     }
                 )
+            }
+        }
+        
+        // Save Changes Button - Fixed at bottom right with z-index
+        if (saveChangesFunction != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .zIndex(1000f) // High z-index to appear on top
+            ) {
+                Button(
+                    onClick = {
+                        saveChangesFunction?.invoke()
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp)
+                        .width(180.dp)
+                        .height(48.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = GoldPrimary,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    elevation = ButtonDefaults.elevation(
+                        defaultElevation = 8.dp,
+                        pressedElevation = 10.dp
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Save Changes",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
@@ -397,6 +458,7 @@ private fun CartItemsList(
     cartImages: Map<String, androidx.compose.ui.graphics.ImageBitmap>,
     metalRates: org.example.project.data.MetalRates,
     fetchedProduct: Product?,
+    unsavedChangesState: Triple<Int, Double?, Double?>?,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
@@ -444,6 +506,13 @@ private fun CartItemsList(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             itemsIndexed(cartItems) { index, item ->
+                // Check if this item has unsaved changes for preview
+                val previewValues = if (unsavedChangesState != null && unsavedChangesState.first == index) {
+                    Triple(unsavedChangesState.second, unsavedChangesState.third, true)
+                } else {
+                    Triple(null, null, false)
+                }
+                
                 CompactCartItem(
                     item = item,
                     index = index,
@@ -452,7 +521,10 @@ private fun CartItemsList(
                     onRemove = { onItemRemove(index) },
                     cartImage = cartImages[item.productId],
                     metalRates = metalRates,
-                    fetchedProduct = if (selectedIndex == index) fetchedProduct else null
+                    fetchedProduct = if (selectedIndex == index) fetchedProduct else null,
+                    previewMakingPercent = previewValues.first,
+                    previewLabourRate = previewValues.second,
+                    hasUnsavedChanges = previewValues.third
                 )
             }
         }
@@ -468,7 +540,10 @@ private fun CompactCartItem(
     onRemove: () -> Unit,
     cartImage: androidx.compose.ui.graphics.ImageBitmap?,
     metalRates: org.example.project.data.MetalRates,
-    fetchedProduct: Product?
+    fetchedProduct: Product?,
+    previewMakingPercent: Double? = null,
+    previewLabourRate: Double? = null,
+    hasUnsavedChanges: Boolean = false
 ) {
     val currentProduct = fetchedProduct ?: item.product
     val metalKarat = if (item.metal.isNotEmpty()) {
@@ -482,17 +557,38 @@ private fun CompactCartItem(
     val silverPurity = extractSilverPurityFromMaterialType(currentProduct.materialType)
     val silverRate = metalRates.getSilverRateForPurity(silverPurity)
 
-    val displayAmount = remember(item, metalRates, metalKarat, currentProduct) {
-        println("🛒 CART CALCULATION START - CompactCartItem for ${currentProduct.name}")
+    // Use preview values if available (unsaved changes), otherwise use saved values
+    val makingPercentage = previewMakingPercent ?: currentProduct.makingPercent
+    val labourRatePerGram = previewLabourRate ?: currentProduct.labourRate
+
+    // Ensure recalculation when product values change (after save)
+    // Use item.product directly to ensure recalculation when product is updated
+    val displayAmount = remember(
+        item.product.makingPercent,
+        item.product.labourRate,
+        item.product.totalWeight,
+        item.product.materialWeight,
+        item.grossWeight,
+        item.quantity,
+        metalRates, 
+        metalKarat,
+        previewMakingPercent,  // Include preview values so preview shows correctly
+        previewLabourRate,      // Include preview values so preview shows correctly
+        hasUnsavedChanges       // Recalculate when unsaved changes state changes
+    ) {
+        // Use preview values if available (unsaved changes), otherwise use saved product values
+        val effectiveMakingPercent = previewMakingPercent ?: item.product.makingPercent
+        val effectiveLabourRate = previewLabourRate ?: item.product.labourRate
+        println("🛒 CART CALCULATION START - CompactCartItem for ${item.product.name}")
         
         // Use ProductPriceCalculator logic (same as ProductPriceCalculator.kt)
-        val grossWeight = if (item.grossWeight > 0) item.grossWeight else currentProduct.totalWeight
-        val makingPercentage = currentProduct.makingPercent
-        val labourRatePerGram = currentProduct.labourRate
+        val grossWeight = if (item.grossWeight > 0) item.grossWeight else item.product.totalWeight
+        val makingPercentage = effectiveMakingPercent
+        val labourRatePerGram = effectiveLabourRate
         
         // Extract kundan and jarkan from stones array
-        val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-        val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+        val kundanStones = item.product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+        val jarkanStones = item.product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
         
         // Sum all Kundan prices and weights
         val kundanPrice = kundanStones.sumOf { it.amount }
@@ -505,24 +601,24 @@ private fun CompactCartItem(
         // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
         val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
         val karatForRate = if (item.metal.isNotEmpty()) {
-            item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
+            item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(item.product.materialType)
         } else {
-            extractKaratFromMaterialType(currentProduct.materialType)
+            extractKaratFromMaterialType(item.product.materialType)
         }
         val collectionRate = try {
-            ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, karatForRate)
+            ratesVM.calculateRateForMaterial(item.product.materialId, item.product.materialType, karatForRate)
         } catch (e: Exception) { 0.0 }
         val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
-            currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
-            currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
+            item.product.materialType.contains("gold", ignoreCase = true) -> goldRate
+            item.product.materialType.contains("silver", ignoreCase = true) -> silverRate
             else -> goldRate
         }
         
         // Build ProductPriceInputs (same structure as ProductPriceCalculator)
         val priceInputs = ProductPriceInputs(
             grossWeight = grossWeight,
-            goldPurity = currentProduct.materialType,
-            goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+            goldPurity = item.product.materialType,
+            goldWeight = item.product.materialWeight.takeIf { it > 0 } ?: grossWeight,
             makingPercentage = makingPercentage,
             labourRatePerGram = labourRatePerGram,
             kundanPrice = kundanPrice,
@@ -535,8 +631,9 @@ private fun CompactCartItem(
         // Use the same calculation function as ProductPriceCalculator
         val result = calculateProductPrice(priceInputs)
         
-        // Multiply by quantity for cart item
-        val totalCharges = result.totalProductPrice * item.quantity
+        // Calculate per-item total, then multiply by quantity (no discount or GST)
+        val perItemTotal = result.totalProductPrice
+        val finalAmount = perItemTotal * item.quantity
         
         println("💵 Amount Breakdown (ProductPriceCalculator logic):")
         println("   Gross Weight: ${grossWeight}g")
@@ -551,10 +648,10 @@ private fun CompactCartItem(
         println("   Labour Charges: ₹${result.labourCharges} (Rate: ₹${labourRatePerGram}/g × New Weight: ${result.newWeight}g)")
         println("   Per Item Total: ₹${result.totalProductPrice}")
         println("   Quantity: ${item.quantity}")
-        println("   TOTAL CHARGES: ₹$totalCharges")
+        println("   FINAL AMOUNT: ₹$finalAmount")
         println("🛒 CART CALCULATION END - CompactCartItem")
         
-        totalCharges
+        finalAmount
     }
 
     Card(
@@ -658,22 +755,27 @@ private fun CompactCartItem(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // Price
+                    // Total Charges (with preview indicator if unsaved changes)
+                    Column {
+                        if (hasUnsavedChanges) {
+                            Text(
+                                "Total Charges (Preview)",
+                                fontSize = 10.sp,
+                                color = TextSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                        }
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "₹",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = GoldPrimary
-                        )
-                        Text(
-                            formatCurrencyNumber(displayAmount),
+                            CurrencyFormatter.formatRupees(displayAmount),
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
-                            color = GoldPrimary
+                                color = if (hasUnsavedChanges) GoldDark else GoldPrimary
                         )
+                        }
                     }
                 }
 
@@ -712,6 +814,8 @@ private fun DetailPanel(
     onItemUpdate: (Int, CartItem) -> Unit,
     onClose: () -> Unit,
     cartImage: androidx.compose.ui.graphics.ImageBitmap?,
+    onUnsavedChangesStateChange: (Boolean, Double?, Double?) -> Unit, // (hasUnsavedChanges, previewMakingPercent, previewLabourRate)
+    onSaveChangesFunctionChange: ((() -> Unit)?) -> Unit, // Pass save function to parent
     modifier: Modifier = Modifier
 ) {
     val currentProduct = fetchedProduct ?: item.product
@@ -737,21 +841,58 @@ private fun DetailPanel(
         mutableStateOf(if (currentProduct.labourRate > 0) currentProduct.labourRate.toString() else "") 
     }
     
-    // Get making % and labour rate from local state or product (for recalculation)
+    // Get making % and labour rate from local state or product (for recalculation preview)
     val makingPercent = makingPercentText.toDoubleOrNull() ?: currentProduct.makingPercent
     val labourRate = labourRateText.toDoubleOrNull() ?: currentProduct.labourRate
     
+    // Track if there are unsaved changes
+    val hasUnsavedChanges = remember(makingPercentText, labourRateText, currentProduct.makingPercent, currentProduct.labourRate) {
+        val currentMakingPercent = makingPercentText.toDoubleOrNull() ?: 0.0
+        val currentLabourRate = labourRateText.toDoubleOrNull() ?: 0.0
+        val savedMakingPercent = currentProduct.makingPercent
+        val savedLabourRate = currentProduct.labourRate
+        
+        // Check if values have changed (with small tolerance for floating point comparison)
+        kotlin.math.abs(currentMakingPercent - savedMakingPercent) > 0.001 ||
+        kotlin.math.abs(currentLabourRate - savedLabourRate) > 0.001
+    }
+    
+    // Notify parent of unsaved changes state for preview in shopping cart
+    LaunchedEffect(hasUnsavedChanges, makingPercent, labourRate) {
+        if (hasUnsavedChanges) {
+            onUnsavedChangesStateChange(true, makingPercent, labourRate)
+        } else {
+            onUnsavedChangesStateChange(false, null, null)
+        }
+    }
+    
+    // Function to save changes
+    fun saveChanges() {
+        val percent = makingPercentText.toDoubleOrNull() ?: 0.0
+        val rate = labourRateText.toDoubleOrNull() ?: 0.0
+        val updatedProduct = currentProduct.copy(
+            makingPercent = percent,
+            labourRate = rate
+        )
+        onItemUpdate(index, item.copy(product = updatedProduct))
+        // Clear unsaved changes state
+        onUnsavedChangesStateChange(false, null, null)
+    }
+    
+    // Notify parent of save function
+    LaunchedEffect(hasUnsavedChanges) {
+        onSaveChangesFunctionChange(if (hasUnsavedChanges) ::saveChanges else null)
+    }
+    
     // Ensure remember block recomputes when product changes (including makingPercent and labourRate updates)
+    // Use local state values (makingPercent, labourRate) for preview calculations even before saving
     val calculatedValues = remember(
-        item.product.makingPercent, 
-        item.product.labourRate,
         item.grossWeight,
         item.quantity,
-        item.discountPercent,
         metalRates, 
         metalKarat, 
-        makingPercent, 
-        labourRate, 
+        makingPercent,  // Use local state for preview (shows unsaved changes)
+        labourRate,      // Use local state for preview (shows unsaved changes)
         editingField
     ) {
         println("🔍 DETAIL PANEL CALCULATION START - ${currentProduct.name}")
@@ -761,8 +902,7 @@ private fun DetailPanel(
         val makingPercentage = makingPercent // Use from fieldValues or product
         val labourRatePerGram = labourRate // Use from fieldValues or product
         val quantity = item.quantity
-        val discountPercent = item.discountPercent
-        
+
         // Extract kundan and jarkan from stones array
         val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
         val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
@@ -808,34 +948,16 @@ private fun DetailPanel(
         // Use the same calculation function as ProductPriceCalculator
         val result = calculateProductPrice(priceInputs)
         
-        // Calculate per-item total, then multiply by quantity
+        // Calculate per-item total, then multiply by quantity (no discount or GST)
         val perItemTotal = result.totalProductPrice
         val totalCharges = perItemTotal * quantity
+        val finalAmount = totalCharges
         
-        // Apply discount
-        val discountAmount = totalCharges * (discountPercent / 100)
-        val taxableAmount = totalCharges - discountAmount
-
-        // Split GST model: 3% on gold price + 5% on labour charges (after discount distributed proportionally)
-        // For ProductPriceCalculator logic: base = goldPrice, making = labourCharges
+        // Calculate component totals for display
         val goldPriceTotal = result.goldPrice * quantity
         val labourChargesTotal = result.labourCharges * quantity
         val kundanPriceTotal = result.kundanPrice * quantity
         val jarkanPriceTotal = result.jarkanPrice * quantity
-        
-        val discountFactor = if (totalCharges > 0) (taxableAmount / totalCharges) else 1.0
-        val discountedGoldPrice = goldPriceTotal * discountFactor
-        val discountedLabourCharges = labourChargesTotal * discountFactor
-
-        val gstOnGold = discountedGoldPrice * 0.03
-        val gstOnLabour = discountedLabourCharges * 0.05
-        val totalGst = gstOnGold + gstOnLabour
-
-        // For intra-state representation, split total GST equally into CGST and SGST
-        val cgst = totalGst / 2
-        val sgst = totalGst / 2
-
-        val finalAmount = taxableAmount + totalGst
 
         println("💵 Detail Panel Amount Breakdown (ProductPriceCalculator logic):")
         println("   Gross Weight: ${grossWeight}g")
@@ -851,11 +973,6 @@ private fun DetailPanel(
         println("   Per Item Total: ₹${perItemTotal}")
         println("   Quantity: $quantity")
         println("   Total Charges: ₹$totalCharges")
-        println("   Discount Amount: ₹$discountAmount (${discountPercent}%)")
-        println("   Taxable Amount: ₹$taxableAmount")
-        println("   CGST: ₹$cgst (split of total GST)")
-        println("   SGST: ₹$sgst (split of total GST)")
-        println("   Total GST (3% gold + 5% labour): ₹$totalGst")
         println("   Final Amount: ₹$finalAmount")
         println("🔍 DETAIL PANEL CALCULATION END")
 
@@ -871,7 +988,6 @@ private fun DetailPanel(
             "cwWeight" to (kundanWeight + jarkanWeight), // Combined kundan + jarkan weight
             "stoneRate" to 0.0, // Not used in ProductPriceCalculator logic
             "vaCharges" to 0.0, // Not used in ProductPriceCalculator logic (labour charges used instead)
-            "discountPercent" to discountPercent,
             "baseAmount" to goldPriceTotal, // Gold price total
             "makingCharges" to labourChargesTotal, // Labour charges total
             "stoneAmount" to (kundanPriceTotal + jarkanPriceTotal), // Kundan + Jarkan total
@@ -880,13 +996,9 @@ private fun DetailPanel(
             "jarkanPrice" to jarkanPriceTotal,
             "labourCharges" to labourChargesTotal,
             "totalCharges" to totalCharges,
-            "discountAmount" to discountAmount,
-            "taxableAmount" to taxableAmount,
-            "cgst" to cgst,
-            "sgst" to sgst,
-            "totalGst" to totalGst,
             "finalAmount" to finalAmount,
-            "metalRate" to goldRatePerGram
+            "metalRate" to goldRatePerGram,
+            "perItemTotal" to perItemTotal
         )
     }
 
@@ -1043,10 +1155,7 @@ private fun DetailPanel(
                         value = makingPercentText,
                         onValueChange = { 
                             makingPercentText = it
-                            // Save immediately on change (like Total Weight)
-                            val percent = it.toDoubleOrNull() ?: 0.0
-                            val updatedProduct = currentProduct.copy(makingPercent = percent)
-                            onItemUpdate(index, item.copy(product = updatedProduct))
+                            // Don't save immediately - wait for "Save Changes" button
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1119,7 +1228,7 @@ private fun DetailPanel(
                 // Metal Rate
                 CalculatedValueRow(
                     label = "Metal Rate",
-                    value = formatCurrency(calculatedValues["metalRate"] ?: 0.0),
+                    value = CurrencyFormatter.formatRupees(calculatedValues["metalRate"] ?: 0.0),
                     color = GoldPrimary,
                     icon = Icons.Default.Edit,
                     isLarge = true
@@ -1164,10 +1273,7 @@ private fun DetailPanel(
                         value = labourRateText,
                         onValueChange = { 
                             labourRateText = it
-                            // Save immediately on change (like Total Weight)
-                            val rate = it.toDoubleOrNull() ?: 0.0
-                            val updatedProduct = currentProduct.copy(labourRate = rate)
-                            onItemUpdate(index, item.copy(product = updatedProduct))
+                            // Don't save immediately - wait for "Save Changes" button
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1193,12 +1299,13 @@ private fun DetailPanel(
                 // Labour Charges (Calculated)
                 CalculatedValueRow(
                     label = "Labour Charges",
-                    value = formatCurrency(calculatedValues["labourCharges"] ?: 0.0),
+                    value = CurrencyFormatter.formatRupees(calculatedValues["labourCharges"] ?: 0.0),
                     color = GoldPrimary,
                     icon = Icons.Default.CheckCircle,
                     isLarge = true
                 )
             }
+            
 
             // Stone Details Section - Show all stones from stones array
             if (currentProduct.hasStones && currentProduct.stones.isNotEmpty()) {
@@ -1222,56 +1329,56 @@ private fun DetailPanel(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(modifier = Modifier.weight(1f)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
                                 CalculatedValueRow(
                                     label = "Purity",
                                     value = stone.purity.ifEmpty { "N/A" },
                                     color = GoldPrimary,
                                     icon = Icons.Default.CheckCircle
-                                )
-                            }
-                            Box(modifier = Modifier.weight(1f)) {
+                            )
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
                                 CalculatedValueRow(
                                     label = "Quantity",
                                     value = stone.quantity.toString(),
                                     color = GoldPrimary,
-                                    icon = Icons.Default.Add
-                                )
-                            }
+                                icon = Icons.Default.Add
+                            )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                         
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Box(modifier = Modifier.weight(1f)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(modifier = Modifier.weight(1f)) {
                                 CalculatedValueRow(
                                     label = "Weight (g)",
                                     value = formatWeight(stone.weight),
                                     color = GoldPrimary,
                                     icon = Icons.Default.CheckCircle
-                                )
-                            }
-                            Box(modifier = Modifier.weight(1f)) {
+                            )
+                        }
+                        Box(modifier = Modifier.weight(1f)) {
                                 CalculatedValueRow(
                                     label = "Rate",
-                                    value = formatCurrency(stone.rate),
+                                    value = CurrencyFormatter.formatRupees(stone.rate),
                                     color = GoldPrimary,
-                                    icon = Icons.Default.Edit
-                                )
-                            }
+                                icon = Icons.Default.Edit
+                            )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
                         
-                        CalculatedValueRow(
+                    CalculatedValueRow(
                             label = "Amount",
-                            value = formatCurrency(stone.amount),
-                            color = GoldPrimary,
+                            value = CurrencyFormatter.formatRupees(stone.amount),
+                        color = GoldPrimary,
                             icon = Icons.Default.CheckCircle,
                             isLarge = true
                         )
@@ -1284,11 +1391,11 @@ private fun DetailPanel(
                         Spacer(modifier = Modifier.height(8.dp))
                         CalculatedValueRow(
                             label = "Total Stone Amount",
-                            value = formatCurrency(calculatedValues["stoneAmount"] ?: 0.0),
-                            color = GoldPrimary,
+                        value = CurrencyFormatter.formatRupees(calculatedValues["stoneAmount"] ?: 0.0),
+                        color = GoldPrimary,
                             icon = Icons.Default.CheckCircle,
                             isLarge = true
-                        )
+                    )
                     }
                 }
             }
@@ -1307,7 +1414,7 @@ private fun DetailPanel(
                 Spacer(modifier = Modifier.height(6.dp))
                 Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
                 Spacer(modifier = Modifier.height(6.dp))
-                AmountRow("Total Charges", calculatedValues["totalCharges"] ?: 0.0, GoldPrimary, isBold = true)
+                AmountRow("Total Charges", calculatedValues["finalAmount"] ?: calculatedValues["totalCharges"] ?: 0.0, GoldPrimary, isBold = true)
                 
                 // Show per-product price if quantity > 1
                 val quantity = (calculatedValues["quantity"] ?: 1.0).toInt()
@@ -1321,13 +1428,26 @@ private fun DetailPanel(
                         horizontalArrangement = Arrangement.End
                     ) {
                         Text(
-                            "(₹${formatCurrencyNumber(perProductCharges)} per item)",
+                            "(${CurrencyFormatter.formatRupees(perProductCharges)} per item)",
                             fontSize = 11.sp,
                             color = Color(0xFF666666),
                             fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                         )
                     }
                 }
+            }
+            
+            // Blank white card below Calculated Amounts (same width as Save Changes button)
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier
+                    .width(180.dp)
+                    .height(60.dp),
+                backgroundColor = Color.White,
+                shape = RoundedCornerShape(8.dp),
+                elevation = 2.dp
+            ) {
+                // Empty card - just for spacing/visual consistency
             }
         }
     }
@@ -1533,20 +1653,12 @@ private fun AmountRow(
             color = TextPrimary,
             fontWeight = if (isBold) FontWeight.Bold else FontWeight.Medium
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "₹",
-                fontSize = if (isBold) 13.sp else 12.sp,
-                fontWeight = if (isBold) FontWeight.Bold else FontWeight.Medium,
-                color = color
-            )
-            Text(
-                formatCurrencyNumber(amount),
+            CurrencyFormatter.formatRupees(amount),
                 fontSize = if (isBold) 15.sp else 14.sp,
                 color = color,
                 fontWeight = if (isBold) FontWeight.Bold else FontWeight.SemiBold
             )
-        }
     }
 }
 
@@ -1909,15 +2021,6 @@ private fun saveFieldValue(
     }
 }
 
-private fun formatCurrency(amount: Double): String {
-    val formatter = DecimalFormat("#,##0.00")
-    return "₹${formatter.format(amount)}"
-}
-
-private fun formatCurrencyNumber(amount: Double): String {
-    val formatter = DecimalFormat("#,##0.00")
-    return formatter.format(amount)
-}
 
 private fun formatWeight(weight: Double): String {
     val formatter = DecimalFormat("#,##0.000")

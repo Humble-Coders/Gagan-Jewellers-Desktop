@@ -59,18 +59,9 @@ import org.example.project.utils.ImageLoader
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.JewelryAppInitializer
+import org.example.project.utils.CurrencyFormatter
 
 import org.jetbrains.skia.Image
-import java.text.NumberFormat
-import java.util.Locale
-
-
-// Utility function to format numbers with commas
-private fun formatNumber(number: Double): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
-    return formatter.format(number)
-}
 
 // Update the ShopMainScreen function in your existing cart files
 
@@ -224,34 +215,24 @@ fun CartBuildingScreen(
     val coroutineScope = rememberCoroutineScope()
     val cart by cartViewModel.cart
     
-    // Load inventory data when screen loads (same as DashboardScreen)
+    // Optimized loading: Load products first, then inventory (avoid multiple loads)
     LaunchedEffect(Unit) {
         if (products.isEmpty()) {
             productsViewModel.loadProducts()
         } else if (!inventoryLoading && inventoryData.isEmpty()) {
-            // If products are loaded but inventory data is not, trigger inventory loading
+            // Only load inventory if products are already loaded and inventory isn't loading
             productsViewModel.loadInventoryData()
         }
     }
     
-    // Also trigger inventory loading when products change (in case products were loaded elsewhere)
-    LaunchedEffect(products) {
+    // Trigger inventory loading when products are loaded (single trigger)
+    LaunchedEffect(products.size) {
         if (products.isNotEmpty() && !inventoryLoading && inventoryData.isEmpty()) {
             productsViewModel.loadInventoryData()
         }
     }
     
-    // Debug cart state changes
-    LaunchedEffect(cart) {
-        println("🛒 CART STATE CHANGED IN CART BUILDING STEP")
-        println("   - Cart items count: ${cart.items.size}")
-        println("   - Cart item IDs: ${cart.items.map { it.productId }}")
-        println("   - Cart total items: ${cart.totalItems}")
-        cart.items.forEach { item ->
-            println("   - Item: ${item.product.name} (Qty: ${item.quantity})")
-            println("     - Barcodes: ${item.selectedBarcodeIds}")
-        }
-    }
+    // Removed excessive cart logging for better performance
     
     // Get metal rates for dynamic pricing
     val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
@@ -269,19 +250,7 @@ fun CartBuildingScreen(
         ratesVM.loadMetalRates()
     }
 
-    // Log all products to see what's available
-    products.forEach { product ->
-        println("   📦 Product: ${product.name} (ID: ${product.id})")
-        println("      - Category: ${product.categoryId}")
-        println("      - Available: ${product.available}")
-        println("      - Quantity: ${product.quantity}")
-        println("      - Material Type: ${product.materialType}")
-    }
-
-    // Log categories
-    categories.forEach { category ->
-        println("   📂 Category: ${category.name} (ID: ${category.id})")
-    }
+    // Removed excessive logging for better performance
 
     // Force recalculation when cart screen opens by updating existing cart items with current rates
     LaunchedEffect(Unit) {
@@ -392,11 +361,57 @@ fun CartBuildingScreen(
                 product.categoryId == selectedCategoryId
             }
 
-            // Add inventory check - only show products with quantity > 0
+            // Only show products with quantity > 0 (strict filter)
             matchesSearch && matchesCategory && product.available && groupedProduct.quantity > 0
         }
 
-        if (filteredGroupedProducts.isEmpty()) {
+        // Show loading indicator if products or inventory are loading
+        if (products.isEmpty() && inventoryLoading) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colors.primary,
+                        strokeWidth = 3.dp,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Text(
+                        "Loading products...",
+                        color = Color.Gray,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        } else if (filteredGroupedProducts.isEmpty() && products.isNotEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "No products found",
+                        color = Color.Gray,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (inventoryLoading) {
+                        Text(
+                            "Loading inventory data...",
+                            color = Color.Gray,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        } else if (filteredGroupedProducts.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -693,7 +708,7 @@ fun GroupedProductCard(
                     ) {
                         // Price
                         Text(
-                            text = "₹${formatCurrency(displayPrice)}",
+                            text = "${CurrencyFormatter.formatRupees(displayPrice)}",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = MaterialTheme.colors.primary
@@ -948,7 +963,7 @@ fun ProductCard(
                     ) {
                         // Price
                         Text(
-                            text = "₹${formatCurrency(displayPrice)}",
+                            text = "${CurrencyFormatter.formatRupees(displayPrice)}",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = MaterialTheme.colors.primary
@@ -1181,7 +1196,7 @@ fun CartItemCard(
                 Spacer(modifier = Modifier.height(2.dp))
 
                 Text(
-                    text = "${String.format("%.1f", actualWeight)}g • ${cartItem.product.materialType} • Making: ₹${String.format("%.2f", actualWeight * 100)}/g",
+                    text = "${String.format("%.1f", actualWeight)}g • ${cartItem.product.materialType} • Making: ${CurrencyFormatter.formatRupees(actualWeight * 100, includeDecimals = true)}/g",
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
@@ -1252,7 +1267,7 @@ fun CartItemCard(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "₹${String.format("%.0f", itemTotal)}",
+                    text = CurrencyFormatter.formatRupees(itemTotal),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colors.primary
@@ -1408,16 +1423,17 @@ fun CartScreen(
                                 // Use the same calculation function as ProductPriceCalculator
                                 val result = calculateProductPrice(priceInputs)
                                 
-                                // Multiply by quantity for cart item total
-                                val itemTotal = result.totalProductPrice * cartItem.quantity
+                                // Calculate per-item total, then multiply by quantity (no discount or GST)
+                                val perItemTotal = result.totalProductPrice
+                                val finalAmount = perItemTotal * cartItem.quantity
                                 
-                                itemTotal
+                                finalAmount
                             }
                             total
                         }
                         
                         Text(
-                            "₹${String.format("%.0f", cartTotal)}",
+                            CurrencyFormatter.formatRupees(cartTotal),
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colors.primary
@@ -1508,7 +1524,7 @@ fun CartSummary(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "₹${String.format("%.0f", total)}",
+                    CurrencyFormatter.formatRupees(total),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colors.primary
@@ -1549,11 +1565,6 @@ fun CartSummary(
     }
 }
 
-private fun formatCurrency(amount: Double): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
-    return formatter.format(amount)
-}
 
 /**
  * Calculate the total product cost using the same logic as ProductPriceCalculator

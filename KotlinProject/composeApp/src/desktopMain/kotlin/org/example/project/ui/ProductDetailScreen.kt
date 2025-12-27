@@ -60,6 +60,7 @@ import org.example.project.viewModels.ProductsViewModel
 import org.example.project.data.Product
 import org.example.project.data.MetalRatesManager
 import org.example.project.JewelryAppInitializer
+import org.example.project.utils.CurrencyFormatter
 import org.jetbrains.skia.Image
 import java.text.NumberFormat
 import java.util.Locale
@@ -347,14 +348,14 @@ fun ProductDetailScreen(
                             horizontalAlignment = Alignment.End
                         ) {
                             Text(
-                                text = "₹${formatCurrency(calculateProductTotalCost(p))}",
+                                text = "${CurrencyFormatter.formatRupees(calculateProductTotalCost(p))}",
                                 fontSize = 24.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colors.primary
                             )
                             if (p.hasCustomPrice && p.customPrice > 0) {
                                 Text(
-                                    text = "Custom: ₹${formatCurrency(p.customPrice)}",
+                                    text = "Custom: ${CurrencyFormatter.formatRupees(p.customPrice)}",
                                     fontSize = 14.sp,
                                     color = Color(0xFF6B7280)
                                 )
@@ -486,12 +487,6 @@ private fun DetailRow(label: String, value: String) {
             color = Color.DarkGray
         )
     }
-}
-
-private fun formatCurrency(amount: Double): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
-    return formatter.format(amount)
 }
 
 /**

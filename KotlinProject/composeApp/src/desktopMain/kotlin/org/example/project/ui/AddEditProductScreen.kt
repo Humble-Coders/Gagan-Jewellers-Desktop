@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.sp
 import org.example.project.JewelryAppInitializer
 import org.example.project.data.Product
 import org.example.project.data.calculateRateForKarat
+import org.example.project.utils.CurrencyFormatter
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.data.MetalRatesManager
 import org.example.project.viewModels.MetalRateViewModel
@@ -845,7 +846,7 @@ fun AddEditProductScreen(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("Stone: ${stone.name}", fontWeight = FontWeight.Medium)
                                         Text("Purity: ${stone.purity}", fontSize = 12.sp, color = Color.Gray)
-                                        Text("Weight: ${stone.weight}g, Rate: ₹${stone.rate}", fontSize = 12.sp, color = Color.Gray)
+                                        Text("Weight: ${stone.weight}g, Rate: ${CurrencyFormatter.formatRupees(stone.rate, includeDecimals = true)}", fontSize = 12.sp, color = Color.Gray)
                                     }
                                     IconButton(onClick = {
                                         productStones = productStones.filterIndexed { i, _ -> i != index }
@@ -1735,7 +1736,7 @@ fun MaterialSpecificationsTable(
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    String.format("%.2f", material.rate),
+                    CurrencyFormatter.formatRupees(material.rate, includeDecimals = true),
                     modifier = Modifier.weight(1f)
                 )
                 Text(

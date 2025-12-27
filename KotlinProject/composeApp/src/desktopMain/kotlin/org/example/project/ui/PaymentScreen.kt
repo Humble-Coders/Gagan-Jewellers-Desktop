@@ -30,14 +30,24 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
 import org.example.project.data.CartItem
 import org.example.project.data.MetalRatesManager
 import org.example.project.JewelryAppInitializer
+import org.example.project.utils.CurrencyFormatter
 import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.CustomerViewModel
@@ -46,9 +56,12 @@ import org.example.project.data.PaymentMethod
 import org.example.project.data.DiscountType
 import org.example.project.data.PaymentSplit
 import org.example.project.data.ExchangeGold
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
 import org.example.project.viewModels.ProductsViewModel
-import java.text.NumberFormat
-import java.util.Locale
+import org.example.project.data.extractKaratFromMaterialType
+
+enum class GstType { ZERO, THREE, FIVE, CUSTOM }
 
 @Composable
 fun PaymentScreen(
@@ -79,125 +92,114 @@ fun PaymentScreen(
     var dueAmount by remember { mutableStateOf("") }
     var paymentSplit by remember { mutableStateOf<PaymentSplit?>(null) }
     
-    // Calculate totals using the EXACT same logic as cart screen
+    // GST selection state
+    var selectedGstType by remember { mutableStateOf<GstType?>(null) }
+    var customGstValue by remember { mutableStateOf("") }
+    
+    // Calculate totals using the EXACT same logic as cart screen (ProductPriceCalculator)
     val metalRates by MetalRatesManager.metalRates
+    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
     val subtotal = remember(cart, metalRates) {
         val total = cart.items.sumOf { cartItem ->
             val currentProduct = cartItem.product
+            
+            // Use ProductPriceCalculator logic (same as CartScreen)
+            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
+            val makingPercentage = currentProduct.makingPercent
+            val labourRatePerGram = currentProduct.labourRate
+            
+            // Extract kundan and jarkan from stones array
+            val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+            val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+            
+            // Sum all Kundan prices and weights
+            val kundanPrice = kundanStones.sumOf { it.amount }
+            val kundanWeight = kundanStones.sumOf { it.weight }
+            
+            // Sum all Jarkan prices and weights
+            val jarkanPrice = jarkanStones.sumOf { it.amount }
+            val jarkanWeight = jarkanStones.sumOf { it.weight }
+            
+            // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
             val metalKarat = if (cartItem.metal.isNotEmpty()) {
                 cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
             } else {
                 extractKaratFromMaterialType(currentProduct.materialType)
             }
-            
-            val grossWeight = currentProduct.totalWeight // grossWeight removed, using totalWeight
-            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
-            val netWeight = grossWeight - lessWeight
-            
-            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
             val collectionRate = try {
                 ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
             } catch (e: Exception) { 0.0 }
-            
             val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
             val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
-            val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
-            
-            val metalRate = if (collectionRate > 0) collectionRate else when {
-                currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
-                currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
-                else -> goldRate
+            // Extract silver purity from material type
+            val materialTypeLower = currentProduct.materialType.lowercase()
+            val silverPurity = when {
+                materialTypeLower.contains("999") -> 999
+                materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                else -> {
+                    val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
+                }
             }
-            
-            val quantity = cartItem.quantity
-            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
-            val firstStone = currentProduct.stones.firstOrNull()
-            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: currentProduct.stoneWeight)
-            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
-            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
-            val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.labourCharges // Use labourCharges instead of vaCharges
-            
-            val baseAmount = netWeight * metalRate * quantity
-            val makingCharges = netWeight * makingChargesPerGram * quantity
-            val stoneAmount = stoneRate * stoneQuantity * cwWeight * quantity
-            val totalCharges = baseAmount + makingCharges + stoneAmount + (vaCharges * quantity)
-            
-            println("💰 PAYMENT SCREEN DEBUG: ${cartItem.product.name} = $totalCharges")
-            totalCharges
-        }
-        println("💰 PAYMENT SCREEN TOTAL CALCULATION: Total = $total")
-        total
-    }
-    
-    // Calculate GST amount using split model (3% on metal, 5% on making charges)
-    val gstAmount = remember(cart, metalRates) {
-        val total = cart.items.sumOf { cartItem ->
-            val currentProduct = cartItem.product
-            val metalKarat = if (cartItem.metal.isNotEmpty()) {
-                cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
-            } else {
-                extractKaratFromMaterialType(currentProduct.materialType)
-            }
-
-            val grossWeight = currentProduct.totalWeight // grossWeight removed, using totalWeight
-            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
-            val netWeight = grossWeight - lessWeight
-
-            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
-            val collectionRate = try {
-                ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
-            } catch (e: Exception) { 0.0 }
-
-            val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
-            val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
-            val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
-
-            val metalRate = if (collectionRate > 0) collectionRate else when {
+            val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+            val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
                 currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
                 currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
                 else -> goldRate
             }
 
-            val quantity = cartItem.quantity
-            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
-
-            // Calculate base amount (metal cost)
-            val baseAmount = netWeight * metalRate * quantity
-            // Calculate making charges
-            val makingCharges = netWeight * makingChargesPerGram * quantity
-
-            // Apply discount if any (assuming discount is applied proportionally)
-            val discountPercent = cartItem.discountPercent
-            val totalCharges = baseAmount + makingCharges
-            val discountAmount = totalCharges * (discountPercent / 100.0)
-            val taxableAmount = totalCharges - discountAmount
-
-            val discountFactor = if (totalCharges > 0) (taxableAmount / totalCharges) else 1.0
-            val discountedBase = baseAmount * discountFactor
-            val discountedMaking = makingCharges * discountFactor
-
-            // Calculate GST: 3% on metal, 5% on making charges
-            val gstOnBase = discountedBase * 0.03
-            val gstOnMaking = discountedMaking * 0.05
-            val itemGST = gstOnBase + gstOnMaking
-
-            println("💰 GST CALCULATION DEBUG: ${cartItem.product.name}")
-            println("   - Base Amount: $baseAmount, Making Charges: $makingCharges")
-            println("   - Discount Factor: $discountFactor")
-            println("   - Discounted Base: $discountedBase, Discounted Making: $discountedMaking")
-            println("   - GST on Base (3%): $gstOnBase, GST on Making (5%): $gstOnMaking")
-            println("   - Total GST: $itemGST")
-            itemGST
+            // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+            val priceInputs = ProductPriceInputs(
+                grossWeight = grossWeight,
+                goldPurity = currentProduct.materialType,
+                goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                makingPercentage = makingPercentage,
+                labourRatePerGram = labourRatePerGram,
+                kundanPrice = kundanPrice,
+                kundanWeight = kundanWeight,
+                jarkanPrice = jarkanPrice,
+                jarkanWeight = jarkanWeight,
+                goldRatePerGram = goldRatePerGram
+            )
+            
+            // Use the same calculation function as ProductPriceCalculator
+            val result = calculateProductPrice(priceInputs)
+            
+            // Calculate per-item total, then multiply by quantity (no discount or GST)
+            val perItemTotal = result.totalProductPrice
+            val finalAmount = perItemTotal * cartItem.quantity
+            
+            finalAmount
         }
-        println("💰 TOTAL GST CALCULATION: $total")
         total
     }
     
     // Calculate discount amount using the new method that includes GST
     val calculatedDiscountAmount = if (discountValue.isNotEmpty()) {
-        paymentViewModel.calculateDiscountAmount(subtotal, gstAmount)
+        paymentViewModel.calculateDiscountAmount(subtotal, 0.0) // Pass 0.0 for now, will recalculate after GST
     } else {
         0.0
+    }
+    
+    // Calculate GST amount based on selected GST type
+    val gstAmount = remember(cart, metalRates, selectedGstType, customGstValue, subtotal, calculatedDiscountAmount) {
+        // Get GST percentage based on selection
+        val gstPercentage = when (selectedGstType) {
+            GstType.ZERO -> 0.0
+            GstType.THREE -> 3.0
+            GstType.FIVE -> 5.0
+            GstType.CUSTOM -> customGstValue.toDoubleOrNull() ?: 0.0
+            null -> 0.0 // Default to 0% if not selected
+        }
+        
+        if (gstPercentage == 0.0) {
+            0.0
+        } else {
+            // Calculate GST on subtotal after discount
+            val taxableAmount = subtotal - calculatedDiscountAmount
+            taxableAmount * (gstPercentage / 100.0)
+        }
     }
     
     // Calculate total amount for payment split
@@ -344,7 +346,11 @@ fun PaymentScreen(
                 cartViewModel = cartViewModel,
                 onConfirmOrder = onConfirmOrder,
                 isProcessing = isProcessing,
-                paymentMethodSelected = selectedPaymentMethod != null || paymentSplit != null
+                paymentMethodSelected = selectedPaymentMethod != null || paymentSplit != null,
+                selectedGstType = selectedGstType,
+                customGstValue = customGstValue,
+                onGstTypeChange = { selectedGstType = it },
+                onCustomGstValueChange = { customGstValue = it }
             )
         }
 
@@ -599,6 +605,148 @@ private fun DiscountTypeOption(
     }
 }
 
+@Composable
+private fun GstSection(
+    selectedGstType: GstType?,
+    customGstValue: String,
+    onGstTypeChange: (GstType?) -> Unit,
+    onCustomGstValueChange: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = 4.dp,
+        shape = RoundedCornerShape(16.dp),
+        backgroundColor = Color.White
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(25.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                "Select GST",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF2E2E2E)
+            )
+
+            // GST Type Selection Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                GstTypeOption(
+                    text = "0%",
+                    isSelected = selectedGstType == GstType.ZERO,
+                    onClick = { onGstTypeChange(GstType.ZERO) },
+                    modifier = Modifier.weight(1f)
+                )
+
+                GstTypeOption(
+                    text = "3%",
+                    isSelected = selectedGstType == GstType.THREE,
+                    onClick = { onGstTypeChange(GstType.THREE) },
+                    modifier = Modifier.weight(1f)
+                )
+
+                GstTypeOption(
+                    text = "5%",
+                    isSelected = selectedGstType == GstType.FIVE,
+                    onClick = { onGstTypeChange(GstType.FIVE) },
+                    modifier = Modifier.weight(1f)
+                )
+
+                GstTypeOption(
+                    text = "Custom",
+                    isSelected = selectedGstType == GstType.CUSTOM,
+                    onClick = { onGstTypeChange(GstType.CUSTOM) },
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            // Custom GST Value Input (only show when Custom is selected)
+            if (selectedGstType == GstType.CUSTOM) {
+                OutlinedTextField(
+                    value = customGstValue,
+                    onValueChange = onCustomGstValueChange,
+                    label = { Text("Enter GST percentage") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    trailingIcon = { 
+                        Text(
+                            "%", 
+                            color = Color(0xFF666666), 
+                            modifier = Modifier.padding(end = 12.dp)
+                        ) 
+                    },
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontSize = 14.sp,
+                        color = Color(0xFF2E2E2E)
+                    ),
+                    colors = TextFieldDefaults.outlinedTextFieldColors(
+                        focusedBorderColor = Color(0xFFB8973D),
+                        cursorColor = Color(0xFFB8973D),
+                        textColor = Color(0xFF2E2E2E)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GstTypeOption(
+    text: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(48.dp),
+        colors = ButtonDefaults.buttonColors(
+            backgroundColor = if (isSelected) Color(0xFFB8973D) else Color(0xFFF5F5F5),
+            contentColor = if (isSelected) Color.White else Color(0xFF2E2E2E)
+        ),
+        shape = RoundedCornerShape(12.dp),
+        elevation = if (isSelected) ButtonDefaults.elevation(defaultElevation = 4.dp) else ButtonDefaults.elevation(defaultElevation = 0.dp)
+    ) {
+        Text(
+            text,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            fontSize = 14.sp
+        )
+    }
+}
+
+@Composable
+private fun GstTypeOptionSmall(
+    text: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.height(24.dp).width(32.dp).padding(0.dp),
+        colors = ButtonDefaults.buttonColors(
+            backgroundColor = if (isSelected) Color(0xFFB8973D) else Color(0xFFF5F5F5),
+            contentColor = if (isSelected) Color.White else Color(0xFF2E2E2E)
+        ),
+        shape = RoundedCornerShape(4.dp),
+        elevation = if (isSelected) ButtonDefaults.elevation(defaultElevation = 2.dp) else ButtonDefaults.elevation(defaultElevation = 0.dp),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+    ) {
+        Text(
+            text,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            fontSize = 10.sp
+        )
+    }
+}
+
 
 @Composable
 private fun PaymentOptionsSection(
@@ -673,7 +821,7 @@ private fun PaymentOptionsSection(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "₹${formatCurrency(totalAmount)}",
+                                "${CurrencyFormatter.formatRupees(totalAmount)}",
                                 fontSize = 24.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFFB8973D)
@@ -754,7 +902,7 @@ private fun PaymentOptionsSection(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    if (exchangeGoldValue > 0) "Exchange Gold Added (₹${formatCurrency(exchangeGoldValue)})" else "Exchange Gold (Old Gold Exchange)",
+                    if (exchangeGoldValue > 0) "Exchange Gold Added (${CurrencyFormatter.formatRupees(exchangeGoldValue)})" else "Exchange Gold (Old Gold Exchange)",
                     fontWeight = FontWeight.Medium,
                     fontSize = 14.sp
                 )
@@ -772,11 +920,31 @@ private fun PaymentInputField(
     iconColor: Color,
     enabled: Boolean = true
 ) {
+    var isFocused by remember { mutableStateOf(false) }
+    
+    // Format value when not focused, show raw when focused
+    val displayValue = remember(value, isFocused) {
+        if (isFocused || value.isEmpty()) {
+            // When focused or empty, show raw value for editing
+            value
+        } else {
+            // When not focused, format the value
+            val numericValue = value.toDoubleOrNull() ?: 0.0
+            if (numericValue > 0) {
+                CurrencyFormatter.formatRupeesNumber(numericValue, includeDecimals = true)
+            } else {
+                value
+            }
+        }
+    }
+    
     OutlinedTextField(
-        value = value,
-        onValueChange = { input ->
-            if (input.isEmpty() || input.matches(Regex("^\\d*\\.?\\d*\$"))) {
-                onValueChange(input)
+        value = displayValue,
+        onValueChange = { input: String ->
+            // Remove formatting (commas) for editing
+            val rawInput = input.replace(",", "").replace("₹", "").trim()
+            if (rawInput.isEmpty() || rawInput.matches(Regex("^\\d*\\.?\\d*\$"))) {
+                onValueChange(rawInput)
             }
         },
         label = { Text(label, fontSize = 13.sp) },
@@ -788,8 +956,13 @@ private fun PaymentInputField(
                 modifier = Modifier.size(18.dp)
             )
         },
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        modifier = Modifier.fillMaxWidth().height(56.dp),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp)
+            .onFocusChanged { focusState ->
+                isFocused = focusState.isFocused
+            },
         singleLine = true,
         enabled = enabled,
         textStyle = androidx.compose.ui.text.TextStyle(
@@ -856,7 +1029,7 @@ private fun PaymentSplitSummaryCompact(
                 color = Color(0xFF2E2E2E)
             )
             Text(
-                "₹${formatCurrency(totalPaid)}",
+                "${CurrencyFormatter.formatRupees(totalPaid)}",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (isValid) Color(0xFF4CAF50) else Color(0xFFD32F2F)
@@ -909,7 +1082,7 @@ private fun PaymentSplitRowCompact(
             color = Color(0xFF666666)
         )
         Text(
-            "₹${formatCurrency(amount)}",
+            "${CurrencyFormatter.formatRupees(amount)}",
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
             color = color
@@ -932,7 +1105,11 @@ private fun OrderSummarySection(
     cartViewModel: CartViewModel,
     onConfirmOrder: () -> Unit,
     isProcessing: Boolean,
-    paymentMethodSelected: Boolean
+    paymentMethodSelected: Boolean,
+    selectedGstType: GstType? = null,
+    customGstValue: String = "",
+    onGstTypeChange: ((GstType?) -> Unit)? = null,
+    onCustomGstValueChange: ((String) -> Unit)? = null
 ) {
     Card(
         modifier = modifier.fillMaxHeight(),
@@ -979,7 +1156,11 @@ private fun OrderSummarySection(
                 subtotal = subtotal,
                 discountAmount = discountAmount,
                 gst = gst,
-                total = total
+                total = total,
+                selectedGstType = selectedGstType,
+                customGstValue = customGstValue,
+                onGstTypeChange = onGstTypeChange,
+                onCustomGstValueChange = onCustomGstValueChange
             )
 
             // Payment Split Information
@@ -1038,7 +1219,7 @@ private fun OrderSummarySection(
                     Text("Saving Order...", fontSize = 14.sp)
                 } else {
                     Text(
-                        "Confirm Order - ₹${formatCurrency(total)}",
+                        "Confirm Order - ${CurrencyFormatter.formatRupees(total)}",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -1107,53 +1288,83 @@ private fun OrderSummaryItem(
             )
         }
 
-        // Price (base amount without GST to match subtotal) - using same calculation as main subtotal
+        // Price - using same ProductPriceCalculator logic as subtotal
         val metalRates by MetalRatesManager.metalRates
-        val baseAmount = remember(cartItem, metalRates) {
+        val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+        val itemPrice = remember(cartItem, metalRates) {
             val currentProduct = cartItem.product
+            
+            // Use ProductPriceCalculator logic (same as subtotal calculation)
+            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
+            val makingPercentage = currentProduct.makingPercent
+            val labourRatePerGram = currentProduct.labourRate
+            
+            // Extract kundan and jarkan from stones array
+            val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+            val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+            
+            // Sum all Kundan prices and weights
+            val kundanPrice = kundanStones.sumOf { it.amount }
+            val kundanWeight = kundanStones.sumOf { it.weight }
+            
+            // Sum all Jarkan prices and weights
+            val jarkanPrice = jarkanStones.sumOf { it.amount }
+            val jarkanWeight = jarkanStones.sumOf { it.weight }
+            
+            // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
             val metalKarat = if (cartItem.metal.isNotEmpty()) {
                 cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
             } else {
                 extractKaratFromMaterialType(currentProduct.materialType)
             }
-
-            val grossWeight = currentProduct.totalWeight // grossWeight removed, using totalWeight
-            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
-            val netWeight = grossWeight - lessWeight
-
-            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
             val collectionRate = try {
                 ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
             } catch (e: Exception) { 0.0 }
-
             val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
             val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
-            val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
-
-            val metalRate = if (collectionRate > 0) collectionRate else when {
+            // Extract silver purity from material type
+            val materialTypeLower = currentProduct.materialType.lowercase()
+            val silverPurity = when {
+                materialTypeLower.contains("999") -> 999
+                materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                else -> {
+                    val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
+                }
+            }
+            val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+            val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
                 currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
                 currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
                 else -> goldRate
             }
 
-            val quantity = cartItem.quantity
-            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
-            val firstStone = currentProduct.stones.firstOrNull()
-            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: currentProduct.stoneWeight)
-            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
-            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
-            val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.labourCharges // Use labourCharges instead of vaCharges
-
-            val baseAmount = netWeight * metalRate * quantity
-            val makingCharges = netWeight * makingChargesPerGram * quantity
-            val stoneAmount = stoneRate * stoneQuantity * cwWeight * quantity
-            val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
-
-            println("💰 ORDER SUMMARY ITEM DEBUG: ${cartItem.product.name} = $totalCharges")
-            totalCharges
+            // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+            val priceInputs = ProductPriceInputs(
+                grossWeight = grossWeight,
+                goldPurity = currentProduct.materialType,
+                goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                makingPercentage = makingPercentage,
+                labourRatePerGram = labourRatePerGram,
+                kundanPrice = kundanPrice,
+                kundanWeight = kundanWeight,
+                jarkanPrice = jarkanPrice,
+                jarkanWeight = jarkanWeight,
+                goldRatePerGram = goldRatePerGram
+            )
+            
+            // Use the same calculation function as ProductPriceCalculator
+            val result = calculateProductPrice(priceInputs)
+            
+            // Calculate per-item total, then multiply by quantity (no discount or GST)
+            val perItemTotal = result.totalProductPrice
+            val finalAmount = perItemTotal * cartItem.quantity
+            
+            finalAmount
         }
         Text(
-            "₹${formatCurrency(baseAmount)}",
+            "${CurrencyFormatter.formatRupees(itemPrice)}",
             fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFFB8973D)
@@ -1167,7 +1378,11 @@ private fun PriceBreakdown(
     subtotal: Double,
     discountAmount: Double,
     gst: Double,
-    total: Double
+    total: Double,
+    selectedGstType: GstType? = null,
+    customGstValue: String = "",
+    onGstTypeChange: ((GstType?) -> Unit)? = null,
+    onCustomGstValueChange: ((String) -> Unit)? = null
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1187,11 +1402,98 @@ private fun PriceBreakdown(
             )
         }
 
-        // GST Amount (calculated from split GST: 3% base + 5% making)
-        PriceRow(
-            label = "GST",
-            amount = gst
-        )
+        // GST Amount with selection buttons
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    "GST",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF666666)
+                )
+                
+                // Small GST selection buttons
+                GstTypeOptionSmall(
+                    text = "0%",
+                    isSelected = selectedGstType == GstType.ZERO,
+                    onClick = { onGstTypeChange?.invoke(GstType.ZERO) }
+                )
+                GstTypeOptionSmall(
+                    text = "3%",
+                    isSelected = selectedGstType == GstType.THREE,
+                    onClick = { onGstTypeChange?.invoke(GstType.THREE) }
+                )
+                GstTypeOptionSmall(
+                    text = "5%",
+                    isSelected = selectedGstType == GstType.FIVE,
+                    onClick = { onGstTypeChange?.invoke(GstType.FIVE) }
+                )
+                GstTypeOptionSmall(
+                    text = "C",
+                    isSelected = selectedGstType == GstType.CUSTOM,
+                    onClick = { onGstTypeChange?.invoke(GstType.CUSTOM) }
+                )
+            }
+            
+            Text(
+                "${CurrencyFormatter.formatRupees(gst)}",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                color = Color(0xFF2E2E2E)
+            )
+        }
+        
+        // Custom GST input (only show when Custom is selected)
+        if (selectedGstType == GstType.CUSTOM) {
+            Spacer(modifier = Modifier.height(4.dp))
+            val focusManager = LocalFocusManager.current
+            OutlinedTextField(
+                value = customGstValue,
+                onValueChange = { onCustomGstValueChange?.invoke(it) },
+                label = { Text("Enter GST %") },
+                placeholder = { Text("0.00", color = Color.Gray.copy(alpha = 0.5f)) },
+                trailingIcon = { 
+                    Text(
+                        "%", 
+                        color = Color.Gray, 
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) 
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal,
+                    imeAction = ImeAction.Next
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
+                            focusManager.moveFocus(FocusDirection.Down)
+                            true
+                        } else false
+                    },
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    fontSize = 14.sp,
+                    color = Color(0xFF2E2E2E)
+                ),
+                colors = TextFieldDefaults.outlinedTextFieldColors(
+                    focusedBorderColor = Color(0xFFB8973D),
+                    unfocusedBorderColor = Color(0xFFE0E0E0),
+                    cursorColor = Color(0xFFB8973D),
+                    focusedLabelColor = Color(0xFFB8973D),
+                    textColor = Color(0xFF2E2E2E)
+                ),
+                shape = RoundedCornerShape(8.dp)
+            )
+        }
 
         Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
 
@@ -1223,7 +1525,7 @@ private fun PriceRow(
         )
 
         Text(
-            "${if (isDiscount) "-" else ""}₹${formatCurrency(kotlin.math.abs(amount))}",
+            "${if (isDiscount) "-" else ""}${CurrencyFormatter.formatRupees(kotlin.math.abs(amount))}",
             fontSize = if (isTotal) 16.sp else 14.sp,
             fontWeight = if (isTotal) FontWeight.Bold else FontWeight.Medium,
             color = when {
@@ -1287,7 +1589,7 @@ private fun PaymentSplitSummary(
                 color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
             )
             Text(
-                "₹${formatCurrency(totalPayment)}",
+                "${CurrencyFormatter.formatRupees(totalPayment)}",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFFB8973D)
@@ -1338,7 +1640,7 @@ private fun PaymentSplitRow(
             color = Color(0xFF666666)
         )
         Text(
-            "₹${formatCurrency(amount)}",
+            "${CurrencyFormatter.formatRupees(amount)}",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = color
@@ -1372,17 +1674,11 @@ private fun ExchangeGoldSummary(
             )
 
             Text(
-                "-₹${formatCurrency(exchangeGoldValue)}",
+                "-${CurrencyFormatter.formatRupees(exchangeGoldValue)}",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF4CAF50)
             )
         }
     }
-}
-
-private fun formatCurrency(amount: Double): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
-    return formatter.format(amount)
 }

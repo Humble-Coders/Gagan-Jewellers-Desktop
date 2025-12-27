@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.example.project.JewelryAppInitializer
+import org.example.project.utils.CurrencyFormatter
 import org.example.project.data.MetalRate
 import org.example.project.data.Material
 import org.example.project.data.Category
@@ -609,7 +610,7 @@ private fun EnhancedMetalRateRow(
                     color = CardWhite
                 ) {
                     Text(
-                        "₹${formatCurrency(metalRate.pricePerGram)}",
+                        "${CurrencyFormatter.formatRupees(metalRate.pricePerGram)}",
                         fontSize = 17.sp,
                         fontWeight = FontWeight.Bold,
                         color = GoldPrimary,
@@ -951,12 +952,6 @@ private fun StoneRateInputCard(
             }
         }
     }
-}
-
-private fun formatCurrency(amount: Double): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
-    return formatter.format(amount)
 }
 
 private fun formatDate(timestamp: Long): String {

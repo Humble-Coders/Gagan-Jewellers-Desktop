@@ -29,6 +29,7 @@ import org.example.project.viewModels.PaymentViewModel
 import org.example.project.viewModels.CustomerViewModel
 import org.example.project.utils.ImageLoader
 import org.example.project.JewelryAppInitializer
+import org.example.project.utils.CurrencyFormatter
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
@@ -511,7 +512,7 @@ private fun AmountRow(
             color = Color(0xFF666666)
         )
         Text(
-            "${if (isDiscount) "-" else ""}₹${formatCurrency(kotlin.math.abs(amount))}",
+            "${if (isDiscount) "-" else ""}${CurrencyFormatter.formatRupees(kotlin.math.abs(amount))}",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = when {
@@ -537,12 +538,6 @@ private fun formatPaymentMethod(paymentMethod: org.example.project.data.PaymentM
         org.example.project.data.PaymentMethod.CASH_ON_DELIVERY -> "Cash on Delivery"
         org.example.project.data.PaymentMethod.DUE -> "Due Payment"
     }
-}
-
-private fun formatCurrency(amount: Double): String {
-    val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
-    return formatter.format(amount)
 }
 
 @Composable
@@ -596,7 +591,7 @@ private fun PaymentBreakdownSection(
                 color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
             )
             Text(
-                "₹${formatCurrency(totalPayment)}",
+                "${CurrencyFormatter.formatRupees(totalPayment)}",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFFB8973D)
@@ -647,7 +642,7 @@ private fun PaymentSplitRow(
             color = Color(0xFF666666)
         )
         Text(
-            "₹${formatCurrency(amount)}",
+            "${CurrencyFormatter.formatRupees(amount)}",
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             color = color
@@ -833,7 +828,7 @@ private fun PaymentSummaryBreakdown(
                 color = Color(0xFF2E2E2E)
             )
             Text(
-                text = "₹${formatCurrency(finalTotal)}",
+                text = "${CurrencyFormatter.formatRupees(finalTotal)}",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF4CAF50)
@@ -926,7 +921,7 @@ private fun PriceBreakdown(
                 color = Color(0xFF2E2E2E)
             )
             Text(
-                "₹${formatCurrency(total)}",
+                "${CurrencyFormatter.formatRupees(total)}",
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF4CAF50)
@@ -1046,7 +1041,7 @@ private fun ItemDetailCard(
                 Column(horizontalAlignment = Alignment.End) {
                     if (makingChargesPerGram > 0) {
                         Text(
-                            text = "Making: ₹${String.format("%.2f", makingChargesPerGram)}/g",
+                            text = "Making: ${CurrencyFormatter.formatRupees(makingChargesPerGram, includeDecimals = true)}/g",
                             fontSize = 12.sp,
                             color = Color(0xFF666666)
                         )
@@ -1097,7 +1092,7 @@ private fun ItemAmountRow(
             color = if (isTotal) Color(0xFF2E2E2E) else Color(0xFF666666)
         )
         Text(
-            text = "₹${String.format("%.2f", amount)}",
+            text = "${CurrencyFormatter.formatRupees(amount, includeDecimals = true)}",
             fontSize = if (isTotal) 14.sp else 12.sp,
             fontWeight = if (isTotal) FontWeight.Bold else FontWeight.Normal,
             color = if (isTotal) Color(0xFF4CAF50) else Color(0xFF666666)

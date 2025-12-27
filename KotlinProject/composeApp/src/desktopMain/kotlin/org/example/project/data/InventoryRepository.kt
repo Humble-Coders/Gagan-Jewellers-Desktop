@@ -33,17 +33,8 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
                     id = doc.id,
                     productId = data["product_id"] as? String ?: "",
                     barcodeId = data["barcode_id"] as? String ?: "",
-                    status = try {
-                        InventoryStatus.valueOf(data["status"] as? String ?: "AVAILABLE")
-                    } catch (e: Exception) {
-                        InventoryStatus.AVAILABLE
-                    },
-                    location = data["location"] as? String ?: "",
-                    notes = data["notes"] as? String ?: "",
                     createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    soldAt = (data["sold_at"] as? Number)?.toLong(),
-                    soldTo = data["sold_to"] as? String
+                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
                 )
             }
         } catch (e: Exception) {
@@ -64,17 +55,8 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
                     id = snapshot.id,
                     productId = data?.get("product_id") as? String ?: "",
                     barcodeId = data?.get("barcode_id") as? String ?: "",
-                    status = try {
-                        InventoryStatus.valueOf(data?.get("status") as? String ?: "AVAILABLE")
-                    } catch (e: Exception) {
-                        InventoryStatus.AVAILABLE
-                    },
-                    location = data?.get("location") as? String ?: "",
-                    notes = data?.get("notes") as? String ?: "",
                     createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data?.get("updated_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    soldAt = (data?.get("sold_at") as? Number)?.toLong(),
-                    soldTo = data?.get("sold_to") as? String
+                    updatedAt = (data?.get("updated_at") as? Number)?.toLong() ?: System.currentTimeMillis()
                 )
             } else null
         } catch (e: Exception) {
@@ -104,23 +86,13 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
                 println("✅ INVENTORY: Found inventory item")
                 println("   - Document ID: ${document.id}")
                 println("   - Product ID: ${data?.get("product_id")}")
-                println("   - Status: ${data?.get("status")}")
                 
                 InventoryItem(
                     id = document.id,
                     productId = data?.get("product_id") as? String ?: "",
                     barcodeId = data?.get("barcode_id") as? String ?: "",
-                    status = try {
-                        InventoryStatus.valueOf(data?.get("status") as? String ?: "AVAILABLE")
-                    } catch (e: Exception) {
-                        InventoryStatus.AVAILABLE
-                    },
-                    location = data?.get("location") as? String ?: "",
-                    notes = data?.get("notes") as? String ?: "",
                     createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data?.get("updated_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    soldAt = (data?.get("sold_at") as? Number)?.toLong(),
-                    soldTo = data?.get("sold_to") as? String
+                    updatedAt = (data?.get("updated_at") as? Number)?.toLong() ?: System.currentTimeMillis()
                 )
             } else {
                 println("❌ INVENTORY: No inventory item found with barcode")
@@ -147,17 +119,8 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
                     id = doc.id,
                     productId = data["product_id"] as? String ?: "",
                     barcodeId = data["barcode_id"] as? String ?: "",
-                    status = try {
-                        InventoryStatus.valueOf(data["status"] as? String ?: "AVAILABLE")
-                    } catch (e: Exception) {
-                        InventoryStatus.AVAILABLE
-                    },
-                    location = data["location"] as? String ?: "",
-                    notes = data["notes"] as? String ?: "",
                     createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    soldAt = (data["sold_at"] as? Number)?.toLong(),
-                    soldTo = data["sold_to"] as? String
+                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
                 )
             }
         } catch (e: Exception) {
@@ -168,10 +131,9 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
 
     override suspend fun getAvailableInventoryItemsByProductId(productId: String): List<InventoryItem> = withContext(Dispatchers.IO) {
         try {
+            // Since status field is removed, return all inventory items for the product
             val inventoryCollection = firestore.collection("inventory")
-            val query = inventoryCollection
-                .whereEqualTo("product_id", productId)
-                .whereEqualTo("status", "AVAILABLE")
+            val query = inventoryCollection.whereEqualTo("product_id", productId)
             val future = query.get()
             val snapshot = future.get()
             
@@ -181,17 +143,12 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
                     id = doc.id,
                     productId = data["product_id"] as? String ?: "",
                     barcodeId = data["barcode_id"] as? String ?: "",
-                    status = InventoryStatus.AVAILABLE,
-                    location = data["location"] as? String ?: "",
-                    notes = data["notes"] as? String ?: "",
                     createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    soldAt = (data["sold_at"] as? Number)?.toLong(),
-                    soldTo = data["sold_to"] as? String
+                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
                 )
             }
         } catch (e: Exception) {
-            println("Error fetching available inventory items by product ID: ${e.message}")
+            println("Error fetching inventory items by product ID: ${e.message}")
             emptyList()
         }
     }
@@ -201,7 +158,6 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
             println("🔍 INVENTORY REPOSITORY: addInventoryItem called")
             println("   - Product ID: ${inventoryItem.productId}")
             println("   - Barcode ID: ${inventoryItem.barcodeId}")
-            println("   - Status: ${inventoryItem.status}")
             
             val inventoryCollection = firestore.collection("inventory")
             val docRef = inventoryCollection.document()
@@ -210,13 +166,8 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
             val inventoryMap = mapOf(
                 "product_id" to inventoryItem.productId,
                 "barcode_id" to inventoryItem.barcodeId,
-                "status" to inventoryItem.status.name,
-                "location" to inventoryItem.location,
-                "notes" to inventoryItem.notes,
-                "created_at" to System.currentTimeMillis(),
-                "updated_at" to System.currentTimeMillis(),
-                "sold_at" to inventoryItem.soldAt,
-                "sold_to" to inventoryItem.soldTo
+                "created_at" to (inventoryItem.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis()),
+                "updated_at" to (inventoryItem.updatedAt.takeIf { it > 0 } ?: System.currentTimeMillis())
             )
 
             println("🔍 INVENTORY REPOSITORY: About to write to Firestore")
@@ -241,12 +192,7 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
             val inventoryMap = mapOf(
                 "product_id" to inventoryItem.productId,
                 "barcode_id" to inventoryItem.barcodeId,
-                "status" to inventoryItem.status.name,
-                "location" to inventoryItem.location,
-                "notes" to inventoryItem.notes,
-                "updated_at" to System.currentTimeMillis(),
-                "sold_at" to inventoryItem.soldAt,
-                "sold_to" to inventoryItem.soldTo
+                "updated_at" to System.currentTimeMillis()
             )
 
             docRef.update(inventoryMap).get()
@@ -269,11 +215,9 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
 
     override suspend fun markAsSold(inventoryItemId: String, customerId: String): Boolean = withContext(Dispatchers.IO) {
         try {
+            // Since status field is removed, just update the timestamp
             val docRef = firestore.collection("inventory").document(inventoryItemId)
             val updateMap = mapOf(
-                "status" to InventoryStatus.SOLD.name,
-                "sold_at" to System.currentTimeMillis(),
-                "sold_to" to customerId,
                 "updated_at" to System.currentTimeMillis()
             )
             docRef.update(updateMap).get()
@@ -286,11 +230,9 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
 
     override suspend fun markAsAvailable(inventoryItemId: String): Boolean = withContext(Dispatchers.IO) {
         try {
+            // Since status field is removed, just update the timestamp
             val docRef = firestore.collection("inventory").document(inventoryItemId)
             val updateMap = mapOf(
-                "status" to InventoryStatus.AVAILABLE.name,
-                "sold_at" to null,
-                "sold_to" to null,
                 "updated_at" to System.currentTimeMillis()
             )
             docRef.update(updateMap).get()

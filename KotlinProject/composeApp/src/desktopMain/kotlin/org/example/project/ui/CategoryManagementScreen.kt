@@ -51,6 +51,53 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.nio.file.Paths
 import javax.imageio.ImageIO
+import org.jetbrains.skia.Image
+import org.jetbrains.skia.Surface
+import org.jetbrains.skia.Paint
+import org.jetbrains.skia.Rect
+
+/**
+ * Resize an image during decoding to reduce memory usage
+ * For category images displayed at 140dp, we resize to 200px max (for better quality)
+ * For smaller thumbnails (80dp), we resize to 100px max
+ * This significantly reduces memory usage and improves rendering performance
+ */
+fun decodeAndResizeCategoryImage(imageBytes: ByteArray, maxSize: Int = 200): ImageBitmap? {
+    return try {
+        val skiaImage = org.jetbrains.skia.Image.makeFromEncoded(imageBytes) ?: return null
+        val width = skiaImage.width
+        val height = skiaImage.height
+        
+        // If image is already smaller, decode as-is
+        if (width <= maxSize && height <= maxSize) {
+            skiaImage.toComposeImageBitmap()
+        } else {
+            // Calculate new dimensions maintaining aspect ratio
+            val scale = minOf(maxSize.toFloat() / width, maxSize.toFloat() / height)
+            val newWidth = (width * scale).toInt().coerceAtLeast(1)
+            val newHeight = (height * scale).toInt().coerceAtLeast(1)
+            
+            // Create a surface and draw the resized image
+            val surface = org.jetbrains.skia.Surface.makeRasterN32Premul(newWidth, newHeight)
+            val canvas = surface.canvas
+            val paint = org.jetbrains.skia.Paint().apply {
+                isAntiAlias = true
+            }
+            
+            // Draw the image scaled to new size
+            val srcRect = org.jetbrains.skia.Rect.makeXYWH(0f, 0f, width.toFloat(), height.toFloat())
+            val dstRect = org.jetbrains.skia.Rect.makeXYWH(0f, 0f, newWidth.toFloat(), newHeight.toFloat())
+            canvas.drawImageRect(skiaImage, srcRect, dstRect, paint)
+            
+            // Get the resized image
+            val resizedImage = surface.makeImageSnapshot()
+            resizedImage.toComposeImageBitmap()
+        }
+    } catch (e: Exception) {
+        println("Failed to decode/resize category image: ${e.message}")
+        null
+    }
+}
 
 // Data classes for Unsplash API response
 data class UnsplashImageData(
@@ -214,7 +261,8 @@ fun AddCategoryDialog(
         if (initialCategory?.imageUrl?.isNotEmpty() == true) {
             try {
                 selectedImageBitmap = withContext(Dispatchers.IO) {
-                    ImageIO.read(URL(initialCategory.imageUrl))?.toComposeImageBitmap()
+                    val imageBytes = URL(initialCategory.imageUrl).openStream().readBytes()
+                    decodeAndResizeCategoryImage(imageBytes, maxSize = 200)
                 }
             } catch (e: Exception) {
                 println("Error loading existing image: ${e.message}")
@@ -356,7 +404,8 @@ fun AddCategoryDialog(
                                             if (imageUrl != null) {
                                                 selectedImageUrl = imageUrl
                                                 selectedImageBitmap = withContext(Dispatchers.IO) {
-                                                    ImageIO.read(URL(imageUrl))?.toComposeImageBitmap()
+                                                    val imageBytes = URL(imageUrl).openStream().readBytes()
+                                                    decodeAndResizeCategoryImage(imageBytes, maxSize = 200)
                                                 }
                                             } else {
                                                 errorMessage = "Failed to upload image."
@@ -412,9 +461,8 @@ fun AddCategoryDialog(
                                             coroutineScope.launch {
                                                 try {
                                                     val bitmap = withContext(Dispatchers.IO) {
-                                                        val url = URL(imageUrl)
-                                                        val bufferedImage = ImageIO.read(url)
-                                                        bufferedImage?.toComposeImageBitmap()
+                                                        val imageBytes = URL(imageUrl).openStream().readBytes()
+                                                        decodeAndResizeCategoryImage(imageBytes, maxSize = 200)
                                                     }
                                                     selectedImageBitmap = bitmap
                                                 } catch (e: Exception) {
@@ -474,9 +522,8 @@ fun SuggestedImageItem(
         try {
             val bitmap = withContext(Dispatchers.IO) {
                 try {
-                    val url = URL(imageUrl)
-                    val bufferedImage = ImageIO.read(url)
-                    bufferedImage?.toComposeImageBitmap()
+                    val imageBytes = URL(imageUrl).openStream().readBytes()
+                    decodeAndResizeCategoryImage(imageBytes, maxSize = 100) // Smaller for 80dp thumbnails
                 } catch (e: Exception) {
                     null
                 }
@@ -823,7 +870,8 @@ fun CategoryCard(
         if (category.imageUrl.isNotEmpty()) {
             try {
                 imageBitmap = withContext(Dispatchers.IO) {
-                    ImageIO.read(URL(category.imageUrl))?.toComposeImageBitmap()
+                    val imageBytes = URL(category.imageUrl).openStream().readBytes()
+                    decodeAndResizeCategoryImage(imageBytes, maxSize = 200) // 200px for 140dp display
                 }
                 hasError = false
             } catch (e: Exception) {

@@ -6,8 +6,9 @@ data class Product(
     val description: String = "",
     val price: Double = 0.0,
     val categoryId: String = "",
-    val materialId: String = "",
-    val materialType: String = "",
+    val materialId: String = "", // Metal ID
+    val materialType: String = "", // Metal purity (e.g., "24K", "22K")
+    val materialName: String = "", // Metal name (e.g., "Gold", "Silver")
     val gender: String = "",
     val weight: String = "",
     val makingCharges: Double = 0.0, // New field for making charges per gram
@@ -15,28 +16,26 @@ data class Product(
     val featured: Boolean = false,
     val images: List<String> = emptyList(),
     val quantity: Int = 0,
-    val commonId: String? = null, // Common ID for grouped products (null for single products)
     val createdAt: Long = System.currentTimeMillis(),
     // New fields for enhanced product details
     val autoGenerateId: Boolean = true, // Radio button for auto-generating product ID
-    val customProductId: String = "", // Custom product ID when auto-generate is false
-    val totalWeight: Double = 0.0, // Total weight in grams
-    val defaultMakingRate: Double = 0.0, // Default making rate per gram
-    val isOtherThanGold: Boolean = false, // Radio button for other than gold
-    val lessWeight: Double = 0.0, // Less weight in grams
-    val hasStones: Boolean = false, // Radio button for has stones
-    val stoneName: String = "",
-    val stoneQuantity: Double = 0.0, // Quantity of stones
-    val stoneRate: Double = 0.0, // Rate per carat or unit for stones (stored on product)
-    val cwWeight: Double = 0.0, // Carat weight of stones
-    val stoneAmount: Double = 0.0, // Calculated stone amount: CW_WT x STONE_RATE × QTY
-    val vaCharges: Double = 0.0, // VA charges
-    val netWeight: Double = 0.0, // Calculated net weight (totalWeight - lessWeight)
-    val totalProductCost: Double = 0.0, // Calculated total product cost
+    val totalWeight: Double = 0.0, // Total weight in grams (same as gross weight)
+    val hasStones: Boolean = false, // Radio button for has stones (kept for backward compatibility)
+    val stones: List<ProductStone> = emptyList(), // Array of stones with all information
     val hasCustomPrice: Boolean = false, // Checkbox for custom price
     val customPrice: Double = 0.0, // Custom price value when hasCustomPrice is true
     val customMetalRate: Double = 0.0, // Custom metal rate for this specific product
     val makingRate: Double = 0.0, // Custom making rate for this specific product
+    // New weight fields
+    val materialWeight: Double = 0.0, // Metal weight in grams (from materials table)
+    val stoneWeight: Double = 0.0, // Stone weight in grams
+    val makingPercent: Double = 0.0, // Making percentage (%)
+    val labourCharges: Double = 0.0, // Labour charges
+    val effectiveWeight: Double = 0.0, // Effective weight in grams (new weight = totalWeight + makingWeight)
+    val effectiveMetalWeight: Double = 0.0, // Effective metal weight in grams (from calculation)
+    val labourRate: Double = 0.0, // Labour rate per gram
+    // Stone fields - calculated from stones array
+    val stoneAmount: Double = 0.0, // Sum of amount of all stones in stones array
     // Collection product fields
     val isCollectionProduct: Boolean = false, // Checkbox for collection product
     val collectionId: String = "", // ID of the themed collection this product belongs to
@@ -53,19 +52,17 @@ data class ProductShowConfig(
     val quantity: Boolean = true,
     val totalWeight: Boolean = true,
     val price: Boolean = true,
-    val defaultMakingRate: Boolean = true,
-    val vaCharges: Boolean = true,
-    val isOtherThanGold: Boolean = true,
-    val lessWeight: Boolean = true,
     val hasStones: Boolean = true,
-    val stoneName: Boolean = true,
-    val stoneQuantity: Boolean = true,
-    val stoneRate: Boolean = true,
-    val cwWeight: Boolean = true,
-    val stoneAmount: Boolean = true,
-    val netWeight: Boolean = true,
-    val totalProductCost: Boolean = true,
+    val stones: Boolean = true, // Visibility for stones array
     val customPrice: Boolean = true,
+    val materialWeight: Boolean = true,
+    val stoneWeight: Boolean = true,
+    val makingPercent: Boolean = true,
+    val labourCharges: Boolean = true,
+    val effectiveWeight: Boolean = true,
+    val effectiveMetalWeight: Boolean = true,
+    val labourRate: Boolean = true,
+    val stoneAmount: Boolean = true,
     val images: Boolean = true,
     val available: Boolean = true,
     val featured: Boolean = true,
@@ -110,11 +107,18 @@ enum class CategoryType {
     OTHER          // Other categories
 }
 
+// Material type with purity and rate
+data class MaterialType(
+    val purity: String = "",
+    val rate: String = "" // Stored as string in Firestore
+)
+
 data class Material(
     val id: String = "",
     val name: String = "",
     val imageUrl: String = "",
-    val types: List<String> = emptyList()
+    val types: List<MaterialType> = emptyList(), // Updated to support purity and rate
+    val createdAt: Long = System.currentTimeMillis()
 )
 
 // User.kt
@@ -463,10 +467,66 @@ data class RateHistory(
     val updatedBy: String = "system"
 )
 
+// Product Material - represents a material with specifications in a product
+data class ProductMaterial(
+    val id: String = "",
+    val materialId: String = "",
+    val materialName: String = "",
+    val materialType: String = "", // Karat for metals (e.g., "24K", "22K") or Purity for stones (e.g., "VVS", "VS")
+    val weight: Double = 0.0, // Weight in grams
+    val rate: Double = 0.0, // Rate per gram
+    val isMetal: Boolean = true, // true for metals, false for stones
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+// Product Stone - represents a stone with all its information in a product
+data class ProductStone(
+    val name: String = "", // Stone name (e.g., "Diamond", "Ruby")
+    val purity: String = "", // Stone purity/grade (e.g., "VVS", "VS", "Colorless")
+    val quantity: Double = 0.0, // Quantity of stones (0.0 for Jarkan/Kundan)
+    val rate: Double = 0.0, // Rate per carat or unit
+    val weight: Double = 0.0, // Weight (renamed from cwWeight)
+    val amount: Double = 0.0 // Calculated amount: weight × RATE × QTY
+)
+
+// Helper function to normalize material type (22, 22K, 22k should be same)
+fun normalizeMaterialType(materialType: String): String {
+    // Remove whitespace and convert to uppercase
+    val cleaned = materialType.trim().uppercase()
+    // Extract number and optional K, normalize to "NUMBER" or "NUMBERK" format
+    val regex = Regex("""(\d+)\s*K?""")
+    val match = regex.find(cleaned)
+    return if (match != null) {
+        val number = match.groupValues[1]
+        "${number}K" // Always return with K for consistency
+    } else {
+        cleaned // Return as-is if no number found
+    }
+}
+
+// Helper function to check if two material types are equivalent
+fun areMaterialTypesEquivalent(type1: String, type2: String): Boolean {
+    return normalizeMaterialType(type1) == normalizeMaterialType(type2)
+}
+
+// Extension properties for backward compatibility with old stone fields
+val Product.stoneName: String
+    get() = stones.firstOrNull()?.name ?: ""
+
+val Product.stoneQuantity: Double
+    get() = stones.firstOrNull()?.quantity ?: 0.0
+
+val Product.stoneRate: Double
+    get() = stones.firstOrNull()?.rate ?: 0.0
+
+val Product.stoneAmount: Double
+    get() = stones.firstOrNull()?.amount ?: 0.0
+
 // Helper function to extract karat from materialType string
 fun extractKaratFromMaterialType(materialType: String): Int {
+    val normalized = normalizeMaterialType(materialType)
     val regex = Regex("""(\d+)K""")
-    val match = regex.find(materialType)
+    val match = regex.find(normalized)
     return match?.groupValues?.get(1)?.toIntOrNull() ?: 22 // Default to 22K if not found
 }
 
@@ -570,13 +630,8 @@ data class InventoryItem(
     val id: String = "",
     val productId: String = "", // Reference to the product in products collection
     val barcodeId: String = "", // Unique barcode for this inventory item
-    val status: InventoryStatus = InventoryStatus.AVAILABLE,
-    val location: String = "", // Physical location in store
-    val notes: String = "",
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis(),
-    val soldAt: Long? = null, // When this item was sold
-    val soldTo: String? = null // Customer ID who bought this item
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 enum class InventoryStatus {

@@ -80,53 +80,28 @@ class CartViewModel(
     }
 
     fun addToCart(product: Product, selectedBarcodeIds: List<String> = emptyList()) {
-        println("🛒 DEBUG: addToCart called for product: ${product.name}")
-        println("   - Product ID: ${product.id}")
-        println("   - Selected Barcode IDs: $selectedBarcodeIds")
-        println("   - Product Quantity (from document): ${product.quantity}")
-        println("   - Product Available: ${product.available}")
-        println("   - Product Category: ${product.categoryId}")
-        println("   - Product Material Type: ${product.materialType}")
-        
         val currentCart = _cart.value
         val existingItem = currentCart.items.find { it.productId == product.id }
         val currentQuantityInCart = existingItem?.quantity ?: 0
-        
-        println("   - Current quantity in cart: $currentQuantityInCart")
-        println("   - Existing item found: ${existingItem != null}")
 
-        // Get inventory-based quantity instead of product.quantity
-        val inventoryRepository = JewelryAppInitializer.getInventoryRepository()
-        val availableInventoryCount = if (inventoryRepository != null) {
-            runBlocking { inventoryRepository.getAvailableInventoryItemsByProductId(product.id).size }
-        } else {
-            product.quantity // Fallback to product quantity if inventory repository is not available
-        }
+        // Use selectedBarcodeIds count as available inventory (optimized - avoid blocking DB call)
+        // The inventory check can be done asynchronously later if needed
+        val availableInventoryCount = selectedBarcodeIds.size.takeIf { it > 0 } 
+            ?: product.quantity // Fallback to product quantity
         
-        println("   - Available inventory count: $availableInventoryCount")
-        println("   - Selected barcodes count: ${selectedBarcodeIds.size}")
-
-        // Check if we can add more to cart based on inventory availability
-        if (currentQuantityInCart >= availableInventoryCount) {
-            println("   - ❌ Cannot add more items. Only $availableInventoryCount available in inventory.")
+        // Quick validation: if already in cart with same or more barcodes, don't add
+        if (currentQuantityInCart >= availableInventoryCount && availableInventoryCount > 0) {
             _error.value = "Cannot add more items. Only $availableInventoryCount available in inventory."
             return
         }
 
         val existingItemIndex = currentCart.items.indexOfFirst { it.productId == product.id }
-        println("   - Existing item index: $existingItemIndex")
 
         val updatedItems = if (existingItemIndex >= 0) {
             // Update existing item - merge barcodes and set quantity to selected barcodes count
-            println("   - Updating existing item with new barcodes")
             val existingItem = currentCart.items[existingItemIndex]
             val mergedBarcodes = (existingItem.selectedBarcodeIds + selectedBarcodeIds).distinct()
             val newQuantity = mergedBarcodes.size
-            
-            println("   - Existing barcodes: ${existingItem.selectedBarcodeIds}")
-            println("   - New barcodes: $selectedBarcodeIds")
-            println("   - Merged barcodes: $mergedBarcodes")
-            println("   - New quantity: $newQuantity")
             
             currentCart.items.toMutableList().apply {
                 this[existingItemIndex] = this[existingItemIndex].copy(
@@ -136,12 +111,8 @@ class CartViewModel(
             }
         } else {
             // Add new item with product's fixed weight from Firestore
-            println("   - Adding new item to cart")
             val productWeight = parseWeight(product.weight)
             val currentGoldRate = MetalRatesManager.metalRates.value.getGoldRateForKarat(extractKaratFromMaterialType(product.materialType))
-            println("   - Product weight: $productWeight")
-            println("   - Current gold rate: $currentGoldRate")
-            println("   - Setting quantity to ${selectedBarcodeIds.size} based on selected barcodes")
             
             currentCart.items + CartItem(
                 productId = product.id,
@@ -153,7 +124,7 @@ class CartViewModel(
                 selectedWeight = productWeight,
                 grossWeight = productWeight, // Set gross weight to product weight initially
                 lessWeight = 0.0, // Default to 0
-                makingCharges = product.defaultMakingRate, // Initialize making charges per gram from product default
+                makingCharges = 0.0, // defaultMakingRate removed from Product
                 cwWeight = 0.0, // Default carat weight
                 stoneRate = 0.0, // Default stone rate
                 va = 0.0, // Default value addition
@@ -161,22 +132,15 @@ class CartViewModel(
             )
         }
 
-        println("   - Updated items count: ${updatedItems.size}")
         _cart.value = currentCart.copy(
             items = updatedItems,
             updatedAt = System.currentTimeMillis()
         )
-        println("   - Cart state updated")
-        println("   - New cart items count: ${_cart.value.items.size}")
-        println("   - New cart item IDs: ${_cart.value.items.map { it.productId }}")
-        println("   - Cart state hash: ${_cart.value.hashCode()}")
 
         // Clear error if successful
         _error.value = null
-        println("   - ✅ Successfully added/updated product in cart")
-        println("   - Final cart items count: ${_cart.value.items.size}")
 
-        // Load image for the added product
+        // Load image for the added product (async, non-blocking - already launches coroutine internally)
         loadProductImage(product)
     }
 
@@ -388,13 +352,14 @@ class CartViewModel(
 
         // MANUAL INPUT FIELDS with sensible fallbacks to product values
         val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.product.totalWeight
-        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else cartItem.product.lessWeight
+        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
         val quantity = cartItem.quantity
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
-        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.cwWeight
-        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else cartItem.product.stoneRate
-        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else cartItem.product.stoneQuantity
-        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.vaCharges
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
+        val firstStone = cartItem.product.stones.firstOrNull()
+        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: cartItem.product.stoneWeight)
+        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
+        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
+        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.labourCharges // Use labourCharges instead of vaCharges
         val discountPercent = cartItem.discountPercent
 
         // AUTO-CALCULATED FIELDS
@@ -439,13 +404,14 @@ class CartViewModel(
 
         // MANUAL INPUT FIELDS with sensible fallbacks to product values
         val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.product.totalWeight
-        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else cartItem.product.lessWeight
+        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
         val quantity = cartItem.quantity
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
-        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.cwWeight
-        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else cartItem.product.stoneRate
-        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else cartItem.product.stoneQuantity
-        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.vaCharges
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
+        val firstStone = cartItem.product.stones.firstOrNull()
+        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: cartItem.product.stoneWeight)
+        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
+        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
+        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.labourCharges // Use labourCharges instead of vaCharges
         val discountPercent = cartItem.discountPercent
 
         // AUTO-CALCULATED FIELDS
@@ -503,13 +469,14 @@ class CartViewModel(
 
         // Input fields with fallbacks
         val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.product.totalWeight
-        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else cartItem.product.lessWeight
+        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
         val quantity = cartItem.quantity
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
-        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.cwWeight
-        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else cartItem.product.stoneRate
-        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else cartItem.product.stoneQuantity
-        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.vaCharges
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
+        val firstStone = cartItem.product.stones.firstOrNull()
+        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: cartItem.product.stoneWeight)
+        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
+        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
+        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.labourCharges // Use labourCharges instead of vaCharges
         val discountPercent = cartItem.discountPercent
 
         val netWeight = grossWeight - lessWeight
@@ -550,7 +517,7 @@ class CartViewModel(
         }
 
         // Step 2: Making Charges (fallback to product default making rate)
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
         val makingCharges = makingChargesPerGram * actualNetWeight
 
         // Step 3: Value Addition

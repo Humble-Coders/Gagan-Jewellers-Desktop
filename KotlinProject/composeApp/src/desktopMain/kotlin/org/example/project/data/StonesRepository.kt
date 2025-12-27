@@ -4,17 +4,25 @@ import com.google.cloud.firestore.Firestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+// Stone type with purity and rate
+data class StoneType(
+    val purity: String = "",
+    val rate: String = "" // Stored as string in Firestore
+)
+
 data class Stone(
     val id: String = "",
     val name: String = "",
-    val color: String = "",
+    val imageUrl: String = "",
+    val types: List<StoneType> = emptyList(), // Updated to support purity and rate
     val createdAt: Long = System.currentTimeMillis()
 )
 
 interface StonesRepository {
     suspend fun getAllStoneNames(): List<String>
-    suspend fun getAllStoneColors(): List<String>
-    suspend fun addStone(name: String, color: String): String
+    suspend fun getAllStonePurities(): List<String>
+    suspend fun getAllStones(): List<Stone>
+    suspend fun addStone(name: String): String
 }
 
 class FirestoreStonesRepository(private val firestore: Firestore) : StonesRepository {
@@ -26,17 +34,59 @@ class FirestoreStonesRepository(private val firestore: Firestore) : StonesReposi
         snapshot.documents.mapNotNull { it.getString("name") }.distinct().sorted()
     }
 
-    override suspend fun getAllStoneColors(): List<String> = withContext(Dispatchers.IO) {
-        val snapshot = collection.get().get()
-        snapshot.documents.mapNotNull { it.getString("color") }.distinct().sorted()
+    override suspend fun getAllStonePurities(): List<String> = withContext(Dispatchers.IO) {
+        // Note: Purity is no longer stored in stones collection
+        // Purity values are stored in the rates collection as material_type
+        // This method returns empty list as purity has been removed from stones collection
+        emptyList()
     }
 
-    override suspend fun addStone(name: String, color: String): String = withContext(Dispatchers.IO) {
+    override suspend fun getAllStones(): List<Stone> = withContext(Dispatchers.IO) {
+        val snapshot = collection.get().get()
+        snapshot.documents.map { doc ->
+            val data = doc.data
+            // Parse types array - can be List<String> (old format) or List<Map> (new format)
+            val typesList = mutableListOf<StoneType>()
+            val typesData = data["types"]
+            
+            when (typesData) {
+                is List<*> -> {
+                    typesData.forEach { typeItem ->
+                        when (typeItem) {
+                            is String -> {
+                                // Old format: just string types, convert to StoneType with empty rate
+                                // Normalize purity (uppercase for consistency)
+                                val normalizedPurity = typeItem.trim().uppercase()
+                                typesList.add(StoneType(purity = normalizedPurity, rate = ""))
+                            }
+                            is Map<*, *> -> {
+                                // New format: map with purity and rate
+                                val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                // Normalize purity (uppercase for consistency)
+                                val normalizedPurity = purity.trim().uppercase()
+                                typesList.add(StoneType(purity = normalizedPurity, rate = rate))
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Stone(
+                id = doc.id,
+                name = data["name"] as? String ?: "",
+                imageUrl = data["image_url"] as? String ?: "",
+                types = typesList,
+                createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
+            )
+        }
+    }
+
+    override suspend fun addStone(name: String): String = withContext(Dispatchers.IO) {
         val newDoc = collection.document()
         val id = newDoc.id
         val data = mapOf(
             "name" to name,
-            "color" to color,
             "created_at" to System.currentTimeMillis()
         )
         newDoc.set(data).get()

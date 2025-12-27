@@ -53,28 +53,46 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 categoryId = data["category_id"] as? String ?: "",
                 materialId = data["material_id"] as? String ?: "",
                 materialType = data["material_type"] as? String ?: "",
+                materialName = data["material_name"] as? String ?: "",
                 quantity = (data["quantity"] as? String)?.toIntOrNull() ?: 0,
                 totalWeight = (data["total_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
-                defaultMakingRate = (data["default_making_rate"] as? String)?.toDoubleOrNull() ?: 0.0,
-                isOtherThanGold = when (val value = data["is_other_than_gold"]) {
-                    is Boolean -> value
-                    is String -> value.toBoolean()
-                    else -> false
-                },
-                lessWeight = (data["less_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
                 hasStones = when (val value = data["has_stones"]) {
                     is Boolean -> value
                     is String -> value.toBoolean()
                     else -> false
                 },
-                stoneName = data["stone_name"] as? String ?: "",
-                stoneQuantity = (data["stone_quantity"] as? String)?.toDoubleOrNull() ?: 0.0,
-                stoneRate = (data["stone_rate"] as? String)?.toDoubleOrNull() ?: 0.0,
-                cwWeight = (data["cw_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
-                stoneAmount = (data["stone_amount"] as? String)?.toDoubleOrNull() ?: 0.0,
-                vaCharges = (data["va_charges"] as? String)?.toDoubleOrNull() ?: 0.0,
-                netWeight = (data["net_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
-                totalProductCost = (data["total_product_cost"] as? String)?.toDoubleOrNull() ?: 0.0,
+                stones = if (data["stones"] != null) {
+                    // New format: stones array
+                    parseProductStones(data["stones"])
+                } else {
+                    // Backward compatibility: parse from old format fields
+                    val stoneName = data["stone_name"] as? String
+                    val stoneQuantity = (data["stone_quantity"] as? String)?.toDoubleOrNull()
+                    val stoneRate = (data["stone_rate"] as? String)?.toDoubleOrNull()
+                    val stoneAmount = (data["stone_amount"] as? String)?.toDoubleOrNull()
+                    val cwWeight = (data["cw_weight"] as? String)?.toDoubleOrNull() // Backward compatibility: old field name
+                    parseProductStonesFromOldFormat(stoneName, stoneQuantity, stoneRate, stoneAmount, cwWeight)
+                },
+                materialWeight = (data["material_weight"] as? String)?.toDoubleOrNull() ?: (data["gold_weight"] as? String)?.toDoubleOrNull() ?: 0.0, // Backward compatibility
+                // Calculate stoneWeight and stoneAmount from stones array
+                stoneWeight = if (data["stones"] != null) {
+                    parseProductStones(data["stones"]).sumOf { it.weight }
+                } else {
+                    (data["stone_weight"] as? String)?.toDoubleOrNull() ?: 0.0 // Fallback to stored value for backward compatibility
+                },
+                makingPercent = (data["making_percent"] as? String)?.toDoubleOrNull() ?: 0.0,
+                labourCharges = (data["labour_charges"] as? String)?.toDoubleOrNull() ?: 0.0,
+                effectiveWeight = (data["effective_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
+                effectiveMetalWeight = (data["effective_metal_weight"] as? String)?.toDoubleOrNull() ?: (data["effective_gold_weight"] as? String)?.toDoubleOrNull() ?: 0.0, // Backward compatibility
+                labourRate = (data["labour_rate"] as? String)?.toDoubleOrNull() ?: 0.0,
+                // Calculate stoneAmount from stones array, with backward compatibility for stone_rate and stone_amount
+                stoneAmount = if (data["stones"] != null) {
+                    parseProductStones(data["stones"]).sumOf { it.amount }
+                } else {
+                    (data["stone_rate"] as? String)?.toDoubleOrNull() 
+                        ?: (data["stone_amount"] as? String)?.toDoubleOrNull() 
+                        ?: 0.0 // Fallback to stored value for backward compatibility
+                },
                 hasCustomPrice = when (val value = data["has_custom_price"]) {
                     is Boolean -> value
                     is String -> value.toBoolean()
@@ -97,8 +115,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     is String -> value.toBoolean()
                     else -> false
                 },
-                customProductId = data["custom_product_id"] as? String ?: "",
-                commonId = data["common_id"] as? String,
                 createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                 // Collection product fields
                 isCollectionProduct = when (val value = data["is_collection_product"]) {
@@ -116,19 +132,17 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     quantity = showMap["quantity"] as? Boolean ?: true,
                     totalWeight = showMap["total_weight"] as? Boolean ?: true,
                     price = showMap["price"] as? Boolean ?: true,
-                    defaultMakingRate = showMap["default_making_rate"] as? Boolean ?: true,
-                    vaCharges = showMap["va_charges"] as? Boolean ?: true,
-                    isOtherThanGold = showMap["is_other_than_gold"] as? Boolean ?: true,
-                    lessWeight = showMap["less_weight"] as? Boolean ?: true,
                     hasStones = showMap["has_stones"] as? Boolean ?: true,
-                    stoneName = showMap["stone_name"] as? Boolean ?: true,
-                    stoneQuantity = showMap["stone_quantity"] as? Boolean ?: true,
-                    stoneRate = showMap["stone_rate"] as? Boolean ?: true,
-                    cwWeight = showMap["cw_weight"] as? Boolean ?: true,
-                    stoneAmount = showMap["stone_amount"] as? Boolean ?: true,
-                    netWeight = showMap["net_weight"] as? Boolean ?: true,
-                    totalProductCost = showMap["total_product_cost"] as? Boolean ?: true,
+                    stones = showMap["stones"] as? Boolean ?: true,
                     customPrice = showMap["custom_price"] as? Boolean ?: true,
+                    materialWeight = (showMap["material_weight"] as? Boolean) ?: (showMap["gold_weight"] as? Boolean) ?: true, // Backward compatibility
+                    stoneWeight = showMap["stone_weight"] as? Boolean ?: true,
+                    makingPercent = showMap["making_percent"] as? Boolean ?: true,
+                    labourCharges = showMap["labour_charges"] as? Boolean ?: true,
+                    effectiveWeight = showMap["effective_weight"] as? Boolean ?: true,
+                    effectiveMetalWeight = (showMap["effective_metal_weight"] as? Boolean) ?: (showMap["effective_gold_weight"] as? Boolean) ?: true, // Backward compatibility
+                    labourRate = showMap["labour_rate"] as? Boolean ?: true,
+                    stoneAmount = showMap["stone_amount"] as? Boolean ?: true,
                     images = showMap["images"] as? Boolean ?: true,
                     available = showMap["available"] as? Boolean ?: true,
                     featured = showMap["featured"] as? Boolean ?: true,
@@ -162,28 +176,46 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     categoryId = data?.get("category_id") as? String ?: "",
                     materialId = data?.get("material_id") as? String ?: "",
                     materialType = data?.get("material_type") as? String ?: "",
+                    materialName = data?.get("material_name") as? String ?: "",
                     quantity = (data?.get("quantity") as? String)?.toIntOrNull() ?: 0,
                     totalWeight = (data?.get("total_weight") as? String)?.toDoubleOrNull() ?: 0.0,
-                    defaultMakingRate = (data?.get("default_making_rate") as? String)?.toDoubleOrNull() ?: 0.0,
-                    isOtherThanGold = when (val value = data?.get("is_other_than_gold")) {
-                        is Boolean -> value
-                        is String -> value.toBoolean()
-                        else -> false
-                    },
-                    lessWeight = (data?.get("less_weight") as? String)?.toDoubleOrNull() ?: 0.0,
                     hasStones = when (val value = data?.get("has_stones")) {
                         is Boolean -> value
                         is String -> value.toBoolean()
                         else -> false
                     },
-                    stoneName = data?.get("stone_name") as? String ?: "",
-                    stoneQuantity = (data?.get("stone_quantity") as? String)?.toDoubleOrNull() ?: 0.0,
-                    stoneRate = (data?.get("stone_rate") as? String)?.toDoubleOrNull() ?: 0.0,
-                    cwWeight = (data?.get("cw_weight") as? String)?.toDoubleOrNull() ?: 0.0,
-                    stoneAmount = (data?.get("stone_amount") as? String)?.toDoubleOrNull() ?: 0.0,
-                    vaCharges = (data?.get("va_charges") as? String)?.toDoubleOrNull() ?: 0.0,
-                    netWeight = (data?.get("net_weight") as? String)?.toDoubleOrNull() ?: 0.0,
-                    totalProductCost = (data?.get("total_product_cost") as? String)?.toDoubleOrNull() ?: 0.0,
+                    stones = if (data?.get("stones") != null) {
+                        // New format: stones array
+                        parseProductStones(data?.get("stones"))
+                    } else {
+                        // Backward compatibility: parse from old format fields
+                        val stoneName = data?.get("stone_name") as? String
+                        val stoneQuantity = (data?.get("stone_quantity") as? String)?.toDoubleOrNull()
+                        val stoneRate = (data?.get("stone_rate") as? String)?.toDoubleOrNull()
+                        val stoneAmount = (data?.get("stone_amount") as? String)?.toDoubleOrNull()
+                        val cwWeight = (data?.get("cw_weight") as? String)?.toDoubleOrNull() // Backward compatibility: old field name
+                        parseProductStonesFromOldFormat(stoneName, stoneQuantity, stoneRate, stoneAmount, cwWeight)
+                    },
+                    materialWeight = (data?.get("material_weight") as? String)?.toDoubleOrNull() ?: (data?.get("gold_weight") as? String)?.toDoubleOrNull() ?: 0.0, // Backward compatibility
+                    // Calculate stoneWeight and stoneAmount from stones array
+                    stoneWeight = if (data?.get("stones") != null) {
+                        parseProductStones(data?.get("stones")).sumOf { it.weight }
+                    } else {
+                        (data?.get("stone_weight") as? String)?.toDoubleOrNull() ?: 0.0 // Fallback to stored value for backward compatibility
+                    },
+                    makingPercent = (data?.get("making_percent") as? String)?.toDoubleOrNull() ?: 0.0,
+                    labourCharges = (data?.get("labour_charges") as? String)?.toDoubleOrNull() ?: 0.0,
+                    effectiveWeight = (data?.get("effective_weight") as? String)?.toDoubleOrNull() ?: 0.0,
+                    effectiveMetalWeight = (data?.get("effective_metal_weight") as? String)?.toDoubleOrNull() ?: (data?.get("effective_gold_weight") as? String)?.toDoubleOrNull() ?: 0.0, // Backward compatibility
+                    labourRate = (data?.get("labour_rate") as? String)?.toDoubleOrNull() ?: 0.0,
+                    // Calculate stoneAmount from stones array, with backward compatibility for stone_rate and stone_amount
+                    stoneAmount = if (data?.get("stones") != null) {
+                        parseProductStones(data?.get("stones")).sumOf { it.amount }
+                    } else {
+                        (data?.get("stone_rate") as? String)?.toDoubleOrNull()
+                            ?: (data?.get("stone_amount") as? String)?.toDoubleOrNull()
+                            ?: 0.0 // Fallback to stored value for backward compatibility
+                    },
                     hasCustomPrice = when (val value = data?.get("has_custom_price")) {
                         is Boolean -> value
                         is String -> value.toBoolean()
@@ -206,7 +238,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                         is String -> value.toBoolean()
                         else -> false
                     },
-                    customProductId = data?.get("custom_product_id") as? String ?: "",
                     createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
                     show = ProductShowConfig(
                         name = showMap["name"] as? Boolean ?: true,
@@ -217,19 +248,17 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                         quantity = showMap["quantity"] as? Boolean ?: true,
                         totalWeight = showMap["total_weight"] as? Boolean ?: true,
                         price = showMap["price"] as? Boolean ?: true,
-                        defaultMakingRate = showMap["default_making_rate"] as? Boolean ?: true,
-                        vaCharges = showMap["va_charges"] as? Boolean ?: true,
-                        isOtherThanGold = showMap["is_other_than_gold"] as? Boolean ?: true,
-                        lessWeight = showMap["less_weight"] as? Boolean ?: true,
                         hasStones = showMap["has_stones"] as? Boolean ?: true,
-                        stoneName = showMap["stone_name"] as? Boolean ?: true,
-                        stoneQuantity = showMap["stone_quantity"] as? Boolean ?: true,
-                        stoneRate = showMap["stone_rate"] as? Boolean ?: true,
-                        cwWeight = showMap["cw_weight"] as? Boolean ?: true,
-                        stoneAmount = showMap["stone_amount"] as? Boolean ?: true,
-                    netWeight = showMap["net_weight"] as? Boolean ?: true,
-                    totalProductCost = showMap["total_product_cost"] as? Boolean ?: true,
+                        stones = showMap["stones"] as? Boolean ?: true,
                     customPrice = showMap["custom_price"] as? Boolean ?: true,
+                    materialWeight = (showMap["material_weight"] as? Boolean) ?: (showMap["gold_weight"] as? Boolean) ?: true, // Backward compatibility
+                    stoneWeight = showMap["stone_weight"] as? Boolean ?: true,
+                    makingPercent = showMap["making_percent"] as? Boolean ?: true,
+                    labourCharges = showMap["labour_charges"] as? Boolean ?: true,
+                    effectiveWeight = showMap["effective_weight"] as? Boolean ?: true,
+                    effectiveMetalWeight = (showMap["effective_metal_weight"] as? Boolean) ?: (showMap["effective_gold_weight"] as? Boolean) ?: true, // Backward compatibility
+                    labourRate = showMap["labour_rate"] as? Boolean ?: true,
+                    stoneAmount = showMap["stone_amount"] as? Boolean ?: true,
                     images = showMap["images"] as? Boolean ?: true,
                     available = showMap["available"] as? Boolean ?: true,
                     featured = showMap["featured"] as? Boolean ?: true
@@ -264,27 +293,33 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["material_type"] = product.materialType?.takeIf { it.isNotBlank() }
             productMap["quantity"] = if (product.quantity > 0) product.quantity.toString() else null
             productMap["total_weight"] = if (product.totalWeight > 0) product.totalWeight.toString() else null
-            productMap["default_making_rate"] = if (product.defaultMakingRate > 0) product.defaultMakingRate.toString() else null
-            productMap["is_other_than_gold"] = product.isOtherThanGold
-            productMap["less_weight"] = if (product.lessWeight > 0) product.lessWeight.toString() else null
             productMap["has_stones"] = product.hasStones
-            productMap["stone_name"] = product.stoneName.takeIf { it.isNotBlank() }
-            productMap["stone_quantity"] = if (product.stoneQuantity > 0) product.stoneQuantity.toString() else null
-            productMap["stone_rate"] = if (product.stoneRate > 0) product.stoneRate.toString() else null
-            productMap["cw_weight"] = if (product.cwWeight > 0) product.cwWeight.toString() else null
-            productMap["stone_amount"] = if (product.stoneAmount > 0) product.stoneAmount.toString() else null
-            productMap["va_charges"] = if (product.vaCharges > 0) product.vaCharges.toString() else null
-            productMap["net_weight"] = if (product.netWeight > 0) product.netWeight.toString() else null
-            // Store total_product_cost if provided (as string for consistency with other numeric fields)
-            productMap["total_product_cost"] = if (product.totalProductCost > 0) product.totalProductCost.toString() else null
+            // Store stones array
+            productMap["stones"] = product.stones.map { stone ->
+                mapOf(
+                    "name" to stone.name,
+                    "purity" to stone.purity,
+                    "quantity" to stone.quantity.toString(),
+                    "rate" to stone.rate.toString(),
+                    "weight" to stone.weight.toString(),
+                    "amount" to stone.amount.toString()
+                )
+            }
+            productMap["material_weight"] = if (product.materialWeight > 0) product.materialWeight.toString() else null
+            productMap["stone_weight"] = if (product.stoneWeight > 0) product.stoneWeight.toString() else null
+            // Store stone_rate (sum of all stone amounts/prices)
+            productMap["stone_rate"] = if (product.stoneAmount > 0) product.stoneAmount.toString() else null
+            productMap["making_percent"] = if (product.makingPercent > 0) product.makingPercent.toString() else null
+            productMap["labour_charges"] = if (product.labourCharges > 0) product.labourCharges.toString() else null
+            productMap["effective_weight"] = if (product.effectiveWeight > 0) product.effectiveWeight.toString() else null
+            productMap["effective_metal_weight"] = if (product.effectiveMetalWeight > 0) product.effectiveMetalWeight.toString() else null
+            productMap["labour_rate"] = if (product.labourRate > 0) product.labourRate.toString() else null
             productMap["has_custom_price"] = product.hasCustomPrice
             productMap["custom_price"] = if (product.customPrice > 0) product.customPrice.toString() else null
             productMap["available"] = product.available
             productMap["featured"] = product.featured
             productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
             productMap["auto_generate_id"] = product.autoGenerateId
-            productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
-            productMap["common_id"] = product.commonId
             // Collection product fields
             productMap["is_collection_product"] = product.isCollectionProduct
             productMap["collection_id"] = product.collectionId.takeIf { it.isNotBlank() }
@@ -299,19 +334,17 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 "quantity" to product.show.quantity,
                 "total_weight" to product.show.totalWeight,
                 "price" to product.show.price,
-                "default_making_rate" to product.show.defaultMakingRate,
-                "va_charges" to product.show.vaCharges,
-                "is_other_than_gold" to product.show.isOtherThanGold,
-                "less_weight" to product.show.lessWeight,
                 "has_stones" to product.show.hasStones,
-                "stone_name" to product.show.stoneName,
-                "stone_quantity" to product.show.stoneQuantity,
-                "stone_rate" to product.show.stoneRate,
-                "cw_weight" to product.show.cwWeight,
-                "stone_amount" to product.show.stoneAmount,
-                "net_weight" to product.show.netWeight,
-                "total_product_cost" to product.show.totalProductCost,
+                "stones" to product.show.stones,
                 "custom_price" to product.show.customPrice,
+                "material_weight" to product.show.materialWeight,
+                "stone_weight" to product.show.stoneWeight,
+                "making_percent" to product.show.makingPercent,
+                "labour_charges" to product.show.labourCharges,
+                "effective_weight" to product.show.effectiveWeight,
+                "effective_metal_weight" to product.show.effectiveMetalWeight,
+                "labour_rate" to product.show.labourRate,
+                "stone_amount" to product.show.stoneAmount,
                 "images" to product.show.images,
                 "available" to product.show.available,
                 "featured" to product.show.featured,
@@ -409,32 +442,40 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["category_id"] = product.categoryId.takeIf { it.isNotBlank() }
             productMap["material_id"] = product.materialId?.takeIf { it.isNotBlank() }
             productMap["material_type"] = product.materialType?.takeIf { it.isNotBlank() }
+            productMap["material_name"] = product.materialName?.takeIf { it.isNotBlank() }
             productMap["quantity"] = if (product.quantity > 0) product.quantity.toString() else null
             productMap["total_weight"] = if (product.totalWeight > 0) product.totalWeight.toString() else null
-            productMap["default_making_rate"] = if (product.defaultMakingRate > 0) product.defaultMakingRate.toString() else null
-            productMap["is_other_than_gold"] = product.isOtherThanGold
-            productMap["less_weight"] = if (product.lessWeight > 0) product.lessWeight.toString() else null
             productMap["has_stones"] = product.hasStones
-            productMap["stone_name"] = product.stoneName.takeIf { it.isNotBlank() }
-            productMap["stone_quantity"] = if (product.stoneQuantity > 0) product.stoneQuantity.toString() else null
-            productMap["stone_rate"] = if (product.stoneRate > 0) product.stoneRate.toString() else null
-            productMap["cw_weight"] = if (product.cwWeight > 0) product.cwWeight.toString() else null
-            productMap["stone_amount"] = if (product.stoneAmount > 0) product.stoneAmount.toString() else null
-            productMap["va_charges"] = if (product.vaCharges > 0) product.vaCharges.toString() else null
-            productMap["net_weight"] = if (product.netWeight > 0) product.netWeight.toString() else null
-            // Store total_product_cost if provided (as string for consistency with other numeric fields)
-            productMap["total_product_cost"] = if (product.totalProductCost > 0) product.totalProductCost.toString() else null
+            // Store stones array
+            productMap["stones"] = product.stones.map { stone ->
+                mapOf(
+                    "name" to stone.name,
+                    "purity" to stone.purity,
+                    "quantity" to stone.quantity.toString(),
+                    "rate" to stone.rate.toString(),
+                    "weight" to stone.weight.toString(),
+                    "amount" to stone.amount.toString()
+                )
+            }
+            productMap["material_weight"] = if (product.materialWeight > 0) product.materialWeight.toString() else null
+            productMap["stone_weight"] = if (product.stoneWeight > 0) product.stoneWeight.toString() else null
+            // Store stone_rate (sum of all stone amounts/prices)
+            productMap["stone_rate"] = if (product.stoneAmount > 0) product.stoneAmount.toString() else null
+            productMap["making_percent"] = if (product.makingPercent > 0) product.makingPercent.toString() else null
+            productMap["labour_charges"] = if (product.labourCharges > 0) product.labourCharges.toString() else null
+            productMap["effective_weight"] = if (product.effectiveWeight > 0) product.effectiveWeight.toString() else null
+            productMap["effective_metal_weight"] = if (product.effectiveMetalWeight > 0) product.effectiveMetalWeight.toString() else null
+            productMap["labour_rate"] = if (product.labourRate > 0) product.labourRate.toString() else null
             productMap["has_custom_price"] = product.hasCustomPrice
             productMap["custom_price"] = if (product.customPrice > 0) product.customPrice.toString() else null
             productMap["available"] = product.available
             productMap["featured"] = product.featured
             productMap["images"] = product.images.takeIf { it.isNotEmpty() } ?: emptyList<String>()
             productMap["auto_generate_id"] = product.autoGenerateId
-            productMap["custom_product_id"] = product.customProductId?.takeIf { it.isNotBlank() }
-            productMap["common_id"] = product.commonId
             // Collection product fields
             productMap["is_collection_product"] = product.isCollectionProduct
             productMap["collection_id"] = product.collectionId.takeIf { it.isNotBlank() }
+
             // Show map
             val showMap = mapOf(
                 "name" to product.show.name,
@@ -445,19 +486,17 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 "quantity" to product.show.quantity,
                 "total_weight" to product.show.totalWeight,
                 "price" to product.show.price,
-                "default_making_rate" to product.show.defaultMakingRate,
-                "va_charges" to product.show.vaCharges,
-                "is_other_than_gold" to product.show.isOtherThanGold,
-                "less_weight" to product.show.lessWeight,
                 "has_stones" to product.show.hasStones,
-                "stone_name" to product.show.stoneName,
-                "stone_quantity" to product.show.stoneQuantity,
-                "stone_amount" to product.show.stoneAmount,
-                "stone_rate" to product.show.stoneRate,
-                "cw_weight" to product.show.cwWeight,
-                "net_weight" to product.show.netWeight,
-                "total_product_cost" to product.show.totalProductCost,
+                "stones" to product.show.stones,
                 "custom_price" to product.show.customPrice,
+                "material_weight" to product.show.materialWeight,
+                "stone_weight" to product.show.stoneWeight,
+                "making_percent" to product.show.makingPercent,
+                "labour_charges" to product.show.labourCharges,
+                "effective_weight" to product.show.effectiveWeight,
+                "effective_metal_weight" to product.show.effectiveMetalWeight,
+                "labour_rate" to product.show.labourRate,
+                "stone_amount" to product.show.stoneAmount,
                 "images" to product.show.images,
                 "available" to product.show.available,
                 "featured" to product.show.featured,
@@ -621,11 +660,39 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
         val snapshot = future.get()
         snapshot.documents.map { doc ->
             val data = doc.data
+            // Parse types array - can be List<String> (old format) or List<Map> (new format)
+            val typesList = mutableListOf<MaterialType>()
+            val typesData = data["types"]
+            
+            when (typesData) {
+                is List<*> -> {
+                    typesData.forEach { typeItem ->
+                        when (typeItem) {
+                            is String -> {
+                                // Old format: just string types, convert to MaterialType with empty rate
+                                // Normalize purity (22, 22K, 22k should be same)
+                                val normalizedPurity = org.example.project.data.normalizeMaterialType(typeItem)
+                                typesList.add(MaterialType(purity = normalizedPurity, rate = ""))
+                            }
+                            is Map<*, *> -> {
+                                // New format: map with purity and rate
+                                val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                // Normalize purity (22, 22K, 22k should be same)
+                                val normalizedPurity = org.example.project.data.normalizeMaterialType(purity)
+                                typesList.add(MaterialType(purity = normalizedPurity, rate = rate))
+                            }
+                        }
+                    }
+                }
+            }
+            
             Material(
                 id = doc.id,
                 name = data["name"] as? String ?: "",
                 imageUrl = data["image_url"] as? String ?: "",
-                types = (data["types"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                types = typesList,
+                createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
             )
         }
     }
@@ -799,4 +866,75 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             emptyList()
         }
     }
+}
+// Helper function to parse product materials from Firestore
+private fun parseProductMaterials(data: Any?): List<ProductMaterial> {
+    return when (data) {
+        is List<*> -> {
+            data.mapNotNull { item ->
+                when (item) {
+                    is Map<*, *> -> {
+                        ProductMaterial(
+                            id = (item["id"] as? String) ?: "",
+                            materialId = (item["material_id"] as? String) ?: "",
+                            materialName = (item["material_name"] as? String) ?: "",
+                            materialType = (item["material_type"] as? String) ?: "",
+                            weight = (item["weight"] as? Number)?.toDouble() ?: 0.0,
+                            rate = (item["rate"] as? Number)?.toDouble() ?: 0.0,
+                            isMetal = (item["is_metal"] as? Boolean) ?: true,
+                            createdAt = (item["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
+                        )
+                    }
+                    else -> null
+                }
+            }
+        }
+        else -> emptyList()
+    }
+}
+
+// Helper function to parse product stones from Firestore
+private fun parseProductStones(data: Any?): List<ProductStone> {
+    return when (data) {
+        is List<*> -> {
+            data.mapNotNull { item ->
+                when (item) {
+                    is Map<*, *> -> {
+                        ProductStone(
+                            name = (item["name"] as? String) ?: "",
+                            purity = (item["purity"] as? String) ?: "",
+                            quantity = (item["quantity"] as? Number)?.toDouble() ?: (item["quantity"] as? String)?.toDoubleOrNull() ?: 0.0,
+                            rate = (item["rate"] as? Number)?.toDouble() ?: (item["rate"] as? String)?.toDoubleOrNull() ?: 0.0,
+                            weight = (item["weight"] as? Number)?.toDouble() ?: (item["weight"] as? String)?.toDoubleOrNull() ?: (item["cw_weight"] as? Number)?.toDouble() ?: (item["cw_weight"] as? String)?.toDoubleOrNull() ?: 0.0, // Backward compatibility: support both weight and cw_weight
+                            amount = (item["amount"] as? Number)?.toDouble() ?: (item["amount"] as? String)?.toDoubleOrNull() ?: 0.0
+                        )
+                    }
+                    else -> null
+                }
+            }
+        }
+        else -> emptyList()
+    }
+}
+
+// Helper function to parse product stones from old format (backward compatibility)
+private fun parseProductStonesFromOldFormat(
+    stoneName: String?,
+    stoneQuantity: Double?,
+    stoneRate: Double?,
+    stoneAmount: Double?,
+    cwWeight: Double?
+): List<ProductStone> {
+    if (stoneName.isNullOrBlank()) return emptyList()
+    
+    return listOf(
+        ProductStone(
+            name = stoneName,
+            purity = "", // Old format didn't have purity
+            quantity = stoneQuantity ?: 0.0,
+            rate = stoneRate ?: 0.0,
+            weight = cwWeight ?: 0.0, // Renamed from cwWeight to weight
+            amount = stoneAmount ?: 0.0
+        )
+    )
 }

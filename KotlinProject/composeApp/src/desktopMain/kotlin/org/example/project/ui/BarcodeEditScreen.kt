@@ -41,15 +41,10 @@ fun BarcodeEditScreen(
     var name by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
     var totalWeight by remember { mutableStateOf("") }
-    var defaultMakingRate by remember { mutableStateOf("") }
-    var isOtherThanGold by remember { mutableStateOf(false) }
-    var lessWeight by remember { mutableStateOf("") }
     var hasStones by remember { mutableStateOf(false) }
     var stoneName by remember { mutableStateOf("") }
     var stoneQuantity by remember { mutableStateOf("") }
     var stoneRate by remember { mutableStateOf("") }
-    var cwWeight by remember { mutableStateOf("") }
-    var vaCharges by remember { mutableStateOf("") }
     var available by remember { mutableStateOf(true) }
     var featured by remember { mutableStateOf(false) }
     var hasCustomPrice by remember { mutableStateOf(false) }
@@ -66,15 +61,11 @@ fun BarcodeEditScreen(
                 name = fetchedProduct.name
                 description = fetchedProduct.description ?: ""
                 totalWeight = if (fetchedProduct.totalWeight > 0) fetchedProduct.totalWeight.toString() else ""
-                defaultMakingRate = if (fetchedProduct.defaultMakingRate > 0) fetchedProduct.defaultMakingRate.toString() else ""
-                isOtherThanGold = fetchedProduct.isOtherThanGold
-                lessWeight = if (fetchedProduct.lessWeight > 0) fetchedProduct.lessWeight.toString() else ""
                 hasStones = fetchedProduct.hasStones
-                stoneName = fetchedProduct.stoneName
-                stoneQuantity = if (fetchedProduct.stoneQuantity > 0) fetchedProduct.stoneQuantity.toString() else ""
-                stoneRate = if (fetchedProduct.stoneRate > 0) fetchedProduct.stoneRate.toString() else ""
-                cwWeight = if (fetchedProduct.cwWeight > 0) fetchedProduct.cwWeight.toString() else ""
-                vaCharges = if (fetchedProduct.vaCharges > 0) fetchedProduct.vaCharges.toString() else ""
+                val firstStone = fetchedProduct.stones.firstOrNull()
+                stoneName = firstStone?.name ?: ""
+                stoneQuantity = if ((firstStone?.quantity ?: 0.0) > 0) firstStone?.quantity.toString() ?: "" else ""
+                stoneRate = if ((firstStone?.rate ?: 0.0) > 0) firstStone?.rate.toString() ?: "" else ""
                 available = fetchedProduct.available
                 featured = fetchedProduct.featured
                 hasCustomPrice = fetchedProduct.hasCustomPrice
@@ -199,78 +190,23 @@ fun BarcodeEditScreen(
                             keyboardType = KeyboardType.Decimal
                         )
 
-                        StyledTextField(
-                            value = defaultMakingRate,
-                            onValueChange = { defaultMakingRate = it },
-                            label = "Making Rate",
-                            placeholder = "0.00",
-                            prefix = "₹",
-                            suffix = "/gram",
-                            keyboardType = KeyboardType.Decimal
-                        )
 
-                        StyledTextField(
-                            value = vaCharges,
-                            onValueChange = { vaCharges = it },
-                            label = "VA Charges",
-                            placeholder = "0.00",
-                            prefix = "₹",
-                            keyboardType = KeyboardType.Decimal
-                        )
                     }
                 }
 
                 // Additional Components
                 SectionCard(title = "Additional Components") {
                     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                        // Other Than Gold Toggle
+                        // Has Stones Toggle
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    "Other Than Gold",
+                                    "Has Stones",
                                     fontWeight = FontWeight.Medium,
-                                    fontSize = 15.sp
-                                )
-                                Text(
-                                    "Include non-gold components",
-                                    fontSize = 12.sp,
-                                    color = Color.Gray,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                )
-                            }
-                            Switch(
-                                checked = isOtherThanGold,
-                                onCheckedChange = { isOtherThanGold = it },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = MaterialTheme.colors.primary,
-                                    checkedTrackColor = MaterialTheme.colors.primary.copy(alpha = 0.5f)
-                                )
-                            )
-                        }
-
-                        if (isOtherThanGold) {
-                            StyledTextField(
-                                value = lessWeight,
-                                onValueChange = { lessWeight = it },
-                                label = "Less Weight",
-                                placeholder = "0.00",
-                                suffix = "grams",
-                                keyboardType = KeyboardType.Decimal
-                            )
-
-                            // Has Stones Toggle
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        "Has Stones",
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 14.sp
+                                    fontSize = 14.sp
                                     )
                                     Text(
                                         "Include gemstones or diamonds",
@@ -312,16 +248,6 @@ fun BarcodeEditScreen(
                                     prefix = "₹",
                                     keyboardType = KeyboardType.Decimal
                                 )
-
-                                StyledTextField(
-                                    value = cwWeight,
-                                    onValueChange = { cwWeight = it },
-                                    label = "CW Weight",
-                                    placeholder = "0.00",
-                                    suffix = "carats",
-                                    keyboardType = KeyboardType.Decimal
-                                )
-                            }
                         }
                     }
                 }
@@ -403,19 +329,26 @@ fun BarcodeEditScreen(
                                 isSaving = true
                                 scope.launch {
                                     try {
+                                        // Create stones array
+                                        val stonesList = if (hasStones && stoneName.isNotBlank()) {
+                                            listOf(
+                                                org.example.project.data.ProductStone(
+                                                    name = stoneName,
+                                                    purity = "", // BarcodeEditScreen doesn't have purity field
+                                                    quantity = stoneQuantity.toDoubleOrNull() ?: 0.0,
+                                                    rate = stoneRate.toDoubleOrNull() ?: 0.0,
+                                                    weight = 0.0, // BarcodeEditScreen doesn't have weight field
+                                                    amount = 0.0 // Will be calculated if needed
+                                                )
+                                            )
+                                        } else emptyList()
+                                        
                                         val updatedProduct = product!!.copy(
                                             name = name,
                                             description = description,
                                             totalWeight = totalWeight.toDoubleOrNull() ?: 0.0,
-                                            defaultMakingRate = defaultMakingRate.toDoubleOrNull() ?: 0.0,
-                                            isOtherThanGold = isOtherThanGold,
-                                            lessWeight = lessWeight.toDoubleOrNull() ?: 0.0,
                                             hasStones = hasStones,
-                                            stoneName = stoneName,
-                                            stoneQuantity = stoneQuantity.toDoubleOrNull() ?: 0.0,
-                                            stoneRate = stoneRate.toDoubleOrNull() ?: 0.0,
-                                            cwWeight = cwWeight.toDoubleOrNull() ?: 0.0,
-                                            vaCharges = vaCharges.toDoubleOrNull() ?: 0.0,
+                                            stones = stonesList,
                                             available = available,
                                             featured = featured,
                                             hasCustomPrice = hasCustomPrice,

@@ -3,6 +3,7 @@ package org.example.project.data
 import com.google.cloud.firestore.Firestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.example.project.data.normalizeMaterialType
 
 interface MetalRateRepository {
     suspend fun getAllMetalRates(): List<MetalRate>
@@ -20,60 +21,122 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
 
     override suspend fun getAllMetalRates(): List<MetalRate> = withContext(Dispatchers.IO) {
         try {
-            val metalRatesCollection = firestore.collection("rates")
-            val future = metalRatesCollection.get()
-            val snapshot = future.get()
+            val metalRates = mutableListOf<MetalRate>()
             
-            snapshot.documents.map { doc ->
-                val data = doc.data
-                val previousRateData = data["previous_rate"] as? Map<String, Any>
-                val previousRate = if (previousRateData != null) {
-                    RateHistory(
-                        pricePerGram = (previousRateData["price_per_gram"] as? Number)?.toDouble() ?: 0.0,
-                        updatedAt = (previousRateData["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                        updatedBy = previousRateData["updated_by"] as? String ?: "system"
-                    )
-                } else null
+            // Read from materials collection
+            val materialsCollection = firestore.collection("materials")
+            val materialsSnapshot = materialsCollection.get().get()
+            
+            materialsSnapshot.documents.forEach { materialDoc ->
+                val materialData = materialDoc.data
+                val materialName = materialData["name"] as? String ?: ""
+                val materialId = materialDoc.id
+                val typesData = materialData["types"]
                 
-                MetalRate(
-                    id = doc.id,
-                    materialId = data["material_id"] as? String ?: "",
-                    materialName = data["material_name"] as? String ?: "",
-                    materialType = data["material_type"] as? String ?: "",
-                    karat = (data["karat"] as? Number)?.toInt() ?: 24,
-                    pricePerGram = (data["price_per_gram"] as? Number)?.toDouble() ?: 0.0,
-                    isActive = (data["is_active"] as? Boolean) ?: true,
-                    createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    previousRate = previousRate
-                )
+                when (typesData) {
+                    is List<*> -> {
+                        typesData.forEach { typeItem ->
+                            when (typeItem) {
+                                is Map<*, *> -> {
+                                    val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                    val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                    if (purity.isNotEmpty() && rate.isNotEmpty()) {
+                                        val normalizedPurity = normalizeMaterialType(purity)
+                                        val rateValue = rate.toDoubleOrNull() ?: 0.0
+                                        if (rateValue > 0) {
+                                            metalRates.add(
+                                                MetalRate(
+                                                    id = "${materialId}_${normalizedPurity}", // Generate ID from material + type
+                                                    materialId = materialId,
+                                                    materialName = materialName,
+                                                    materialType = normalizedPurity,
+                                                    karat = extractKaratFromPurity(normalizedPurity),
+                                                    pricePerGram = rateValue,
+                                                    isActive = true,
+                                                    createdAt = (materialData["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                                                    updatedAt = System.currentTimeMillis(),
+                                                    previousRate = null
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
+            
+            // Read from stones collection
+            val stonesCollection = firestore.collection("stones")
+            val stonesSnapshot = stonesCollection.get().get()
+            
+            stonesSnapshot.documents.forEach { stoneDoc ->
+                val stoneData = stoneDoc.data
+                val stoneName = stoneData["name"] as? String ?: ""
+                val typesData = stoneData["types"]
+                
+                when (typesData) {
+                    is List<*> -> {
+                        typesData.forEach { typeItem ->
+                            when (typeItem) {
+                                is Map<*, *> -> {
+                                    val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                    val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                    if (purity.isNotEmpty() && rate.isNotEmpty()) {
+                                        val normalizedPurity = purity.trim().uppercase()
+                                        val rateValue = rate.toDoubleOrNull() ?: 0.0
+                                        if (rateValue > 0) {
+                                            metalRates.add(
+                                                MetalRate(
+                                                    id = "${stoneDoc.id}_${normalizedPurity}", // Generate ID from stone + purity
+                                                    materialId = "", // Stones don't have materialId
+                                                    materialName = stoneName,
+                                                    materialType = normalizedPurity,
+                                                    karat = 0, // Stones don't have karat
+                                                    pricePerGram = rateValue,
+                                                    isActive = true,
+                                                    createdAt = (stoneData["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                                                    updatedAt = System.currentTimeMillis(),
+                                                    previousRate = null
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            println("✅ Loaded ${metalRates.size} rates from materials and stones collections")
+            metalRates
         } catch (e: Exception) {
             println("❌ Error loading metal rates: ${e.message}")
+            e.printStackTrace()
             emptyList()
         }
+    }
+    
+    // Helper function to extract karat from purity string
+    private fun extractKaratFromPurity(purity: String): Int {
+        val normalized = normalizeMaterialType(purity)
+        val regex = Regex("""(\d+)K""")
+        val match = regex.find(normalized)
+        return match?.groupValues?.get(1)?.toIntOrNull() ?: 24
     }
 
     override suspend fun getMetalRateById(id: String): MetalRate? = withContext(Dispatchers.IO) {
         try {
-            val docRef = firestore.collection("rates").document(id)
-            val future = docRef.get()
-            val snapshot = future.get()
-            
-            if (snapshot.exists()) {
-                val data = snapshot.data
-                MetalRate(
-                    id = snapshot.id,
-                    materialId = data?.get("material_id") as? String ?: "",
-                    materialName = data?.get("material_name") as? String ?: "",
-                    materialType = data?.get("material_type") as? String ?: "",
-                    karat = (data?.get("karat") as? Number)?.toInt() ?: 24,
-                    pricePerGram = (data?.get("price_per_gram") as? Number)?.toDouble() ?: 0.0,
-                    isActive = (data?.get("is_active") as? Boolean) ?: true,
-                    createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data?.get("updated_at") as? Number)?.toLong() ?: System.currentTimeMillis()
-                )
-            } else null
+            // ID format: "materialId_materialType" or "stoneName_purity"
+            val parts = id.split("_", limit = 2)
+            if (parts.size == 2) {
+                val materialIdOrName = parts[0]
+                val materialType = parts[1]
+                return@withContext getMetalRateByMaterialAndType(materialIdOrName, materialType)
+            }
+            null
         } catch (e: Exception) {
             println("❌ Error loading metal rate by ID: ${e.message}")
             null
@@ -82,57 +145,113 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
 
     override suspend fun getMetalRateByMaterialAndType(materialId: String, materialType: String): MetalRate? = withContext(Dispatchers.IO) {
         try {
-            val metalRatesCollection = firestore.collection("rates")
-            val query = metalRatesCollection
-                .whereEqualTo("material_id", materialId)
-                .whereEqualTo("material_type", materialType)
-                .whereEqualTo("is_active", true)
-                .limit(1)
+            // Normalize material type for comparison (22, 22K, 22k should be same)
+            val normalizedMaterialType = normalizeMaterialType(materialType)
             
-            val future = query.get()
-            val snapshot = future.get()
+            if (materialId.isEmpty()) {
+                // For stones (no materialId), search in stones collection
+                val stonesCollection = firestore.collection("stones")
+                val stonesSnapshot = stonesCollection.get().get()
+                
+                stonesSnapshot.documents.forEach { stoneDoc ->
+                    val stoneData = stoneDoc.data
+                    val stoneName = stoneData["name"] as? String ?: ""
+                    val typesData = stoneData["types"]
+                    
+                    when (typesData) {
+                        is List<*> -> {
+                            typesData.forEach { typeItem ->
+                                when (typeItem) {
+                                    is Map<*, *> -> {
+                                        val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                        val normalizedPurity = purity.trim().uppercase()
+                                        if (normalizedPurity == normalizedMaterialType || 
+                                            (materialType.isNotEmpty() && stoneName.equals(materialType, ignoreCase = true))) {
+                                            val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                            val rateValue = rate.toDoubleOrNull() ?: 0.0
+                                            if (rateValue > 0) {
+                                                return@withContext MetalRate(
+                                                    id = "${stoneDoc.id}_${normalizedPurity}",
+                                                    materialId = "",
+                                                    materialName = stoneName,
+                                                    materialType = normalizedPurity,
+                                                    karat = 0,
+                                                    pricePerGram = rateValue,
+                                                    isActive = true,
+                                                    createdAt = (stoneData["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                                                    updatedAt = System.currentTimeMillis()
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // For metals, search in materials collection
+                val materialDocRef = firestore.collection("materials").document(materialId)
+                val materialDoc = materialDocRef.get().get()
+                
+                if (materialDoc.exists()) {
+                    val materialData = materialDoc.data
+                    val materialName = materialData?.get("name") as? String ?: ""
+                    val typesData = materialData?.get("types")
+                    
+                    when (typesData) {
+                        is List<*> -> {
+                            typesData.forEach { typeItem ->
+                                when (typeItem) {
+                                    is Map<*, *> -> {
+                                        val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                        val normalizedPurity = normalizeMaterialType(purity)
+                                        if (normalizedPurity == normalizedMaterialType) {
+                                            val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                            val rateValue = rate.toDoubleOrNull() ?: 0.0
+                                            if (rateValue > 0) {
+                                                return@withContext MetalRate(
+                                                    id = "${materialId}_${normalizedPurity}",
+                                                    materialId = materialId,
+                                                    materialName = materialName,
+                                                    materialType = normalizedPurity,
+                                                    karat = extractKaratFromPurity(normalizedPurity),
+                                                    pricePerGram = rateValue,
+                                                    isActive = true,
+                                                    createdAt = (materialData["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                                                    updatedAt = System.currentTimeMillis()
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             
-            if (!snapshot.isEmpty) {
-                val doc = snapshot.documents.first()
-                val data = doc.data
-                MetalRate(
-                    id = doc.id,
-                    materialId = data["material_id"] as? String ?: "",
-                    materialName = data["material_name"] as? String ?: "",
-                    materialType = data["material_type"] as? String ?: "",
-                    karat = (data["karat"] as? Number)?.toInt() ?: 24,
-                    pricePerGram = (data["price_per_gram"] as? Number)?.toDouble() ?: 0.0,
-                    isActive = (data["is_active"] as? Boolean) ?: true,
-                    createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-                )
-            } else null
+            null
         } catch (e: Exception) {
             println("❌ Error loading metal rate by material and type: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
 
     override suspend fun addMetalRate(metalRate: MetalRate): String = withContext(Dispatchers.IO) {
         try {
-            val metalRatesCollection = firestore.collection("rates")
-            val docRef = metalRatesCollection.document()
-            val newId = docRef.id
-            
-            val data = mapOf(
-                "material_id" to metalRate.materialId,
-                "material_name" to metalRate.materialName,
-                "material_type" to metalRate.materialType,
-                "karat" to metalRate.karat,
-                "price_per_gram" to metalRate.pricePerGram,
-                "is_active" to metalRate.isActive,
-                "created_at" to System.currentTimeMillis(),
-                "updated_at" to System.currentTimeMillis()
-            )
-            
-            docRef.set(data).get()
-            println("✅ Metal rate added with ID: $newId")
-            newId
+            // Rates are now stored in materials/stones collections, not in rates collection
+            // This method is kept for backward compatibility but now updates materials/stones collections
+            if (metalRate.materialId.isNotEmpty()) {
+                // Update materials collection
+                updateMaterialTypesArray(metalRate.materialId, metalRate.materialType, metalRate.pricePerGram.toString())
+                "${metalRate.materialId}_${metalRate.materialType}"
+            } else {
+                // Update stones collection
+                updateStoneTypesArray(metalRate.materialName, metalRate.materialType, metalRate.pricePerGram.toString())
+                "${metalRate.materialName}_${metalRate.materialType}"
+            }
         } catch (e: Exception) {
             println("❌ Error adding metal rate: ${e.message}")
             throw e
@@ -141,30 +260,16 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
 
     override suspend fun updateMetalRate(metalRate: MetalRate): Boolean = withContext(Dispatchers.IO) {
         try {
-            val docRef = firestore.collection("rates").document(metalRate.id)
-            
-            // Convert previous rate to Firestore format
-            val previousRateData = metalRate.previousRate?.let { rateHistory ->
-                mapOf(
-                    "price_per_gram" to rateHistory.pricePerGram,
-                    "updated_at" to rateHistory.updatedAt,
-                    "updated_by" to rateHistory.updatedBy
-                )
+            // Rates are now stored in materials/stones collections, not in rates collection
+            // This method is kept for backward compatibility but now updates materials/stones collections
+            if (metalRate.materialId.isNotEmpty()) {
+                // Update materials collection
+                updateMaterialTypesArray(metalRate.materialId, metalRate.materialType, metalRate.pricePerGram.toString())
+            } else {
+                // Update stones collection
+                updateStoneTypesArray(metalRate.materialName, metalRate.materialType, metalRate.pricePerGram.toString())
             }
-            
-            val data = mapOf(
-                "material_id" to metalRate.materialId,
-                "material_name" to metalRate.materialName,
-                "material_type" to metalRate.materialType,
-                "karat" to metalRate.karat,
-                "price_per_gram" to metalRate.pricePerGram,
-                "is_active" to metalRate.isActive,
-                "updated_at" to System.currentTimeMillis(),
-                "previous_rate" to previousRateData
-            )
-            
-            docRef.update(data).get()
-            println("✅ Metal rate updated: ${metalRate.id}")
+            println("✅ Metal rate updated: ${metalRate.materialName} ${metalRate.materialType}")
             true
         } catch (e: Exception) {
             println("❌ Error updating metal rate: ${e.message}")
@@ -174,11 +279,84 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
 
     override suspend fun deleteMetalRate(id: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            firestore.collection("rates").document(id).delete().get()
-            println("✅ Metal rate deleted: $id")
-            true
+            // Rates are now stored in materials/stones collections
+            // Parse the ID to get materialId/stoneName and materialType
+            // Format: "materialId_materialType" or "stoneName_purity"
+            val parts = id.split("_", limit = 2)
+            if (parts.size == 2) {
+                val materialIdOrName = parts[0]
+                val materialType = parts[1]
+                
+                // Try materials collection first
+                val materialDocRef = firestore.collection("materials").document(materialIdOrName)
+                val materialDoc = materialDocRef.get().get()
+                
+                if (materialDoc.exists()) {
+                    val data = materialDoc.data ?: return@withContext false
+                    val existingTypes = mutableListOf<Map<String, String>>()
+                    val typesData = data["types"]
+                    
+                    when (typesData) {
+                        is List<*> -> {
+                            typesData.forEach { typeItem ->
+                                when (typeItem) {
+                                    is Map<*, *> -> {
+                                        val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                        val normalizedPurity = normalizeMaterialType(purity)
+                                        val normalizedMaterialType = normalizeMaterialType(materialType)
+                                        // Only add if it's not the one we're deleting
+                                        if (normalizedPurity != normalizedMaterialType) {
+                                            val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                            existingTypes.add(mapOf("purity" to normalizedPurity, "rate" to rate))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    materialDocRef.update("types", existingTypes).get()
+                    println("✅ Metal rate deleted from materials collection: $id")
+                    return@withContext true
+                } else {
+                    // Try stones collection
+                    val stonesCollection = firestore.collection("stones")
+                    val query = stonesCollection.whereEqualTo("name", materialIdOrName).limit(1)
+                    val snapshot = query.get().get()
+                    
+                    if (!snapshot.isEmpty) {
+                        val stoneDoc = snapshot.documents.first()
+                        val stoneData = stoneDoc.data ?: return@withContext false
+                        val existingTypes = mutableListOf<Map<String, String>>()
+                        val typesData = stoneData["types"]
+                        val normalizedMaterialType = materialType.trim().uppercase()
+                        
+                        when (typesData) {
+                            is List<*> -> {
+                                typesData.forEach { typeItem ->
+                                    when (typeItem) {
+                                        is Map<*, *> -> {
+                                            val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                            val normalizedPurity = purity.trim().uppercase()
+                                            // Only add if it's not the one we're deleting
+                                            if (normalizedPurity != normalizedMaterialType) {
+                                                val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                                existingTypes.add(mapOf("purity" to normalizedPurity, "rate" to rate))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        stoneDoc.reference.update("types", existingTypes).get()
+                        println("✅ Stone rate deleted from stones collection: $id")
+                        return@withContext true
+                    }
+                }
+            }
+            false
         } catch (e: Exception) {
             println("❌ Error deleting metal rate: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -187,9 +365,10 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
         try {
             val metalRate = getMetalRateByMaterialAndType(materialId, materialType)
             if (metalRate != null) {
-                val calculatedRate = metalRate.calculateRateForKarat(karat)
-                println("💰 Calculated rate for $materialType $karat K: $calculatedRate (base: ${metalRate.pricePerGram} for ${metalRate.karat}K)")
-                calculatedRate
+                // Use the exact stored rate for this material/type directly to avoid
+                // recalculating when Firestore already holds the per-gram price.
+                println("💰 Using Firestore rate for $materialType (no recalculation): ${metalRate.pricePerGram}")
+                metalRate.pricePerGram
             } else {
                 println("⚠️ No metal rate found for material: $materialId, type: $materialType")
                 0.0
@@ -202,35 +381,19 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
 
     override suspend fun updateOrCreateMetalRate(materialId: String, materialName: String, materialType: String, pricePerGram: Double): String = withContext(Dispatchers.IO) {
         try {
-            // First, try to find existing rate
-            val existingRate = getMetalRateByMaterialAndType(materialId, materialType)
+            // Normalize material type
+            val normalizedPurity = normalizeMaterialType(materialType)
             
-            if (existingRate != null) {
-                // Update existing rate
-                val updatedRate = existingRate.copy(
-                    pricePerGram = pricePerGram,
-                    updatedAt = System.currentTimeMillis()
-                )
-                val success = updateMetalRate(updatedRate)
-                if (success) {
-                    println("✅ Updated existing metal rate: ${materialName} ${materialType}")
-                    existingRate.id
-                } else {
-                    throw Exception("Failed to update existing metal rate")
-                }
+            if (materialId.isNotEmpty()) {
+                // Update or create in materials collection
+                updateMaterialTypesArray(materialId, normalizedPurity, pricePerGram.toString())
+                println("✅ Updated/created metal rate in materials collection: ${materialName} ${normalizedPurity}")
+                "${materialId}_${normalizedPurity}"
             } else {
-                // Create new rate
-                val newRate = MetalRate(
-                    materialId = materialId,
-                    materialName = materialName,
-                    materialType = materialType,
-                    karat = 24, // Base karat
-                    pricePerGram = pricePerGram,
-                    isActive = true
-                )
-                val newId = addMetalRate(newRate)
-                println("✅ Created new metal rate: ${materialName} ${materialType}")
-                newId
+                // Update or create in stones collection
+                updateStoneTypesArray(materialName, normalizedPurity, pricePerGram.toString())
+                println("✅ Updated/created stone rate in stones collection: ${materialName} ${normalizedPurity}")
+                "${materialName}_${normalizedPurity}"
             }
         } catch (e: Exception) {
             println("❌ Error updating or creating metal rate: ${e.message}")
@@ -240,59 +403,150 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
 
     override suspend fun updateMetalRateWithHistory(materialId: String, materialName: String, materialType: String, newPricePerGram: Double): Boolean = withContext(Dispatchers.IO) {
         try {
-            println("🔄 Updating metal rate with history: $materialName $materialType -> $newPricePerGram per gram")
+            println("🔄 Updating metal rate: $materialName $materialType -> $newPricePerGram per gram")
             
-            // Get existing rate
-            val existingRate = getMetalRateByMaterialAndType(materialId, materialType)
+            // Normalize purity (22, 22K, 22k should be same)
+            val normalizedPurity = normalizeMaterialType(materialType)
             
-            if (existingRate != null) {
-                // Update existing rate with history
-                val currentTime = System.currentTimeMillis()
-                
-                // Update previous rate if price is different
-                val updatedPreviousRate = if (existingRate.pricePerGram != newPricePerGram) {
-                    RateHistory(
-                        pricePerGram = existingRate.pricePerGram,
-                        updatedAt = existingRate.updatedAt,
-                        updatedBy = "system"
-                    )
-                } else {
-                    existingRate.previousRate
-                }
-                
-                val updatedRate = existingRate.copy(
-                    pricePerGram = newPricePerGram,
-                    updatedAt = currentTime,
-                    previousRate = updatedPreviousRate
-                )
-                
-                val success = updateMetalRate(updatedRate)
-                if (success) {
-                    println("✅ Updated metal rate with history: ${materialName} ${materialType} -> $newPricePerGram per gram")
-                }
-                success
+            if (materialId.isNotEmpty()) {
+                // Update materials collection
+                updateMaterialTypesArray(materialId, normalizedPurity, newPricePerGram.toString())
+                println("✅ Updated metal rate in materials collection: ${materialName} ${normalizedPurity} -> $newPricePerGram per gram")
+                true
             } else {
-                // Create new rate
-                val newRate = MetalRate(
-                    materialId = materialId,
-                    materialName = materialName,
-                    materialType = materialType,
-                    karat = 24, // Base karat for 24K
-                    pricePerGram = newPricePerGram,
-                    isActive = true,
-                    createdAt = System.currentTimeMillis(),
-                    updatedAt = System.currentTimeMillis(),
-                    previousRate = null
-                )
-                
-                val newId = addMetalRate(newRate)
-                println("✅ Created new metal rate: ${materialName} ${materialType} -> $newPricePerGram per gram")
-                newId.isNotEmpty()
+                // Update stones collection
+                updateStoneTypesArray(materialName, normalizedPurity, newPricePerGram.toString())
+                println("✅ Updated stone rate in stones collection: ${materialName} ${normalizedPurity} -> $newPricePerGram per gram")
+                true
             }
         } catch (e: Exception) {
             println("❌ Error updating metal rate with history: ${e.message}")
             e.printStackTrace()
             false
+        }
+    }
+    
+    /**
+     * Updates the materials collection with the new types array format
+     * Structure: types: [{purity: "24", rate: "5000"}, {purity: "22", rate: "4500"}]
+     */
+    private suspend fun updateMaterialTypesArray(materialId: String, purity: String, rate: String) = withContext(Dispatchers.IO) {
+        try {
+            if (materialId.isEmpty()) {
+                println("⚠️ Material ID is empty, skipping materials collection update")
+                return@withContext
+            }
+            
+            val materialDocRef = firestore.collection("materials").document(materialId)
+            val materialDoc = materialDocRef.get().get()
+            
+            if (!materialDoc.exists()) {
+                println("⚠️ Material document not found: $materialId")
+                return@withContext
+            }
+            
+            val data = materialDoc.data ?: return@withContext
+            val existingTypes = mutableListOf<Map<String, String>>()
+            
+            // Parse existing types array
+            val typesData = data["types"]
+            when (typesData) {
+                is List<*> -> {
+                    typesData.forEach { typeItem ->
+                        when (typeItem) {
+                            is Map<*, *> -> {
+                                val existingPurity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                val normalizedExistingPurity = normalizeMaterialType(existingPurity)
+                                // Only add if it's not the purity we're updating
+                                if (normalizedExistingPurity != purity) {
+                                    val existingRate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                    existingTypes.add(mapOf("purity" to normalizedExistingPurity, "rate" to existingRate))
+                                }
+                            }
+                            is String -> {
+                                // Old format: just string types
+                                val normalizedExistingPurity = normalizeMaterialType(typeItem)
+                                if (normalizedExistingPurity != purity) {
+                                    existingTypes.add(mapOf("purity" to normalizedExistingPurity, "rate" to ""))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Add or update the current purity/rate
+            existingTypes.add(mapOf("purity" to purity, "rate" to rate))
+            
+            // Update the material document with the new types array
+            materialDocRef.update("types", existingTypes).get()
+            println("✅ Updated materials collection: $materialId with purity $purity and rate $rate")
+        } catch (e: Exception) {
+            println("❌ Error updating materials collection: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+    
+    /**
+     * Updates the stones collection with the new types array format
+     * Structure: types: [{purity: "VVS", rate: "5000"}, {purity: "VS", rate: "4500"}]
+     */
+    suspend fun updateStoneTypesArray(stoneName: String, purity: String, rate: String) = withContext(Dispatchers.IO) {
+        try {
+            // Find stone document by name
+            val stonesCollection = firestore.collection("stones")
+            val query = stonesCollection.whereEqualTo("name", stoneName).limit(1)
+            val snapshot = query.get().get()
+            
+            if (snapshot.isEmpty) {
+                println("⚠️ Stone document not found: $stoneName")
+                return@withContext
+            }
+            
+            val stoneDoc = snapshot.documents.first()
+            val data = stoneDoc.data ?: return@withContext
+            val existingTypes = mutableListOf<Map<String, String>>()
+            
+            // Parse existing types array
+            val typesData = data["types"]
+            when (typesData) {
+                is List<*> -> {
+                    typesData.forEach { typeItem ->
+                        when (typeItem) {
+                            is Map<*, *> -> {
+                                val existingPurity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                                // For stones, normalize purity (case-insensitive comparison)
+                                val normalizedExistingPurity = existingPurity.trim().uppercase()
+                                val normalizedPurity = purity.trim().uppercase()
+                                // Only add if it's not the purity we're updating
+                                if (normalizedExistingPurity != normalizedPurity) {
+                                    val existingRate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                                    existingTypes.add(mapOf("purity" to normalizedExistingPurity, "rate" to existingRate))
+                                }
+                            }
+                            is String -> {
+                                // Old format: just string types
+                                val normalizedExistingPurity = typeItem.trim().uppercase()
+                                val normalizedPurity = purity.trim().uppercase()
+                                if (normalizedExistingPurity != normalizedPurity) {
+                                    existingTypes.add(mapOf("purity" to normalizedExistingPurity, "rate" to ""))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Add or update the current purity/rate (normalized)
+            val normalizedPurity = purity.trim().uppercase()
+            existingTypes.add(mapOf("purity" to normalizedPurity, "rate" to rate))
+            
+            // Update the stone document with the new types array
+            stoneDoc.reference.update("types", existingTypes).get()
+            println("✅ Updated stones collection: $stoneName with purity $normalizedPurity and rate $rate")
+        } catch (e: Exception) {
+            println("❌ Error updating stones collection: ${e.message}")
+            e.printStackTrace()
         }
     }
 }

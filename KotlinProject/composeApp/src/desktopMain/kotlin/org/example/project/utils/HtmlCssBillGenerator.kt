@@ -254,17 +254,20 @@ class HtmlCssBillGenerator {
             
             // Use the same weight calculation as cart screen
             val grossWeight = if (item.grossWeight > 0) item.grossWeight else item.product.totalWeight
-            val lessWeight = if (item.lessWeight > 0) item.lessWeight else item.product.lessWeight
+            // lessWeight removed from Product, using 0.0 as default
+            val lessWeight = if (item.lessWeight > 0) item.lessWeight else 0.0
             val netWeight = grossWeight - lessWeight
             val quantity = item.quantity
             
             // 🔧 FIX: Use Firestore order data directly for charges
             // From Firestore: defaultMakingRate and vaCharges are total charges per item, not rates per gram
-            val makingChargesPerGram = if (item.makingCharges > 0) item.makingCharges else item.product.defaultMakingRate
-            val cwWeight = if (item.cwWeight > 0) item.cwWeight else item.product.cwWeight
-            val stoneRate = if (item.stoneRate > 0) item.stoneRate else item.product.stoneRate
-            val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else item.product.stoneQuantity
-            val vaCharges = if (item.va > 0) item.va else item.product.vaCharges
+            val makingChargesPerGram = if (item.makingCharges > 0) item.makingCharges else 0.0 // defaultMakingRate removed from Product
+            // Use stoneWeight instead of cwWeight
+            val firstStone = item.product.stones.firstOrNull()
+            val cwWeight = if (item.cwWeight > 0) item.cwWeight else (firstStone?.weight ?: item.product.stoneWeight)
+            val stoneRate = if (item.stoneRate > 0) item.stoneRate else (firstStone?.rate ?: 0.0)
+            val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else (firstStone?.quantity ?: 0.0)
+            val vaCharges = if (item.va > 0) item.va else item.product.labourCharges // Use labourCharges instead of vaCharges
             
             // Calculate amounts - use Firestore data directly for making and VA charges
             val baseAmount = netWeight * metalRate * quantity
@@ -717,7 +720,7 @@ class HtmlCssBillGenerator {
             if (product != null) {
                 // 🔧 FIX: Use actual order data from Firestore instead of hardcoded values
                 println("📄 HTML BILL: Using Firestore order data for item ${item.productId}")
-                println("   - Making charges: ${item.defaultMakingRate}")
+                println("   - Making charges: 0.0 (defaultMakingRate removed)")
                 println("   - VA charges: ${item.vaCharges}")
                 println("   - Material type: ${item.materialType}")
                 
@@ -730,7 +733,7 @@ class HtmlCssBillGenerator {
                     grossWeight = parseWeight(product.weight),
                     totalWeight = parseWeight(product.weight),
                     lessWeight = 0.0,
-                    makingCharges = item.defaultMakingRate, // ✅ Use actual making charges from Firestore
+                    makingCharges = 0.0, // defaultMakingRate removed from Product
                     stoneRate = 0.0,
                     stoneQuantity = 0.0,
                     cwWeight = 0.0,

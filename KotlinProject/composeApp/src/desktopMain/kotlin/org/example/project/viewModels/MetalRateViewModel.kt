@@ -105,9 +105,10 @@ class MetalRateViewModel(private val metalRateRepository: MetalRateRepository) :
             // Try exact match first
             val exact = _metalRates.value.find { it.materialId == materialId && it.materialType.equals(materialType, true) && it.isActive }
             if (exact != null) {
-                val rate = exact.calculateRateForKarat(karat)
-                println("💰 Calculated rate (exact) for $materialType $karat K: $rate (base: ${exact.pricePerGram} for ${exact.karat}K)")
-                return rate
+                // When Firestore already stores price for this material type, use it directly
+                // without recalculating by karat to avoid double-adjusting the rate.
+                println("💰 Using Firestore rate for $materialType (no recalculation): ${exact.pricePerGram}")
+                return exact.pricePerGram
             }
 
             // Fallback: use any active rate for this material and convert to target karat
@@ -176,6 +177,29 @@ class MetalRateViewModel(private val metalRateRepository: MetalRateRepository) :
             } catch (e: Exception) {
                 _error.value = "Failed to update metal rate: ${e.message}"
                 println("❌ Error updating metal rate with history: ${e.message}")
+            } finally {
+                _loading.value = false
+            }
+        }
+    }
+    
+    fun updateStoneRate(stoneName: String, purity: String, rate: Double) {
+        viewModelScope.launch {
+            _loading.value = true
+            try {
+                // Update stone rate in stones collection
+                val repository = metalRateRepository as? org.example.project.data.FirestoreMetalRateRepository
+                if (repository != null) {
+                    repository.updateStoneTypesArray(stoneName, purity, rate.toString())
+                    loadMetalRates() // Refresh the list after update
+                    _error.value = null
+                    println("✅ Stone rate updated: $stoneName $purity")
+                } else {
+                    _error.value = "Failed to update stone rate"
+                }
+            } catch (e: Exception) {
+                _error.value = "Failed to update stone rate: ${e.message}"
+                println("❌ Error updating stone rate: ${e.message}")
             } finally {
                 _loading.value = false
             }

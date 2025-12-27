@@ -78,6 +78,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.example.project.utils.ImageLoader
@@ -111,6 +112,49 @@ object ImageCache {
     fun size(): Int = cache.size
 }
 
+/**
+ * Resize an image during decoding to reduce memory usage
+ * For thumbnails (50dp), we resize to 100px max (2x for high DPI screens)
+ * This significantly reduces memory usage and improves rendering performance
+ * Smaller size = less memory = faster rendering = no UI lag
+ */
+fun decodeAndResizeImage(imageBytes: ByteArray, maxSize: Int = 100): ImageBitmap? {
+    return try {
+        val skiaImage = org.jetbrains.skia.Image.makeFromEncoded(imageBytes) ?: return null
+        val width = skiaImage.width
+        val height = skiaImage.height
+        
+        // If image is already smaller, decode as-is
+        if (width <= maxSize && height <= maxSize) {
+            skiaImage.toComposeImageBitmap()
+        } else {
+            // Calculate new dimensions maintaining aspect ratio
+            val scale = minOf(maxSize.toFloat() / width, maxSize.toFloat() / height)
+            val newWidth = (width * scale).toInt().coerceAtLeast(1)
+            val newHeight = (height * scale).toInt().coerceAtLeast(1)
+            
+            // Create a surface and draw the resized image
+            val surface = org.jetbrains.skia.Surface.makeRasterN32Premul(newWidth, newHeight)
+            val canvas = surface.canvas
+            val paint = org.jetbrains.skia.Paint().apply {
+                isAntiAlias = true
+            }
+            
+            // Draw the image scaled to new size
+            val srcRect = org.jetbrains.skia.Rect.makeXYWH(0f, 0f, width.toFloat(), height.toFloat())
+            val dstRect = org.jetbrains.skia.Rect.makeXYWH(0f, 0f, newWidth.toFloat(), newHeight.toFloat())
+            canvas.drawImageRect(skiaImage, srcRect, dstRect, paint)
+            
+            // Get the resized image
+            val resizedImage = surface.makeImageSnapshot()
+            resizedImage.toComposeImageBitmap()
+        }
+    } catch (e: Exception) {
+        println("Failed to decode/resize image: ${e.message}")
+        null
+    }
+}
+
 @Composable
 fun DashboardScreen(
     viewModel: ProductsViewModel,
@@ -125,9 +169,11 @@ fun DashboardScreen(
 ) {
     val products by remember { viewModel.products }
     val categories by remember { viewModel.categories }
+    val materials by remember { viewModel.materials }
     val loading by remember { viewModel.loading }
     val inventoryLoading by remember { viewModel.inventoryLoading }
     val inventoryRefreshTrigger by remember { viewModel.inventoryRefreshTrigger }
+    val inventoryData by remember { viewModel.inventoryData }
 
     // State for view mode: true = category view, false = products view
     var showCategoryView by remember(startInProductsView) { mutableStateOf(!startInProductsView) }
@@ -139,10 +185,20 @@ fun DashboardScreen(
     // Search state for products
     var productSearchQuery by remember { mutableStateOf("") }
 
-    // Use LaunchedEffect to load products asynchronously
+    // Use LaunchedEffect to load products and inventory asynchronously
     LaunchedEffect(Unit) {
         if (products.isEmpty()) {
             viewModel.loadProducts()
+        } else if (!inventoryLoading && inventoryData.isEmpty()) {
+            // If products are loaded but inventory data is not, trigger inventory loading
+            viewModel.loadInventoryData()
+        }
+    }
+    
+    // Also trigger inventory loading when products change (in case products were loaded elsewhere)
+    LaunchedEffect(products) {
+        if (products.isNotEmpty() && !inventoryLoading && inventoryData.isEmpty()) {
+            viewModel.loadInventoryData()
         }
     }
 
@@ -155,43 +211,125 @@ fun DashboardScreen(
         ratesVM.loadMetalRates()
     }
 
-    // Calculate grouped products efficiently to prevent UI blocking
-    val groupedProducts by remember(products, inventoryRefreshTrigger, selectedCategoryId, inventoryLoading, productSearchQuery) {
-        derivedStateOf {
-            if (products.isEmpty() || inventoryLoading) {
-                emptyList()
-            } else {
-                try {
-                    // Get all grouped products first
-                    val allGroupedProducts = viewModel.getGroupedProducts()
-
-                    // Apply filters
-                    var filteredProducts = allGroupedProducts
-
-                    // Filter by selected category if one is selected
-                    if (selectedCategoryId != null) {
-                        filteredProducts = filteredProducts.filter { groupedProduct ->
-                            groupedProduct.baseProduct.categoryId == selectedCategoryId
-                        }
-                    }
-
-                    // Filter by search query if one is provided
-                    if (productSearchQuery.isNotBlank()) {
-                        filteredProducts = filteredProducts.filter { groupedProduct ->
-                            val product = groupedProduct.baseProduct
-                            product.name.contains(productSearchQuery, ignoreCase = true) ||
-                                    product.description.contains(productSearchQuery, ignoreCase = true) ||
-                                    viewModel.getCategoryName(product.categoryId).contains(productSearchQuery, ignoreCase = true) ||
-                                    viewModel.getMaterialName(product.materialId).contains(productSearchQuery, ignoreCase = true)
-                        }
-                    }
-
-                    filteredProducts
-                } catch (e: Exception) {
-                    println("Error calculating grouped products: ${e.message}")
-                    emptyList()
+    // Load all product images upfront in bulk (like CartBuildingStep)
+    var productImages by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
+    val scope = rememberCoroutineScope()
+    
+    LaunchedEffect(products) {
+        // Batch cache lookups first to avoid multiple recompositions
+        val cachedUpdates = mutableMapOf<String, ImageBitmap>()
+        products.forEach { product ->
+            if (product.images.isNotEmpty() && !productImages.containsKey(product.id)) {
+                val imageUrl = product.images.first()
+                val cachedImage = ImageCache.get(imageUrl)
+                if (cachedImage != null) {
+                    cachedUpdates[product.id] = cachedImage
                 }
             }
+        }
+        // Apply all cached images at once
+        if (cachedUpdates.isNotEmpty()) {
+            productImages = productImages + cachedUpdates
+        }
+        
+        // Load missing images asynchronously (limit concurrent loads to prevent UI lag)
+        val imagesToLoad = products.filter { product ->
+            product.images.isNotEmpty() && 
+            !productImages.containsKey(product.id) && 
+            ImageCache.get(product.images.first()) == null
+        }
+        
+        // Load images in batches to prevent overwhelming the UI thread
+                    scope.launch {
+            imagesToLoad.chunked(5).forEach { batch ->
+                batch.forEach { product ->
+                    val imageUrl = product.images.first()
+                    launch {
+                        try {
+                            val imageBytes = imageLoader.loadImage(imageUrl)
+                            if (imageBytes != null && imageBytes.isNotEmpty()) {
+                                // Decode and resize image to thumbnail size (100px max) to reduce memory usage
+                                val bitmap = withContext(Dispatchers.IO) {
+                                    decodeAndResizeImage(imageBytes, maxSize = 100)
+                                }
+                                if (bitmap != null) {
+                                // Cache the loaded image
+                                ImageCache.put(imageUrl, bitmap)
+                                    // Update state on Main dispatcher to prevent UI lag
+                                    withContext(Dispatchers.Main) {
+                                productImages = productImages + (product.id to bitmap)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Silently fail - will show placeholder
+                        }
+                    }
+                }
+                // Small delay between batches to prevent UI thread blocking
+                delay(50)
+            }
+        }
+    }
+
+    // Cache category and material name lookups for performance
+    val categoryNameMap = remember(categories) {
+        categories.associate { it.id to it.name }
+    }
+    
+    val materialNameMap = remember(materials) {
+        materials.associate { it.id to it.name }
+    }
+
+    // Calculate grouped products efficiently (like CartBuildingStep - use remember instead of derivedStateOf)
+    // Only return empty list if products are empty, not if inventory is loading
+    // This allows products to show even while inventory is still loading
+    val groupedProducts = remember(products, inventoryRefreshTrigger, inventoryData) {
+        if (products.isEmpty()) {
+            emptyList()
+        } else {
+            try {
+                viewModel.getGroupedProducts()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+    }
+    
+    // Filter grouped products (separate from calculation for better performance)
+    // Pre-compute lowercase strings to avoid repeated calls
+    val filteredGroupedProducts = remember(groupedProducts, selectedCategoryId, productSearchQuery, categoryNameMap, materialNameMap) {
+        if (groupedProducts.isEmpty()) {
+            emptyList()
+        } else {
+            var filtered = groupedProducts
+            
+            // Filter by selected category if one is selected
+            if (selectedCategoryId != null) {
+                filtered = filtered.filter { groupedProduct ->
+                    groupedProduct.baseProduct.categoryId == selectedCategoryId
+                }
+            }
+
+            // Filter by search query if one is provided (use cached maps and pre-computed lowercase)
+            if (productSearchQuery.isNotBlank()) {
+                val query = productSearchQuery.lowercase()
+                filtered = filtered.filter { groupedProduct ->
+                    val product = groupedProduct.baseProduct
+                    // Pre-compute lowercase strings once per product
+                    val productNameLower = product.name.lowercase()
+                    val productDescLower = product.description.lowercase()
+                    val categoryNameLower = (categoryNameMap[product.categoryId] ?: "").lowercase()
+                    val materialNameLower = (materialNameMap[product.materialId] ?: "").lowercase()
+                    
+                    productNameLower.contains(query) ||
+                            productDescLower.contains(query) ||
+                            categoryNameLower.contains(query) ||
+                            materialNameLower.contains(query)
+                }
+            }
+            
+            filtered
         }
     }
 
@@ -201,8 +339,9 @@ fun DashboardScreen(
     val showDuplicateDialog = remember { mutableStateOf(false) }
     val productToDuplicate = remember { mutableStateOf<String?>(null) }
 
-    // Loading state - show loading while products or inventory are loading
-    if (loading || inventoryLoading) {
+    // Loading state - only show loading while products are loading (not inventory)
+    // Inventory loading happens in background and products can still be displayed
+    if (loading) {
         Box(
             modifier = Modifier.fillMaxSize(),
             contentAlignment = Alignment.Center
@@ -259,9 +398,7 @@ fun DashboardScreen(
         return
     }
 
-    // Minimal logging for performance
-    println("📊 Dashboard loaded: ${products.size} products, ${groupedProducts.size} grouped")
-    println("🖼️ Image cache: ${ImageCache.size()} images cached")
+    // Removed logging for better performance
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         // Header with title and add button
@@ -344,6 +481,10 @@ fun DashboardScreen(
                 products = products,
                 searchQuery = searchQuery,
                 onCategoryClick = { categoryId ->
+                    // Ensure inventory is loaded before showing products
+                    if (products.isNotEmpty() && !inventoryLoading && inventoryData.isEmpty()) {
+                        viewModel.loadInventoryData()
+                    }
                     selectedCategoryId = categoryId
                     showCategoryView = false
                 }
@@ -405,7 +546,7 @@ fun DashboardScreen(
                 Divider()
 
                 // Table content
-                if (groupedProducts.isEmpty()) {
+                if (filteredGroupedProducts.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxWidth().height(200.dp),
                         contentAlignment = Alignment.Center
@@ -435,27 +576,28 @@ fun DashboardScreen(
                         }
                     }
                 } else {
-                    LazyColumn {
-                        items(groupedProducts) { groupedProduct ->
+                    LazyColumn(
+                        // Optimize LazyColumn for better performance with many items
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(0.dp)
+                    ) {
+                        items(
+                            items = filteredGroupedProducts,
+                            key = { it.baseProduct.id }
+                        ) { groupedProduct ->
                             GroupedProductRow(
                                 groupedProduct = groupedProduct,
+                                productImage = productImages[groupedProduct.baseProduct.id],
                                 viewModel = viewModel,
-                                imageLoader = imageLoader,
                                 metalRates = metalRates,
                                 metalRatesList = metalRatesList,
+                                categoryName = categoryNameMap[groupedProduct.baseProduct.categoryId] ?: "",
+                                materialName = materialNameMap[groupedProduct.baseProduct.materialId] ?: "",
                                 onDelete = {
                                     // For grouped products, delete all products in the group except parent
-                                    println("🗑️ DASHBOARD: Delete button clicked")
-                                    println("   - Product ID: ${groupedProduct.baseProduct.id}")
-                                    println("   - Product Name: ${groupedProduct.baseProduct.name}")
-                                    println("   - Common ID: ${groupedProduct.commonId}")
-                                    println("   - Quantity: ${groupedProduct.quantity}")
-                                    println("   - Current dialog state: ${showDeleteDialog.value}")
                                     productToDelete.value = groupedProduct.baseProduct.id
                                     groupedProductToDelete.value = groupedProduct
                                     showDeleteDialog.value = true
-                                    println("   - Dialog state set to: ${showDeleteDialog.value}")
-                                    println("   - Delete dialog should be shown")
                                 },
                                 onClick = {
                                     // For grouped products, show details of the first product
@@ -477,9 +619,7 @@ fun DashboardScreen(
     }
 
     // Delete confirmation dialog
-    println("🔍 DIALOG STATE CHECK: showDeleteDialog = ${showDeleteDialog.value}")
     if (showDeleteDialog.value) {
-        println("🗑️ DELETE DIALOG IS SHOWING")
         AlertDialog(
             onDismissRequest = {
                 showDeleteDialog.value = false
@@ -498,18 +638,14 @@ fun DashboardScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        println("🗑️ DASHBOARD: Delete confirmed in dialog")
                         groupedProductToDelete.value?.let { groupedProduct ->
-                            println("   - Calling deleteGroupedProduct for: ${groupedProduct.baseProduct.name}")
                             viewModel.deleteGroupedProduct(groupedProduct)
                         } ?: productToDelete.value?.let { productId ->
-                            println("   - Calling deleteProduct for ID: $productId")
                             viewModel.deleteProduct(productId)
                         }
                         showDeleteDialog.value = false
                         productToDelete.value = null
                         groupedProductToDelete.value = null
-                        println("   - Delete dialog closed")
                     },
                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.Red)
                 ) {
@@ -551,10 +687,12 @@ fun DashboardScreen(
 @Composable
 private fun GroupedProductRow(
     groupedProduct: GroupedProduct,
+    productImage: ImageBitmap?,
     viewModel: ProductsViewModel,
-    imageLoader: ImageLoader,
     metalRates: org.example.project.data.MetalRates,
     metalRatesList: List<org.example.project.data.MetalRate>,
+    categoryName: String,
+    materialName: String,
     onClick: () -> Unit,
     onDelete: () -> Unit,
     onEditBarcode: (String) -> Unit,
@@ -562,23 +700,6 @@ private fun GroupedProductRow(
     onDuplicateProduct: (String) -> Unit
 ) {
     val product = groupedProduct.baseProduct
-    var productImage by remember { mutableStateOf<ImageBitmap?>(null) }
-
-    // Load product image
-    LaunchedEffect(product.images) {
-        if (product.images.isNotEmpty()) {
-            try {
-                val imageBytes = imageLoader.loadImage(product.images.first())
-                if (imageBytes != null && imageBytes.isNotEmpty()) {
-                    productImage = withContext(Dispatchers.IO) {
-                        Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
-                    }
-                }
-            } catch (e: Exception) {
-                println("Failed to load product image: ${e.message}")
-            }
-        }
-    }
 
     Row(
         modifier = Modifier
@@ -593,16 +714,16 @@ private fun GroupedProductRow(
             modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterStart
         ) {
-            if (productImage != null) {
+            productImage?.let { image ->
                 Image(
-                    bitmap = productImage!!,
+                    bitmap = image,
                     contentDescription = product.name,
                     modifier = Modifier
                         .size(50.dp)
                         .clip(RoundedCornerShape(4.dp)),
                     contentScale = ContentScale.Crop
                 )
-            } else {
+            } ?: run {
                 Box(
                     modifier = Modifier
                         .size(50.dp)
@@ -627,35 +748,43 @@ private fun GroupedProductRow(
             modifier = Modifier.weight(2f)
         )
 
-        // Category
+        // Category (use cached name to avoid expensive lookups)
         Text(
-            text = viewModel.getCategoryName(product.categoryId),
+            text = categoryName,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1.5f)
         )
 
-        // Material
+        // Material (use cached name to avoid expensive lookups)
         Text(
-            text = viewModel.getMaterialName(product.materialId),
+            text = materialName,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1.5f)
         )
 
         // Price - Always compute dynamic price; optionally show custom price as secondary
-        val dynamicPrice = remember(product.id, product.totalWeight, product.lessWeight, product.defaultMakingRate, product.cwWeight, product.stoneRate, product.stoneQuantity, product.vaCharges, metalRatesList) {
+        // lessWeight removed from Product, using 0.0 as default
+        val firstStone = product.stones.firstOrNull()
+        val dynamicPrice = remember(product.id, product.totalWeight, product.stoneWeight, firstStone?.rate, firstStone?.quantity, product.labourCharges, metalRatesList) {
             try {
-                val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
+                val lessWeight = 0.0 // lessWeight removed from Product
+                val netWeight = (product.totalWeight - lessWeight).coerceAtLeast(0.0)
                 val materialRate = getMaterialRateForProduct(product, metalRatesList)
                 val baseAmount = netWeight * materialRate
-                val makingCharges = netWeight * product.defaultMakingRate
-                val stoneAmount = if (product.hasStones && product.cwWeight > 0 && product.stoneRate > 0) {
-                    product.stoneRate * product.stoneQuantity * product.cwWeight
+                val makingCharges = 0.0 // defaultMakingRate removed from Product
+                // Calculate stone amount from stones array
+                val stoneAmount = if (product.hasStones && product.stones.isNotEmpty()) {
+                    product.stones.sumOf { stone ->
+                        if (stone.weight > 0 && stone.rate > 0) {
+                            stone.rate * (stone.quantity.takeIf { it > 0 } ?: 1.0) * stone.weight
+                        } else stone.amount
+                    }
                 } else 0.0
-                baseAmount + makingCharges + stoneAmount + product.vaCharges
+                // Use labourCharges instead of vaCharges
+                baseAmount + makingCharges + stoneAmount + product.labourCharges
             } catch (e: Exception) {
-                println("Error calculating price for ${product.name}: ${e.message}")
                 0.0
             }
         }
@@ -709,12 +838,6 @@ private fun GroupedProductRow(
             Row(
                 modifier = Modifier
                     .clickable {
-                        println("📋 BARCODE DROPDOWN OPENED")
-                        println("   - Product Name: ${groupedProduct.baseProduct.name}")
-                        println("   - Product ID: ${groupedProduct.baseProduct.id}")
-                        println("   - Barcode Count: ${groupedProduct.barcodeIds.size}")
-                        println("   - Barcodes: ${groupedProduct.barcodeIds}")
-                        println("   - Timestamp: ${System.currentTimeMillis()}")
                         expanded = true
                     }
                     .padding(vertical = 4.dp),
@@ -737,9 +860,6 @@ private fun GroupedProductRow(
             DropdownMenu(
                 expanded = expanded,
                 onDismissRequest = {
-                    println("📋 BARCODE DROPDOWN DISMISSED")
-                    println("   - Product Name: ${groupedProduct.baseProduct.name}")
-                    println("   - Timestamp: ${System.currentTimeMillis()}")
                     expanded = false
                 },
                 modifier = Modifier.widthIn(min = 180.dp, max = 200.dp)
@@ -768,11 +888,6 @@ private fun GroupedProductRow(
                     // Edit option
                     DropdownMenuItem(
                         onClick = {
-                            println("✏️ BARCODE EDIT CLICKED")
-                            println("   - Barcode ID: $barcode")
-                            println("   - Product Name: ${groupedProduct.baseProduct.name}")
-                            println("   - Product ID: ${groupedProduct.baseProduct.id}")
-                            println("   - Timestamp: ${System.currentTimeMillis()}")
                             expanded = false
                             onEditBarcode(barcode)
                         }
@@ -799,12 +914,6 @@ private fun GroupedProductRow(
                     // Delete option
                     DropdownMenuItem(
                         onClick = {
-                            println("🗑️ BARCODE DELETE CLICKED")
-                            println("   - Barcode ID: $barcode")
-                            println("   - Product Name: ${groupedProduct.baseProduct.name}")
-                            println("   - Product ID: ${groupedProduct.baseProduct.id}")
-                            println("   - All Barcodes: ${groupedProduct.barcodeIds}")
-                            println("   - Timestamp: ${System.currentTimeMillis()}")
                             expanded = false
                             onDeleteBarcode(barcode)
                         }
@@ -860,12 +969,7 @@ private fun GroupedProductRow(
                 // Delete button
                 IconButton(
                     onClick = {
-                        println("🗑️ DELETE BUTTON CLICKED - DIRECT CLICK DETECTED")
-                        println("   - Product ID: ${product.id}")
-                        println("   - Product Name: ${product.name}")
-                        println("   - Calling onDelete callback")
                         onDelete()
-                        println("   - onDelete callback completed")
                     },
                     modifier = Modifier.size(24.dp)
                 ) {
@@ -891,26 +995,39 @@ fun ProductRow(
     onClick: () -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
+    val categories = viewModel.categories.value
+    val materials = viewModel.materials.value
     var productImage by remember { mutableStateOf<ImageBitmap?>(null) }
 
     // Load the first image if available
     LaunchedEffect(product.images) {
         if (product.images.isNotEmpty()) {
             val imageUrl = product.images.first()
+            // Check cache first
+            val cachedImage = ImageCache.get(imageUrl)
+            if (cachedImage != null) {
+                productImage = cachedImage
+            } else {
             coroutineScope.launch {
                 val imageBytes = imageLoader.loadImage(imageUrl)
                 if (imageBytes != null && imageBytes.isNotEmpty()) {
                     try {
+                            // Decode and resize image to thumbnail size (100px max) to reduce memory usage
                         val image = withContext(Dispatchers.IO) {
-                            Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
+                                decodeAndResizeImage(imageBytes, maxSize = 100)
                         }
+                            if (image != null) {
+                                // Cache the loaded image
+                                ImageCache.put(imageUrl, image)
+                                // Update state on Main dispatcher to prevent UI lag
+                                withContext(Dispatchers.Main) {
                         productImage = image
+                                }
+                            }
                     } catch (e: Exception) {
-                        println("Failed to decode image: $imageUrl - ${e.message}")
                         // Keep null to show placeholder
+                        }
                     }
-                } else {
-                    println("Failed to load image: $imageUrl - no data or empty data")
                 }
             }
         }
@@ -929,16 +1046,16 @@ fun ProductRow(
             modifier = Modifier.weight(1f),
             contentAlignment = Alignment.CenterStart
         ) {
-            if (productImage != null) {
+            productImage?.let { image ->
                 Image(
-                    bitmap = productImage!!,
+                    bitmap = image,
                     contentDescription = product.name,
                     modifier = Modifier
                         .size(50.dp)
                         .clip(RoundedCornerShape(4.dp)),
                     contentScale = ContentScale.Crop
                 )
-            } else {
+            } ?: run {
                 Box(
                     modifier = Modifier
                         .size(50.dp)
@@ -980,18 +1097,26 @@ fun ProductRow(
         )
 
         // Price - Always compute dynamic price; optionally show custom price as secondary
-        val dynamicPrice = remember(product.id, product.totalWeight, product.lessWeight, product.defaultMakingRate, product.cwWeight, product.stoneRate, product.stoneQuantity, product.vaCharges, metalRatesList) {
+        // lessWeight removed from Product, using 0.0 as default
+        val firstStone = product.stones.firstOrNull()
+        val dynamicPrice = remember(product.id, product.totalWeight, product.stoneWeight, firstStone?.rate, firstStone?.quantity, product.labourCharges, metalRatesList) {
             try {
-                val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
+                val lessWeight = 0.0 // lessWeight removed from Product
+                val netWeight = (product.totalWeight - lessWeight).coerceAtLeast(0.0)
                 val materialRate = getMaterialRateForProduct(product, metalRatesList)
                 val baseAmount = netWeight * materialRate
-                val makingCharges = netWeight * product.defaultMakingRate
-                val stoneAmount = if (product.hasStones && product.cwWeight > 0 && product.stoneRate > 0) {
-                    product.stoneRate * product.stoneQuantity * product.cwWeight
+                val makingCharges = 0.0 // defaultMakingRate removed from Product
+                // Calculate stone amount from stones array
+                val stoneAmount = if (product.hasStones && product.stones.isNotEmpty()) {
+                    product.stones.sumOf { stone ->
+                        if (stone.weight > 0 && stone.rate > 0) {
+                            stone.rate * (stone.quantity.takeIf { it > 0 } ?: 1.0) * stone.weight
+                        } else stone.amount
+                    }
                 } else 0.0
-                baseAmount + makingCharges + stoneAmount + product.vaCharges
+                // Use labourCharges instead of vaCharges
+                baseAmount + makingCharges + stoneAmount + product.labourCharges
             } catch (e: Exception) {
-                println("Error calculating price for ${product.name}: ${e.message}")
                 0.0
             }
         }
@@ -1258,6 +1383,74 @@ private fun CategoryCardsView(
     searchQuery: String,
     onCategoryClick: (String) -> Unit
 ) {
+    // Load all category images upfront in bulk (like product images)
+    var categoryImages by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
+    val scope = rememberCoroutineScope()
+    
+    LaunchedEffect(categories) {
+        // Batch cache lookups first to avoid multiple recompositions
+        val cachedUpdates = mutableMapOf<String, ImageBitmap>()
+        categories.forEach { category ->
+            if (category.imageUrl.isNotEmpty() && !categoryImages.containsKey(category.id)) {
+                val imageUrl = category.imageUrl
+                val cachedImage = ImageCache.get(imageUrl)
+                if (cachedImage != null) {
+                    cachedUpdates[category.id] = cachedImage
+                }
+            }
+        }
+        // Apply all cached images at once
+        if (cachedUpdates.isNotEmpty()) {
+            categoryImages = categoryImages + cachedUpdates
+        }
+        
+        // Load missing images asynchronously (limit concurrent loads to prevent UI lag)
+        val categoriesToLoad = categories.filter { category ->
+            category.imageUrl.isNotEmpty() && 
+            !categoryImages.containsKey(category.id) && 
+            ImageCache.get(category.imageUrl) == null
+        }
+        
+        // Load images in batches to prevent overwhelming the UI thread
+                    scope.launch {
+            categoriesToLoad.chunked(5).forEach { batch ->
+                batch.forEach { category ->
+                    val imageUrl = category.imageUrl
+                    launch {
+                        try {
+                            // Load image bytes first
+                            val imageBytes = withContext(Dispatchers.IO) {
+                                try {
+                                    URL(imageUrl).openStream().readBytes()
+                                } catch (e: Exception) {
+                                    null
+                                }
+                            }
+                            if (imageBytes != null && imageBytes.isNotEmpty()) {
+                                // Decode and resize image to thumbnail size (100px max) to reduce memory usage
+                            val loadedBitmap = withContext(Dispatchers.IO) {
+                                    decodeAndResizeImage(imageBytes, maxSize = 100)
+                            }
+                            if (loadedBitmap != null) {
+                                // Cache the loaded image
+                                ImageCache.put(imageUrl, loadedBitmap)
+                                    // Update state on Main dispatcher to prevent UI lag
+                                    withContext(Dispatchers.Main) {
+                                categoryImages = categoryImages + (category.id to loadedBitmap)
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Silently fail - will show placeholder
+                        }
+                    }
+                }
+                // Small delay between batches to prevent UI thread blocking
+                delay(50)
+            }
+        }
+    }
+
     // Filter categories based on search query
     val filteredCategories = remember(categories, searchQuery) {
         if (searchQuery.isBlank()) {
@@ -1270,10 +1463,12 @@ private fun CategoryCardsView(
         }
     }
 
-    // Calculate product count for each filtered category
+    // Calculate product count for each filtered category efficiently
     val categoryProductCounts = remember(filteredCategories, products) {
+        // Pre-compute product counts by category ID for O(1) lookup
+        val productCountByCategoryId = products.groupingBy { it.categoryId }.eachCount()
         filteredCategories.associateWith { category: Category ->
-            products.count { product: Product -> product.categoryId == category.id }
+            productCountByCategoryId[category.id] ?: 0
         }
     }
 
@@ -1312,62 +1507,74 @@ private fun CategoryCardsView(
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        items(filteredCategories) { category: Category ->
+        items(
+            items = filteredCategories,
+            key = { it.id }
+        ) { category: Category ->
             CategoryCard(
                 category = category,
                 productCount = categoryProductCounts[category] ?: 0,
+                categoryImage = categoryImages[category.id],
                 onClick = { onCategoryClick(category.id) }
             )
         }
     }
 }
 
+// Shared gradients created once outside composable to avoid recreation
+private val categoryCardBackgroundGradient = Brush.verticalGradient(
+    colors = listOf(
+        Color(0xFFF8F9FA),
+        Color(0xFFFFFFFF)
+    ),
+    startY = 0f,
+    endY = Float.POSITIVE_INFINITY
+)
+
+private val categoryCardImageBackgroundGradient = Brush.radialGradient(
+    colors = listOf(
+        Color(0xFFB8973D).copy(alpha = 0.15f),
+        Color(0xFFB8973D).copy(alpha = 0.05f)
+    ),
+    radius = 50f
+)
+
+private val categoryCardImageBorderGradient = Brush.linearGradient(
+    colors = listOf(
+        Color(0xFFB8973D).copy(alpha = 0.3f),
+        Color(0xFFB8973D).copy(alpha = 0.1f)
+    )
+)
+
+private val categoryCardBadgeGradient = Brush.linearGradient(
+    colors = listOf(
+        Color(0xFFB8973D).copy(alpha = 0.1f),
+        Color(0xFFD4AF37).copy(alpha = 0.1f)
+    )
+)
+
+private val categoryCardBorderGlowGradient = Brush.linearGradient(
+    colors = listOf(
+        Color(0xFFB8973D).copy(alpha = 0.2f),
+        Color.Transparent,
+        Color(0xFFB8973D).copy(alpha = 0.2f)
+    )
+)
+
+private val categoryCardFallbackGradient = Brush.linearGradient(
+    colors = listOf(
+        Color(0xFFB8973D),
+        Color(0xFFD4AF37)
+    )
+)
+
 @Composable
 private fun CategoryCard(
     category: Category,
     productCount: Int,
+    categoryImage: ImageBitmap?,
     onClick: () -> Unit
 ) {
-    var imageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var isLoading by remember { mutableStateOf(true) }
-    var hasError by remember { mutableStateOf(false) }
-
-    // Load image asynchronously with caching
-    LaunchedEffect(category.imageUrl) {
-        if (category.imageUrl.isNotEmpty()) {
-            // Check cache first
-            val cachedImage = ImageCache.get(category.imageUrl)
-            if (cachedImage != null) {
-                imageBitmap = cachedImage
-                isLoading = false
-                hasError = false
-                println("✅ Using cached image for category: ${category.name}")
-                return@LaunchedEffect
-            }
-
-            // Load from URL if not in cache
-            try {
-                val loadedBitmap = withContext(Dispatchers.IO) {
-                    ImageIO.read(URL(category.imageUrl))?.toComposeImageBitmap()
-                }
-                if (loadedBitmap != null) {
-                    // Cache the loaded image
-                    ImageCache.put(category.imageUrl, loadedBitmap)
-                    imageBitmap = loadedBitmap
-                    hasError = false
-                    println("✅ Loaded and cached image for category: ${category.name}")
-                } else {
-                    hasError = true
-                }
-            } catch (e: Exception) {
-                println("❌ Error loading category image: ${e.message}")
-                hasError = true
-            }
-        } else {
-            hasError = true
-        }
-        isLoading = false
-    }
 
     Card(
         modifier = Modifier
@@ -1386,14 +1593,7 @@ private fun CategoryCard(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFFF8F9FA),
-                                Color(0xFFFFFFFF)
-                            ),
-                            startY = 0f,
-                            endY = Float.POSITIVE_INFINITY
-                        ),
+                        brush = categoryCardBackgroundGradient,
                         shape = RoundedCornerShape(20.dp)
                     )
             )
@@ -1410,75 +1610,49 @@ private fun CategoryCard(
                     modifier = Modifier
                         .size(80.dp)
                         .background(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    Color(0xFFB8973D).copy(alpha = 0.15f),
-                                    Color(0xFFB8973D).copy(alpha = 0.05f)
-                                ),
-                                radius = 50f
-                            ),
+                            brush = categoryCardImageBackgroundGradient,
                             shape = RoundedCornerShape(20.dp)
                         )
                         .border(
                             width = 2.dp,
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    Color(0xFFB8973D).copy(alpha = 0.3f),
-                                    Color(0xFFB8973D).copy(alpha = 0.1f)
-                                )
-                            ),
+                            brush = categoryCardImageBorderGradient,
                             shape = RoundedCornerShape(20.dp)
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    when {
-                        isLoading -> {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(28.dp),
-                                color = Color(0xFFB8973D),
-                                strokeWidth = 3.dp
-                            )
-                        }
-                        imageBitmap != null && !hasError -> {
-                            Image(
-                                bitmap = imageBitmap!!,
-                                contentDescription = category.name,
-                                modifier = Modifier
-                                    .size(76.dp)
-                                    .clip(RoundedCornerShape(18.dp)),
-                                contentScale = ContentScale.Crop
-                            )
-                        }
-                        else -> {
-                            // Elegant fallback with gradient text
-                            Box(
-                                modifier = Modifier
-                                    .size(76.dp)
-                                    .background(
-                                        brush = Brush.linearGradient(
-                                            colors = listOf(
-                                                Color(0xFFB8973D),
-                                                Color(0xFFD4AF37)
-                                            )
-                                        ),
-                                        shape = RoundedCornerShape(18.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = category.name.take(2).uppercase(),
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    style = TextStyle(
-                                        shadow = Shadow(
-                                            color = Color.Black.copy(alpha = 0.3f),
-                                            offset = Offset(1f, 1f),
-                                            blurRadius = 2f
-                                        )
+                    categoryImage?.let { image ->
+                        Image(
+                            bitmap = image,
+                            contentDescription = category.name,
+                            modifier = Modifier
+                                .size(76.dp)
+                                .clip(RoundedCornerShape(18.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    } ?: run {
+                        // Elegant fallback with gradient text
+                        Box(
+                            modifier = Modifier
+                                .size(76.dp)
+                                .background(
+                                    brush = categoryCardFallbackGradient,
+                                    shape = RoundedCornerShape(18.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = category.name.take(2).uppercase(),
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White,
+                                style = TextStyle(
+                                    shadow = Shadow(
+                                        color = Color.Black.copy(alpha = 0.3f),
+                                        offset = Offset(1f, 1f),
+                                        blurRadius = 2f
                                     )
                                 )
-                            }
+                            )
                         }
                     }
                 }
@@ -1505,12 +1679,7 @@ private fun CategoryCard(
                 Box(
                     modifier = Modifier
                         .background(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    Color(0xFFB8973D).copy(alpha = 0.1f),
-                                    Color(0xFFD4AF37).copy(alpha = 0.1f)
-                                )
-                            ),
+                            brush = categoryCardBadgeGradient,
                             shape = RoundedCornerShape(12.dp)
                         )
                         .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -1531,13 +1700,7 @@ private fun CategoryCard(
                     .fillMaxSize()
                     .border(
                         width = 1.dp,
-                        brush = Brush.linearGradient(
-                            colors = listOf(
-                                Color(0xFFB8973D).copy(alpha = 0.2f),
-                                Color.Transparent,
-                                Color(0xFFB8973D).copy(alpha = 0.2f)
-                            )
-                        ),
+                        brush = categoryCardBorderGlowGradient,
                         shape = RoundedCornerShape(20.dp)
                     )
             )
@@ -1548,6 +1711,7 @@ private fun CategoryCard(
 /**
  * Get material rate for a product based on material and type
  * Uses dynamic metal rates from MetalRateViewModel (same as billing screen)
+ * Note: No caching here as remember() in the composable already handles memoization
  */
 private fun getMaterialRateForProduct(product: Product, metalRatesList: List<org.example.project.data.MetalRate>): Double {
     val karat = extractKaratFromMaterialType(product.materialType)

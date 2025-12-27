@@ -3,11 +3,14 @@ package org.example.project.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -26,9 +29,11 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextRange
@@ -43,11 +48,15 @@ import org.example.project.data.MetalRatesManager
 import org.example.project.viewModels.MetalRateViewModel
 import org.example.project.ui.AutoCompleteTextField
 import org.example.project.data.InventoryItem
-import org.example.project.data.InventoryStatus
 import org.example.project.data.ThemedCollection
 import org.example.project.data.ThemedCollectionRepository
 import org.example.project.data.FirestoreThemedCollectionRepository
+import org.example.project.data.ProductMaterial
+import org.example.project.data.Material
 import kotlinx.coroutines.launch
+import org.example.project.ui.ProductPriceCalculatorComposable
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
 
 // Helper function to extract karat from material type
 fun extractKaratFromMaterialType(materialType: String): Int {
@@ -101,6 +110,16 @@ fun AddEditProductScreen(
     val scope = rememberCoroutineScope()
     var isSaving by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    val enterMovesFocusModifier = remember(focusManager) {
+        Modifier.onPreviewKeyEvent { event ->
+            if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
+                focusManager.moveFocus(FocusDirection.Down)
+                true
+            } else {
+                false
+            }
+        }
+    }
 
     // Collection state
     val collectionRepository = remember { FirestoreThemedCollectionRepository(JewelryAppInitializer.getFirestore()) }
@@ -170,23 +189,33 @@ fun AddEditProductScreen(
     var categoryId by remember { mutableStateOf(product.categoryId) }
     var materialId by remember { mutableStateOf(product.materialId ?: "") }
     var materialType by remember { mutableStateOf(product.materialType ?: "") }
+    var materialName by remember { mutableStateOf(product.materialName ?: "") }
+    var showAddMaterialDialog by remember { mutableStateOf(false) }
 
     // Display values for autocomplete fields
-    var materialDisplayValue by remember { mutableStateOf(materials.find { it.id == materialId }?.name ?: "") }
+    var materialDisplayValue by remember { mutableStateOf(materialName.ifEmpty { materials.find { it.id == materialId }?.name ?: "" }) }
     var materialTypeDisplayValue by remember { mutableStateOf(materialType) }
     var categoryDisplayValue by remember { mutableStateOf(categories.find { it.id == categoryId }?.name ?: "") }
     var quantity by remember { mutableStateOf(if (product.quantity > 0) product.quantity else 1) }
     var barcodeDigits by remember { mutableStateOf("12") }
     var totalWeight by remember { mutableStateOf(if (product.totalWeight > 0) product.totalWeight.toString() else "") }
-    var defaultMakingRate by remember { mutableStateOf(if (product.defaultMakingRate > 0) product.defaultMakingRate.toString() else "") }
-    var isOtherThanGold by remember { mutableStateOf(product.isOtherThanGold) }
-    var lessWeight by remember { mutableStateOf(if (product.lessWeight > 0) product.lessWeight.toString() else "") }
     var hasStones by remember { mutableStateOf(product.hasStones) }
-    var stoneName by remember { mutableStateOf(product.stoneName) }
-    var stoneQuantity by remember { mutableStateOf(if (product.stoneQuantity > 0) product.stoneQuantity.toString() else "") }
-    var stoneRate by remember { mutableStateOf(if (product.stoneRate > 0) product.stoneRate.toString() else "") }
-    var cwWeight by remember { mutableStateOf(if (product.cwWeight > 0) product.cwWeight.toString() else "") }
-    var vaCharges by remember { mutableStateOf(if (product.vaCharges > 0) product.vaCharges.toString() else "") }
+    // Manage stones array
+    var productStones by remember { mutableStateOf(product.stones) }
+    // Use first stone from array for backward compatibility with UI fields
+    val firstStone = productStones.firstOrNull()
+    var stoneName by remember { mutableStateOf(firstStone?.name ?: "") }
+    var stonePurity by remember { mutableStateOf(firstStone?.purity ?: "") }
+    var stoneQuantity by remember { mutableStateOf(if ((firstStone?.quantity ?: 0.0) > 0) firstStone?.quantity.toString() ?: "" else "") }
+    var stoneRate by remember { mutableStateOf(if ((firstStone?.rate ?: 0.0) > 0) firstStone?.rate.toString() ?: "" else "") }
+    var cwWeight by remember { mutableStateOf(if ((firstStone?.weight ?: 0.0) > 0) firstStone?.weight.toString() ?: "" else "") }
+    var materialWeight by remember { mutableStateOf(if (product.materialWeight > 0) product.materialWeight.toString() else "") }
+    var stoneWeight by remember { mutableStateOf(if (product.stoneWeight > 0) product.stoneWeight.toString() else "") }
+    var makingPercent by remember { mutableStateOf(if (product.makingPercent > 0) product.makingPercent.toString() else "") }
+    var labourCharges by remember { mutableStateOf(if (product.labourCharges > 0) product.labourCharges.toString() else "") }
+    var effectiveWeight by remember { mutableStateOf(if (product.effectiveWeight > 0) product.effectiveWeight.toString() else "") }
+    var effectiveMetalWeight by remember { mutableStateOf(if (product.effectiveMetalWeight > 0) product.effectiveMetalWeight.toString() else "") }
+    var labourRate by remember { mutableStateOf(if (product.labourRate > 0) product.labourRate.toString() else "") }
     var available by remember { mutableStateOf(product.available) }
     var featured by remember { mutableStateOf(product.featured) }
     var isCollectionProduct by remember { mutableStateOf(product.isCollectionProduct) }
@@ -204,136 +233,97 @@ fun AddEditProductScreen(
     var showQuantity by remember { mutableStateOf(product.show.quantity) }
     var showTotalWeight by remember { mutableStateOf(product.show.totalWeight) }
     var showPrice by remember { mutableStateOf(product.show.price) }
-    var showDefaultMakingRate by remember { mutableStateOf(product.show.defaultMakingRate) }
-    var showVaCharges by remember { mutableStateOf(product.show.vaCharges) }
-    var showIsOtherThanGold by remember { mutableStateOf(product.show.isOtherThanGold) }
-    var showLessWeight by remember { mutableStateOf(product.show.lessWeight) }
     var showHasStones by remember { mutableStateOf(product.show.hasStones) }
-    var showStoneName by remember { mutableStateOf(product.show.stoneName) }
-    var showStoneQuantity by remember { mutableStateOf(product.show.stoneQuantity) }
-    var showStoneAmount by remember { mutableStateOf(product.show.stoneAmount) }
-    var showStoneRate by remember { mutableStateOf(product.show.stoneRate) }
-    var showCwWeight by remember { mutableStateOf(product.show.cwWeight) }
-    var showNetWeight by remember { mutableStateOf(product.show.netWeight) }
-    var showTotalProductCost by remember { mutableStateOf(product.show.totalProductCost) }
+    var showStones by remember { mutableStateOf(product.show.stones) }
     var showCustomPrice by remember { mutableStateOf(product.show.customPrice) }
+    var showMaterialWeight by remember { mutableStateOf(product.show.materialWeight) }
+    var showStoneWeight by remember { mutableStateOf(product.show.stoneWeight) }
+    var showMakingPercent by remember { mutableStateOf(product.show.makingPercent) }
+    var showLabourCharges by remember { mutableStateOf(product.show.labourCharges) }
+    var showEffectiveWeight by remember { mutableStateOf(product.show.effectiveWeight) }
+    var showEffectiveMetalWeight by remember { mutableStateOf(product.show.effectiveMetalWeight) }
+    var showLabourRate by remember { mutableStateOf(product.show.labourRate) }
     var showImages by remember { mutableStateOf(product.show.images) }
     var showAvailable by remember { mutableStateOf(product.show.available) }
     var showFeatured by remember { mutableStateOf(product.show.featured) }
     var showIsCollectionProduct by remember { mutableStateOf(product.show.isCollectionProduct) }
     var showCollectionId by remember { mutableStateOf(product.show.collectionId) }
 
-    // Keep visibility flags consistent with hasCustomPrice selection
-    LaunchedEffect(hasCustomPrice) {
-        if (hasCustomPrice) {
-            // When using custom price, hide total product cost and show custom price field
-            showTotalProductCost = false
-            showCustomPrice = true
-        } else {
-            // When not using custom price, hide custom price field and show total product cost
-            showCustomPrice = false
-            showTotalProductCost = true
-        }
-    }
 
-    // Calculated values
-    val netWeight = remember(totalWeight, lessWeight) {
-        val total = totalWeight.toDoubleOrNull() ?: 0.0
-        val less = lessWeight.toDoubleOrNull() ?: 0.0
-        total - less
+    // Extract kundan/jarkan stones from productStones
+    val kundanStones = remember(productStones) {
+        productStones.filter { it.name.equals("Kundan", ignoreCase = true) }
     }
-
-    val netWeightAfterCW = remember(netWeight, cwWeight) {
-        val net = netWeight
-        val cw = cwWeight.toDoubleOrNull() ?: 0.0
-        net - cw
+    
+    val jarkanStones = remember(productStones) {
+        productStones.filter { it.name.equals("Jarkan", ignoreCase = true) }
     }
-
-    val totalProductCost = remember(totalWeight, lessWeight, defaultMakingRate, vaCharges, cwWeight, materialRate, stoneRate, stoneQuantity, hasStones) {
+    
+    // Prepare inputs for price calculator
+    val priceCalculatorInputs = remember(
+        totalWeight,
+        materialId,
+        materialType,
+        materialName,
+        materialWeight,
+        kundanStones,
+        jarkanStones,
+        makingPercent,
+        labourRate,
+        metalRateViewModel
+    ) {
         val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
-        val lessWeightValue = lessWeight.toDoubleOrNull() ?: 0.0
-        val netWeight = (totalWeightValue - lessWeightValue).coerceAtLeast(0.0)
-        val makingRate = defaultMakingRate.toDoubleOrNull() ?: 0.0
-        val va = vaCharges.toDoubleOrNull() ?: 0.0
-        val cw = cwWeight.toDoubleOrNull() ?: 0.0
-
-        // Material cost (net weight × material rate)
-        val materialCost = netWeight * (materialRate.toDoubleOrNull() ?: 0.0)
-
-        // Making charges (net weight × making rate)
-        val makingCharges = netWeight * makingRate
-
-        // Stone amount (if has stones)
-        val stoneAmount = if (hasStones) {
-            val stoneRateValue = stoneRate.toDoubleOrNull() ?: 0.0
-            val stoneQuantityValue = stoneQuantity.toDoubleOrNull() ?: 0.0
-            if (cw > 0 && stoneRateValue > 0 && stoneQuantityValue > 0) {
-                cw * stoneRateValue * stoneQuantityValue
-            } else 0.0
-        } else 0.0
-
-        // Total = Material Cost + Making Charges + Stone Amount + VA Charges
-        materialCost + makingCharges + stoneAmount + va
-    }
-
-    // Auto-calculate material rate when material/type or rates change
-    LaunchedEffect(materialId, materialType, metalRates) {
-        if (materialId.isNotEmpty() && materialType.isNotEmpty()) {
-            // Extract karat from material type (e.g., "18K" -> 18, "22K" -> 22)
-            val karat = extractKaratFromMaterialType(materialType)
-
-            val calculatedRate = metalRateViewModel.calculateRateForMaterial(
-                materialId,
-                materialType,
-                karat
-            )
-            if (calculatedRate > 0) {
-                materialRate = String.format("%.2f", calculatedRate)
-                println("💰 Auto-calculated material rate: $calculatedRate for $materialType ($karat K)")
-            } else {
-                // Try to find any rate for this material and calculate based on karat
-                val fallbackRate = findFallbackRateForMaterial(metalRateViewModel, materialId, karat)
-                if (fallbackRate > 0) {
-                    materialRate = String.format("%.2f", fallbackRate)
-                    println("💰 Fallback calculated material rate: $fallbackRate for $materialType ($karat K)")
-                } else {
-                    // Final fallback: use global MetalRatesManager (live gold/silver rates)
-                    val selectedMaterialName = materials.find { it.id == materialId }?.name ?: ""
-                    val globalRates = MetalRatesManager.metalRates.value
-                    val globalRate = when {
-                        selectedMaterialName.contains("gold", ignoreCase = true) || materialType.contains("K", ignoreCase = true) -> {
-                            globalRates.getGoldRateForKarat(karat)
-                        }
-                        selectedMaterialName.contains("silver", ignoreCase = true) || materialType.contains("999") -> {
-                            globalRates.getSilverRateForPurity(999)
-                        }
-                        else -> 0.0
-                    }
-                    if (globalRate > 0) {
-                        materialRate = String.format("%.2f", globalRate)
-                        println("🌐 Global rates fallback used: $globalRate for $materialType ($karat K)")
-                    } else {
-                        // If no rate found, clear the field to show user needs to enter manually
-                        if (materialRate.isEmpty()) {
-                            materialRate = ""
-                            println("⚠️ No rate found for $materialType, please enter manually")
-                        }
-                    }
-                }
+        val metalPurity = materialType
+        val metalWeightValue = materialWeight.toDoubleOrNull() ?: totalWeightValue
+        
+        // Fetch metal rate using materialId and materialType
+        val metalRatePerGram = if (materialId.isNotEmpty() && materialType.isNotEmpty()) {
+            try {
+                val karat = extractKaratFromMaterialType(materialType)
+                val metalRate = metalRateViewModel.calculateRateForMaterial(materialId, materialType, karat)
+                metalRate
+            } catch (e: Exception) {
+                println("⚠️ Error fetching metal rate: ${e.message}")
+                0.0
             }
+        } else {
+            0.0
         }
+        
+        // Sum all Kundan prices and weights from stones array
+        val kundanPrice = kundanStones.sumOf { it.amount }
+        val kundanWeight = kundanStones.sumOf { it.weight }
+        
+        // Sum all Jarkan prices and weights from stones array
+        val jarkanPrice = jarkanStones.sumOf { it.amount }
+        val jarkanWeight = jarkanStones.sumOf { it.weight }
+        
+        ProductPriceInputs(
+            grossWeight = totalWeightValue,
+            goldPurity = metalPurity,
+            goldWeight = metalWeightValue,
+            makingPercentage = makingPercent.toDoubleOrNull() ?: 0.0,
+            labourRatePerGram = labourRate.toDoubleOrNull() ?: 0.0,
+            kundanPrice = kundanPrice,
+            kundanWeight = kundanWeight,
+            jarkanPrice = jarkanPrice,
+            jarkanWeight = jarkanWeight,
+            goldRatePerGram = metalRatePerGram
+        )
     }
+    
+
 
     // Auto-calculate stone amount when stone fields change
-    LaunchedEffect(cwWeight, stoneRate, stoneQuantity) {
-        if (hasStones && cwWeight.isNotEmpty() && stoneRate.isNotEmpty() && stoneQuantity.isNotEmpty()) {
-            val cwWeightValue = cwWeight.toDoubleOrNull() ?: 0.0
+    LaunchedEffect(stoneWeight, stoneRate, stoneQuantity) {
+        if (hasStones && stoneWeight.isNotEmpty() && stoneRate.isNotEmpty() && stoneQuantity.isNotEmpty()) {
+            val stoneWeightValue = stoneWeight.toDoubleOrNull() ?: 0.0
             val stoneRateValue = stoneRate.toDoubleOrNull() ?: 0.0
             val stoneQuantityValue = stoneQuantity.toDoubleOrNull() ?: 0.0
 
-            if (cwWeightValue > 0 && stoneRateValue > 0 && stoneQuantityValue > 0) {
-                val calculatedStoneAmount = cwWeightValue * stoneRateValue * stoneQuantityValue
-                println("💎 Auto-calculated stone amount: $calculatedStoneAmount (CW: $cwWeightValue × Rate: $stoneRateValue × Qty: $stoneQuantityValue)")
+            if (stoneWeightValue > 0 && stoneRateValue > 0 && stoneQuantityValue > 0) {
+                val calculatedStoneAmount = stoneWeightValue * stoneRateValue * stoneQuantityValue
+                println("💎 Auto-calculated stone amount: $calculatedStoneAmount (Weight: $stoneWeightValue × Rate: $stoneRateValue × Qty: $stoneQuantityValue)")
             }
         }
     }
@@ -376,6 +366,7 @@ fun AddEditProductScreen(
     var materialError by remember { mutableStateOf(false) }
     var customIdError by remember { mutableStateOf(false) }
     var barcodeError by remember { mutableStateOf("") }
+    var weightMismatchError by remember { mutableStateOf("") }
 
     // Expanded dropdown states
 
@@ -690,7 +681,10 @@ fun AddEditProductScreen(
                         label = "Product Name",
                         isError = nameError,
                         errorMessage = "Product name is required",
-                        placeholder = "e.g., Gold Necklace"
+                        placeholder = "e.g., Gold Necklace",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(enterMovesFocusModifier)
                     )
 
                     AutoCompleteTextField(
@@ -710,125 +704,48 @@ fun AddEditProductScreen(
                         singleLine = false,
                         maxSuggestions = 5
                     )
-                }
-            }
 
-            // Material & Specifications
-            SectionCard(title = "Material & Specifications") {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            AutoCompleteTextField(
-                                value = materialDisplayValue,
-                                onValueChange = { materialDisplayValue = it },
-                                onItemSelected = { selectedMaterial ->
-                                    materialDisplayValue = selectedMaterial
-                                    // Find material ID from the selected name
-                                    val foundMaterial = materials.find { it.name == selectedMaterial }
-                                    if (foundMaterial != null) {
-                                        materialId = foundMaterial.id
-                                        materialType = ""
-                                        materialTypeDisplayValue = ""
-                                        materialError = false
-                                    }
-                                },
-                                onAddNew = { newMaterial ->
-                                    viewModel.addMaterialSuggestion(newMaterial) { newId ->
-                                        materialDisplayValue = newMaterial
-                                        materialId = newId
-                                        materialType = ""
-                                        materialTypeDisplayValue = ""
-                                        materialError = false
-                                        println("✅ New material saved: $newMaterial ($newId)")
-                                    }
-                                },
-                                suggestions = materialSuggestions,
-                                label = "Material",
-                                placeholder = "Select or enter material...",
-                                maxSuggestions = 5
-                            )
-                            if (materialError) {
-                                Text(
-                                    text = "Material is required",
-                                    color = MaterialTheme.colors.error,
-                                    style = MaterialTheme.typography.caption,
-                                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    if (materialId.isNotEmpty()) {
-                        val selectedMaterial = materials.find { it.id == materialId }
-                        val materialTypes = selectedMaterial?.types ?: emptyList()
-
-                        // Combine predefined types with suggestions
-                        val allMaterialTypes = (materialTypes + materialTypeSuggestions).distinct()
-
-                        if (allMaterialTypes.isNotEmpty()) {
-                            AutoCompleteTextField(
-                                value = materialTypeDisplayValue,
-                                onValueChange = { materialTypeDisplayValue = it },
-                                onItemSelected = { selectedType ->
-                                    materialTypeDisplayValue = selectedType
-                                    materialType = selectedType
-                                },
-                                onAddNew = { newType ->
-                                    if (materialId.isNotBlank()) {
-                                        viewModel.addMaterialTypeSuggestion(materialId, newType) {
-                                            materialTypeDisplayValue = newType
-                                            materialType = newType
-                                            println("✅ New material type saved: $newType for $materialId")
-                                        }
-                                    } else {
-                                        materialTypeDisplayValue = newType
-                                        materialType = newType
-                                    }
-                                },
-                                suggestions = allMaterialTypes,
-                                label = "Material Type",
-                                placeholder = "Select or enter material type...",
-                                maxSuggestions = 5
-                            )
-                        }
-                    }
-
+                    // Category field
                     AutoCompleteTextField(
                         value = categoryDisplayValue,
-                        onValueChange = { categoryDisplayValue = it },
-                        onItemSelected = { selectedCategory ->
-                            categoryDisplayValue = selectedCategory
-                            // Find category ID from the selected name
-                            val foundCategory = categories.find { it.name == selectedCategory }
-                            if (foundCategory != null) {
-                                categoryId = foundCategory.id
+                        onValueChange = { query ->
+                            categoryDisplayValue = query
+                            // Find matching category
+                            val matchedCategory = categories.find { 
+                                it.name.equals(query, ignoreCase = true) 
+                            }
+                            if (matchedCategory != null) {
+                                categoryId = matchedCategory.id
+                                categoryError = false
+                            } else {
+                                // If no match, keep the display value but don't update categoryId
+                                // This allows users to type new category names
+                            }
+                        },
+                        onItemSelected = { selectedCategoryName ->
+                            categoryDisplayValue = selectedCategoryName
+                            val selectedCategory = categories.find { 
+                                it.name.equals(selectedCategoryName, ignoreCase = true) 
+                            }
+                            selectedCategory?.let {
+                                categoryId = it.id
                                 categoryError = false
                             }
                         },
-                        onAddNew = { newCategory ->
-                            viewModel.addCategorySuggestion(newCategory) { newId ->
-                                categoryDisplayValue = newCategory
-                                categoryId = newId
-                                categoryError = false
-                                println("✅ New category saved: $newCategory ($newId)")
-                            }
+                        onAddNew = { newCategoryName ->
+                            categoryDisplayValue = newCategoryName
+                            // You could add logic here to create a new category
+                            println("New category name entered: $newCategoryName")
                         },
                         suggestions = categorySuggestions,
                         label = "Category",
                         placeholder = "Select or enter category...",
-                        maxSuggestions = 5
+                        singleLine = true,
+                        maxSuggestions = 10,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(enterMovesFocusModifier)
                     )
-                    if (categoryError) {
-                        Text(
-                            text = "Category is required",
-                            color = MaterialTheme.colors.error,
-                            style = MaterialTheme.typography.caption,
-                            modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                        )
-                    }
                 }
             }
 
@@ -841,328 +758,173 @@ fun AddEditProductScreen(
                     ) {
                         StyledTextField(
                             value = totalWeight,
-                            onValueChange = { totalWeight = it },
+                            onValueChange = {
+                                totalWeight = it
+                                weightMismatchError = ""
+                            },
                             label = "Total Weight",
                             placeholder = "0.00",
                             suffix = "grams",
                             keyboardType = KeyboardType.Decimal,
-                            modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .then(enterMovesFocusModifier)
                         )
-
-                        StyledTextField(
-                            value = if (quantity > 0) quantity.toString() else "",
-                            onValueChange = { input ->
-                                // Allow only digits
-                                val digitsOnly = input.filter { char -> char.isDigit() }
-                                if (digitsOnly.isEmpty()) {
-                                    quantity = 0
-                                } else {
-                                    val newQuantity = digitsOnly.toIntOrNull()
-                                    if (newQuantity != null && newQuantity > 0) {
-                                        quantity = newQuantity
-                                    }
-                                }
-                            },
-                            label = "Quantity",
-                            placeholder = "1",
-                            keyboardType = KeyboardType.Number,
-                            modifier = Modifier.weight(1f)
+                    }
+                    if (weightMismatchError.isNotEmpty()) {
+                        Text(
+                            text = weightMismatchError,
+                            color = MaterialTheme.colors.error,
+                            style = MaterialTheme.typography.body2,
+                            modifier = Modifier.padding(start = 4.dp)
                         )
                     }
                 }
             }
 
-            // Pricing Information
-            SectionCard(title = "Pricing Information") {
+            // Material & Specifications
+            SectionCard(title = "Material & Specifications") {
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    // Add Metal/Stone Button
+                    Button(
+                        onClick = { showAddMaterialDialog = true },
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            StyledTextField(
-                                value = materialRate,
-                                onValueChange = {
-                                    materialRate = it
-                                    materialRateError = if (it.isNotEmpty()) {
-                                        try {
-                                            it.toDouble() <= 0
-                                        } catch (e: NumberFormatException) {
-                                            true
-                                        }
-                                    } else false
-                                },
-                                label = "Material Rate",
-                                placeholder = "0.00",
-                                prefix = "₹",
-                                suffix = "/gram",
-                                keyboardType = KeyboardType.Decimal,
-                                isError = materialRateError,
-                                errorMessage = "Valid material rate required"
-                            )
-
-                            // Auto-calculation indicator
-                            if (materialRate.isNotEmpty() && materialId.isNotEmpty() && materialType.isNotEmpty()) {
-                                Text(
-                                    text = "Auto-calculated from rates (editable)",
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colors.primary,
-                                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
-                                )
-                            }
-                        }
-
-                        IconButton(
-                            onClick = {
-                                // Re-calculate material rate from current material and type
-                                if (materialId.isNotEmpty() && materialType.isNotEmpty()) {
-                                    val karat = extractKaratFromMaterialType(materialType)
-                                    val calculatedRate = metalRateViewModel.calculateRateForMaterial(
-                                        materialId,
-                                        materialType,
-                                        karat
-                                    )
-                                    if (calculatedRate > 0) {
-                                        materialRate = String.format("%.2f", calculatedRate)
-                                        println("💰 Re-calculated material rate: $calculatedRate for $materialType ($karat K)")
-                                    } else {
-                                        // Try fallback calculation
-                                        val fallbackRate = findFallbackRateForMaterial(metalRateViewModel, materialId, karat)
-                                        if (fallbackRate > 0) {
-                                            materialRate = String.format("%.2f", fallbackRate)
-                                            println("💰 Fallback re-calculated material rate: $fallbackRate for $materialType ($karat K)")
-                                        }
-                                    }
-                                }
-                            }
-                        ) {
-                            Icon(
-                                Icons.Default.Refresh,
-                                contentDescription = "Re-calculate rate from current rates",
-                                tint = MaterialTheme.colors.primary
-                            )
-                        }
-
-                        StyledTextField(
-                            value = defaultMakingRate,
-                            onValueChange = { defaultMakingRate = it },
-                            label = "Making Rate",
-                            placeholder = "0.00",
-                            prefix = "₹",
-                            suffix = "/gram",
-                            keyboardType = KeyboardType.Decimal,
-                            modifier = Modifier.weight(1f)
-                        )
+                        Text("Add Metal or Stone")
                     }
 
-                    // VA Charges
-                    StyledTextField(
-                        value = vaCharges,
-                        onValueChange = { vaCharges = it },
-                        label = "VA Charges",
-                        placeholder = "0.00",
-                        prefix = "₹",
-                        keyboardType = KeyboardType.Decimal
-                    )
-                }
-            }
-
-            // Additional Components
-            SectionCard(title = "Additional Components") {
-                Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-                    // Other Than Gold Toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "Other Than Gold",
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 15.sp
-                            )
-                            Text(
-                                "Include non-gold components",
-                                fontSize = 12.sp,
-                                color = Color.Gray,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
-                        Switch(
-                            checked = isOtherThanGold,
-                            onCheckedChange = { isOtherThanGold = it },
-                            colors = SwitchDefaults.colors(
-                                checkedThumbColor = MaterialTheme.colors.primary,
-                                checkedTrackColor = MaterialTheme.colors.primary.copy(alpha = 0.5f)
-                            )
-                        )
-                    }
-
-                    if (isOtherThanGold) {
+                    // Display selected metal
+                    if (materialId.isNotEmpty() || materialName.isNotEmpty()) {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            backgroundColor = Color(0xFFFAFAFA),
-                            elevation = 0.dp,
-                            shape = RoundedCornerShape(8.dp)
+                            backgroundColor = Color(0xFFF5F5F5),
+                            elevation = 1.dp
                         ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                StyledTextField(
-                                    value = lessWeight,
-                                    onValueChange = { lessWeight = it },
-                                    label = "Less Weight",
-                                    placeholder = "0.00",
-                                    suffix = "grams",
-                                    keyboardType = KeyboardType.Decimal
-                                )
-
-                                Divider(color = Color(0xFFE0E0E0))
-
-                                // Has Stones Toggle
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            "Has Stones",
-                                            fontWeight = FontWeight.Medium,
-                                            fontSize = 14.sp
-                                        )
-                                        Text(
-                                            "Include gemstones or diamonds",
-                                            fontSize = 11.sp,
-                                            color = Color.Gray
-                                        )
-                                    }
-                                    Switch(
-                                        checked = hasStones,
-                                        onCheckedChange = { hasStones = it },
-                                        colors = SwitchDefaults.colors(
-                                            checkedThumbColor = MaterialTheme.colors.primary,
-                                            checkedTrackColor = MaterialTheme.colors.primary.copy(alpha = 0.5f)
-                                        )
-                                    )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Metal: ${materialName.ifEmpty { "Not selected" }}", fontWeight = FontWeight.Medium)
+                                    Text("Type: ${materialType.ifEmpty { "Not selected" }}", fontSize = 12.sp, color = Color.Gray)
+                                    Text("Weight: ${materialWeight.ifEmpty { "0" }}g", fontSize = 12.sp, color = Color.Gray)
                                 }
-
-                                if (hasStones) {
-                                    // Stone Name (autocomplete from stones collection)
-                                    val stoneNameSuggestions = viewModel.stoneNames.value
-
-                                    AutoCompleteTextField(
-                                        value = stoneName,
-                                        onValueChange = { stoneName = it },
-                                        onItemSelected = { selected -> stoneName = selected },
-                                        onAddNew = { newName ->
-                                            // Add stone name
-                                            viewModel.addStoneSuggestion(newName, "") { }
-                                        },
-                                        suggestions = stoneNameSuggestions,
-                                        label = "Stone Name",
-                                        placeholder = "e.g., Diamond",
-                                        maxSuggestions = 6
-                                    )
-
-                                    StyledTextField(
-                                        value = stoneQuantity,
-                                        onValueChange = { input ->
-                                            if (input.isEmpty() || input.matches(Regex("^\\d*\\.?\\d*\$"))) {
-                                                stoneQuantity = input
-                                            }
-                                        },
-                                        label = "Stone Quantity",
-                                        placeholder = "0.00",
-                                        keyboardType = KeyboardType.Decimal
-                                    )
-
-                                    StyledTextField(
-                                        value = stoneRate,
-                                        onValueChange = { stoneRate = it },
-                                        label = "Stone Rate",
-                                        placeholder = "0.00",
-                                        prefix = "₹",
-                                        keyboardType = KeyboardType.Decimal
-                                    )
-
-                                    StyledTextField(
-                                        value = cwWeight,
-                                        onValueChange = { cwWeight = it },
-                                        label = "CW Weight",
-                                        placeholder = "0.00",
-                                        suffix = "carats",
-                                        keyboardType = KeyboardType.Decimal
-                                    )
-
-                                    // Display calculated stone amount
-                                    val calculatedStoneAmount = if (hasStones && cwWeight.isNotEmpty() && stoneRate.isNotEmpty() && stoneQuantity.isNotEmpty()) {
-                                        val cwWeightValue = cwWeight.toDoubleOrNull() ?: 0.0
-                                        val stoneRateValue = stoneRate.toDoubleOrNull() ?: 0.0
-                                        val stoneQuantityValue = stoneQuantity.toDoubleOrNull() ?: 0.0
-                                        if (cwWeightValue > 0 && stoneRateValue > 0 && stoneQuantityValue > 0) {
-                                            cwWeightValue * stoneRateValue * stoneQuantityValue
-                                        } else 0.0
-                                    } else 0.0
-
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        backgroundColor = Color(0xFFF5F5F5),
-                                        elevation = 0.dp,
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(16.dp)
-                                        ) {
-                                            Text(
-                                                "Stone Amount Calculation",
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = Color(0xFF2E7D32)
-                                            )
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                "Formula: CW_WT × STONE_RATE × QTY",
-                                                fontSize = 12.sp,
-                                                color = Color.Gray
-                                            )
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Text(
-                                                "₹${String.format("%.2f", calculatedStoneAmount)}",
-                                                fontSize = 16.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colors.primary
-                                            )
-                                        }
-                                    }
+                                IconButton(onClick = {
+                                    materialId = ""
+                                    materialType = ""
+                                    materialName = ""
+                                    materialWeight = ""
+                                    materialDisplayValue = ""
+                                    materialTypeDisplayValue = ""
+                                    weightMismatchError = "" // Clear error when material is removed
+                                }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Remove")
                                 }
+                            }
+                        }
+                    }
 
-                                // Net Weight display
-                                Divider(color = Color(0xFFE0E0E0))
+                    // Display stones
+                    if (productStones.isNotEmpty()) {
+                        productStones.forEachIndexed { index, stone ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                backgroundColor = Color(0xFFF5F5F5),
+                                elevation = 1.dp
+                            ) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        "Net Weight",
-                                        fontSize = 14.sp,
-                                        color = Color(0xFF555555)
-                                    )
-                                    Text(
-                                        "${String.format("%.2f", netWeight)} g",
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFF2D2D2D)
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Stone: ${stone.name}", fontWeight = FontWeight.Medium)
+                                        Text("Purity: ${stone.purity}", fontSize = 12.sp, color = Color.Gray)
+                                        Text("Weight: ${stone.weight}g, Rate: ₹${stone.rate}", fontSize = 12.sp, color = Color.Gray)
+                                    }
+                                    IconButton(onClick = {
+                                        productStones = productStones.filterIndexed { i, _ -> i != index }
+                                        if (productStones.isEmpty()) {
+                                            hasStones = false
+                                        }
+                                        weightMismatchError = "" // Clear error when stone is removed
+                                    }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Remove")
+                                    }
                                 }
                             }
                         }
                     }
+
+                    if (materialId.isEmpty() && productStones.isEmpty()) {
+                            Text(
+                            text = "No materials added yet. Click 'Add Metal or Stone' to add materials.",
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
                 }
             }
 
-            // Calculated Summary
+            // Add Material Dialog
+            AddMaterialDialog(
+                openDialog = showAddMaterialDialog,
+                onDismiss = { showAddMaterialDialog = false },
+                onSave = { newMaterial ->
+                    if (newMaterial.isMetal) {
+                        // If it's a metal, update materialId, materialType, materialName, and materialWeight
+                        materialId = newMaterial.materialId
+                        materialType = newMaterial.materialType
+                        materialName = newMaterial.materialName
+                        materialWeight = newMaterial.weight.toString()
+                        materialDisplayValue = newMaterial.materialName
+                        materialTypeDisplayValue = newMaterial.materialType
+                        weightMismatchError = ""
+                    } else {
+                        // If it's a stone (like jarkan), add it to the stones array
+                        val newStone = org.example.project.data.ProductStone(
+                            name = newMaterial.materialName,
+                            purity = newMaterial.materialType,
+                            quantity = 0.0, // For jarkan/kundan, quantity is 0
+                            rate = newMaterial.rate,
+                            weight = newMaterial.weight,
+                            amount = newMaterial.rate // For jarkan/kundan, amount is the rate
+                        )
+                        productStones = productStones + newStone
+                        hasStones = true
+                        // Update stone fields for backward compatibility
+                        stoneName = newMaterial.materialName
+                        stonePurity = newMaterial.materialType
+                        stoneRate = newMaterial.rate.toString()
+                        stoneWeight = newMaterial.weight.toString()
+                        weightMismatchError = "" // Clear error when material/stone is added
+                    }
+                },
+                materials = materials,
+                totalWeight = totalWeight,
+                existingMaterials = emptyList(), // No longer using materials array
+                metalRateViewModel = metalRateViewModel,
+                productsViewModel = viewModel
+            )
+
+            // Price Calculator (only show if metal is selected)
+            if (materialId.isNotEmpty()) {
+                ProductPriceCalculatorComposable(
+                    inputs = priceCalculatorInputs,
+                    onMakingPercentageChange = { makingPercent = it.toString() },
+                    onLabourRateChange = { labourRate = it.toString() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+
+            // Custom Price Option
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 backgroundColor = Color(0xFFFFF8E1),
@@ -1173,139 +935,6 @@ fun AddEditProductScreen(
                     modifier = Modifier.padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        "Price & Cost Summary",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2D2D2D)
-                    )
-
-                    Divider(color = MaterialTheme.colors.primary.copy(alpha = 0.3f))
-
-                    // Material Cost (Net Weight = Total - Less)
-                    val materialRateValue = materialRate.toDoubleOrNull() ?: 0.0
-                    val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
-                    val lessWeightValue = lessWeight.toDoubleOrNull() ?: 0.0
-                    val netWeightValue = (totalWeightValue - lessWeightValue).coerceAtLeast(0.0)
-                    val materialCost = netWeightValue * materialRateValue
-                    if (materialCost > 0) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "Material Cost ((${String.format("%.2f", totalWeightValue)}g − ${String.format("%.2f", lessWeightValue)}g) × ₹${String.format("%.2f", materialRateValue)})",
-                                fontSize = 14.sp,
-                                color = Color(0xFF555555)
-                            )
-                            Text(
-                                "₹${String.format("%.2f", materialCost)}",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF555555)
-                            )
-                        }
-                    }
-
-                    // Making Charges (Net Weight = Total - Less)
-                    val makingRateValue = defaultMakingRate.toDoubleOrNull() ?: 0.0
-                    val makingCharges = netWeightValue * makingRateValue
-                    if (makingCharges > 0) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "Making Charges ((${String.format("%.2f", totalWeightValue)}g − ${String.format("%.2f", lessWeightValue)}g) × ₹${String.format("%.2f", makingRateValue)})",
-                                fontSize = 14.sp,
-                                color = Color(0xFF555555)
-                            )
-                            Text(
-                                "₹${String.format("%.2f", makingCharges)}",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF555555)
-                            )
-                        }
-                    }
-
-                    // Stone Amount
-                    val calculatedStoneAmount = if (hasStones && cwWeight.isNotEmpty() && stoneRate.isNotEmpty() && stoneQuantity.isNotEmpty()) {
-                        val cwWeightValue = cwWeight.toDoubleOrNull() ?: 0.0
-                        val stoneRateValue = stoneRate.toDoubleOrNull() ?: 0.0
-                        val stoneQuantityValue = stoneQuantity.toDoubleOrNull() ?: 0.0
-                        if (cwWeightValue > 0 && stoneRateValue > 0 && stoneQuantityValue > 0) {
-                            cwWeightValue * stoneRateValue * stoneQuantityValue
-                        } else 0.0
-                    } else 0.0
-
-                    if (hasStones && calculatedStoneAmount > 0) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "Stone Amount (${String.format("%.2f", cwWeight.toDoubleOrNull() ?: 0.0)}ct × ₹${String.format("%.2f", stoneRate.toDoubleOrNull() ?: 0.0)} × ${String.format("%.2f", stoneQuantity.toDoubleOrNull() ?: 0.0)})",
-                                fontSize = 14.sp,
-                                color = Color(0xFF555555)
-                            )
-                            Text(
-                                "₹${String.format("%.2f", calculatedStoneAmount)}",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF555555)
-                            )
-                        }
-                    }
-
-                    // VA Charges
-                    val vaChargesValue = vaCharges.toDoubleOrNull() ?: 0.0
-                    if (vaChargesValue > 0) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                "VA Charges",
-                                fontSize = 14.sp,
-                                color = Color(0xFF555555)
-                            )
-                            Text(
-                                "₹${String.format("%.2f", vaChargesValue)}",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF555555)
-                            )
-                        }
-                    }
-
-                    // Divider before total
-                    if (materialCost > 0 || makingCharges > 0 || calculatedStoneAmount > 0 || vaChargesValue > 0) {
-                        Divider(color = MaterialTheme.colors.primary.copy(alpha = 0.3f))
-                    }
-
-                    // Total Product Cost
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Total Product Cost",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF2D2D2D)
-                        )
-                        Text(
-                            "₹${String.format("%.2f", totalProductCost)}",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colors.primary
-                        )
-                    }
-
-                    Divider(color = MaterialTheme.colors.primary.copy(alpha = 0.3f))
-
                     // Custom Price Option
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1317,12 +946,10 @@ fun AddEditProductScreen(
                             onCheckedChange = { checked ->
                                 hasCustomPrice = checked
                                 if (checked) {
-                                    // When custom price is enabled, disable total product cost visibility
-                                    showTotalProductCost = false
+                                    // When custom price is enabled, show custom price field
                                     showCustomPrice = true
                                 } else {
-                                    // When custom price is disabled, enable total product cost visibility
-                                    showTotalProductCost = true
+                                    // When custom price is disabled, hide custom price field
                                     showCustomPrice = false
                                 }
                             }
@@ -1343,7 +970,9 @@ fun AddEditProductScreen(
                             placeholder = "0.00",
                             prefix = "₹",
                             keyboardType = KeyboardType.Decimal,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(enterMovesFocusModifier)
                         )
                     }
                 }
@@ -1502,19 +1131,16 @@ fun AddEditProductScreen(
                     StatusToggle("Show Quantity", "Display quantity", showQuantity) { showQuantity = it }
                     StatusToggle("Show Total Weight", "Display total weight", showTotalWeight) { showTotalWeight = it }
                     StatusToggle("Show Price", "Display price/material rate", showPrice) { showPrice = it }
-                    StatusToggle("Show Making Rate", "Display making rate", showDefaultMakingRate) { showDefaultMakingRate = it }
-                    StatusToggle("Show VA Charges", "Display VA charges", showVaCharges) { showVaCharges = it }
-                    StatusToggle("Show 'Other Than Gold'", "Display other-than-gold inputs", showIsOtherThanGold) { showIsOtherThanGold = it }
-                    StatusToggle("Show Less Weight", "Display less weight", showLessWeight) { showLessWeight = it }
                     StatusToggle("Show Has Stones", "Display stones toggle", showHasStones) { showHasStones = it }
-                    StatusToggle("Show Stone Name", "Display stone name", showStoneName) { showStoneName = it }
-                    StatusToggle("Show Stone Quantity", "Display stone quantity", showStoneQuantity) { showStoneQuantity = it }
-                    StatusToggle("Show Stone Amount", "Display calculated stone amount", showStoneAmount) { showStoneAmount = it }
-                    StatusToggle("Show Stone Rate", "Display stone rate", showStoneRate) { showStoneRate = it }
-                    StatusToggle("Show CW Weight", "Display CW weight", showCwWeight) { showCwWeight = it }
-                    StatusToggle("Show Net Weight", "Display net weight", showNetWeight) { showNetWeight = it }
-                    StatusToggle("Show Total Product Cost", "Display total product cost", showTotalProductCost) { showTotalProductCost = it }
+                    StatusToggle("Show Stones", "Display stones information", showStones) { showStones = it }
                     StatusToggle("Show Custom Price", "Display custom price field", showCustomPrice) { showCustomPrice = it }
+                    StatusToggle("Show Material Weight", "Display material weight", showMaterialWeight) { showMaterialWeight = it }
+                    StatusToggle("Show Stone Weight", "Display stone weight", showStoneWeight) { showStoneWeight = it }
+                    StatusToggle("Show Making Percent", "Display making percentage", showMakingPercent) { showMakingPercent = it }
+                    StatusToggle("Show Labour Charges", "Display labour charges", showLabourCharges) { showLabourCharges = it }
+                    StatusToggle("Show Effective Weight", "Display effective weight", showEffectiveWeight) { showEffectiveWeight = it }
+                    StatusToggle("Show Effective Metal Weight", "Display effective metal weight", showEffectiveMetalWeight) { showEffectiveMetalWeight = it }
+                    StatusToggle("Show Labour Rate", "Display labour rate", showLabourRate) { showLabourRate = it }
                     StatusToggle("Show Images", "Display product images section", showImages) { showImages = it }
                     StatusToggle("Show Available", "Display available status", showAvailable) { showAvailable = it }
                     StatusToggle("Show Featured", "Display featured status", showFeatured) { showFeatured = it }
@@ -1562,24 +1188,37 @@ fun AddEditProductScreen(
                         println("Auto generate: $autoGenerateId, Custom barcode: '$customProductId', Quantity: $quantity")
 
                         // Validate required fields
-                        nameError = name.isEmpty()
-                        categoryError = categoryId.isEmpty()
+                        nameError = name.trim().isEmpty()
+                        // Category is no longer required (removed from UI)
+                        categoryError = false
+                        // Material validation: check if materialId is not empty
                         materialError = materialId.isEmpty()
 
-                        // Material rate validation
-                        materialRateError = if (materialRate.isNotEmpty()) {
-                            try {
-                                materialRate.toDouble() <= 0
-                            } catch (e: NumberFormatException) {
-                                true
-                            }
-                        } else false
+                        // Material rate validation: not required since materials have their own rates
+                        materialRateError = false
 
                         customIdError = !autoGenerateId && customProductId.isEmpty()
 
                         println("Validation results - Name: $nameError, Category: $categoryError, Material: $materialError, MaterialRate: $materialRateError, CustomId: $customIdError")
 
                         if (!nameError && !materialRateError && !categoryError && !materialError && !customIdError) {
+                            // Ensure total weight matches sum of all materials and stones
+                            val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
+                            val materialWeightValue = materialWeight.toDoubleOrNull() ?: 0.0
+                            val stonesWeightSum = productStones.sumOf { it.weight }
+                            val totalMaterialsWeight = materialWeightValue + stonesWeightSum
+                            
+                            if (totalMaterialsWeight > 0) {
+                                val weightDiff = kotlin.math.abs(totalWeightValue - totalMaterialsWeight)
+                                if (weightDiff > 0.001) {
+                                    weightMismatchError = "Total weight ($totalWeightValue g) should match sum of materials and stones ($totalMaterialsWeight g)"
+                                    println("❌ Validation failed: weight mismatch -> total: $totalWeightValue, materials + stones sum: $totalMaterialsWeight (material: $materialWeightValue, stones: $stonesWeightSum)")
+                                    return@Button
+                                } else {
+                                    weightMismatchError = ""
+                                }
+                            }
+
                             println("✅ Basic validation passed, checking inventory requirements...")
 
                             // Skip inventory validation when editing existing products
@@ -1614,6 +1253,25 @@ fun AddEditProductScreen(
                             println("📝 Creating product object with form data...")
                             println("Form data - Description: '$description', MaterialId: '$materialId', MaterialType: '$materialType', CustomProductId: '$customProductId'")
 
+                            // Use productStones array (already contains all stones including jarkan/kundan)
+                            val stonesList = productStones
+
+                            // Calculate effective metal weight using price calculator
+                            // Effective Metal Weight = New Weight - (Jarkan Weight + Kundan Weight)
+                            val calculatedEffectiveMetalWeight = run {
+                                val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
+                                val makingPercentValue = makingPercent.toDoubleOrNull() ?: 0.0
+                                val makingWeightValue = totalWeightValue * makingPercentValue / 100.0
+                                val newWeightValue = totalWeightValue + makingWeightValue
+                                
+                                // Sum jarkan and kundan weights from stones
+                                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                                val kundanWeight = kundanStones.sumOf { it.weight }
+                                
+                                // Effective Metal Weight = New Weight - (Jarkan Weight + Kundan Weight)
+                                (newWeightValue - jarkanWeight - kundanWeight).coerceAtLeast(0.0)
+                            }
+
                             val updatedProduct = Product(
                                 id = if (isEditing) product.id else "",
                                 name = name,
@@ -1622,27 +1280,39 @@ fun AddEditProductScreen(
                                 categoryId = categoryId,
                                 materialId = materialId,
                                 materialType = materialType,
+                                materialName = materialName,
                                 quantity = 1,
                                 totalWeight = totalWeight.toDoubleOrNull() ?: 0.0,
-                                defaultMakingRate = defaultMakingRate.toDoubleOrNull() ?: 0.0,
-                                isOtherThanGold = isOtherThanGold,
-                                lessWeight = lessWeight.toDoubleOrNull() ?: 0.0,
                                 hasStones = hasStones,
-                                stoneName = if (hasStones) stoneName else "",
-                                stoneQuantity = if (hasStones) (stoneQuantity.toDoubleOrNull() ?: 0.0) else 0.0,
-                                stoneRate = if (hasStones) (stoneRate.toDoubleOrNull() ?: 0.0) else 0.0,
-                                cwWeight = cwWeight.toDoubleOrNull() ?: 0.0,
-                                stoneAmount = if (hasStones) {
-                                    val cwWeightValue = cwWeight.toDoubleOrNull() ?: 0.0
-                                    val stoneRateValue = stoneRate.toDoubleOrNull() ?: 0.0
-                                    val stoneQuantityValue = stoneQuantity.toDoubleOrNull() ?: 0.0
-                                    if (cwWeightValue > 0 && stoneRateValue > 0 && stoneQuantityValue > 0) {
-                                        cwWeightValue * stoneRateValue * stoneQuantityValue
-                                    } else 0.0
-                                } else 0.0,
-                                vaCharges = vaCharges.toDoubleOrNull() ?: 0.0,
-                                netWeight = netWeight,
-                                totalProductCost = totalProductCost,
+                                stones = stonesList,
+                                materialWeight = materialWeight.toDoubleOrNull() ?: 0.0,
+                                makingPercent = makingPercent.toDoubleOrNull() ?: 0.0,
+                                // Calculate labour charges: labour rate × new weight
+                                labourCharges = run {
+                                    val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
+                                    val makingPercentValue = makingPercent.toDoubleOrNull() ?: 0.0
+                                    val makingWeightValue = totalWeightValue * makingPercentValue / 100.0
+                                    val newWeightValue = totalWeightValue + makingWeightValue
+                                    val labourRateValue = labourRate.toDoubleOrNull() ?: 0.0
+                                    labourRateValue * newWeightValue
+                                },
+                                // Calculate newWeight = totalWeight + makingWeight and store in effectiveWeight
+                                // makingWeight = totalWeight * makingPercent / 100
+                                // newWeight = totalWeight + makingWeight
+                                effectiveWeight = run {
+                                    val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
+                                    val makingPercentValue = makingPercent.toDoubleOrNull() ?: 0.0
+                                    val makingWeightValue = totalWeightValue * makingPercentValue / 100.0
+                                    val newWeightValue = totalWeightValue + makingWeightValue
+                                    // Use manually entered effectiveWeight if provided, otherwise use calculated newWeight
+                                    val manualEffectiveWeight = effectiveWeight.toDoubleOrNull() ?: 0.0
+                                    if (manualEffectiveWeight > 0) manualEffectiveWeight else newWeightValue
+                                },
+                                effectiveMetalWeight = calculatedEffectiveMetalWeight,
+                                labourRate = labourRate.toDoubleOrNull() ?: 0.0,
+                                // Calculate stoneAmount and stoneWeight from stones array
+                                stoneAmount = stonesList.sumOf { it.amount },
+                                stoneWeight = stonesList.sumOf { it.weight },
                                 hasCustomPrice = hasCustomPrice,
                                 customPrice = customPrice.toDoubleOrNull() ?: 0.0,
                                 available = available,
@@ -1651,8 +1321,7 @@ fun AddEditProductScreen(
                                 collectionId = collectionId,
                                 images = images,
                                 autoGenerateId = autoGenerateId,
-                                customProductId = customProductId,
-                                createdAt = product.createdAt,
+                                createdAt = if (isEditing) product.createdAt else System.currentTimeMillis(),
                                 show = org.example.project.data.ProductShowConfig(
                                     name = showName,
                                     description = showDescription,
@@ -1662,19 +1331,17 @@ fun AddEditProductScreen(
                                     quantity = showQuantity,
                                     totalWeight = showTotalWeight,
                                     price = showPrice,
-                                    defaultMakingRate = showDefaultMakingRate,
-                                    vaCharges = showVaCharges,
-                                    isOtherThanGold = showIsOtherThanGold,
-                                    lessWeight = showLessWeight,
                                     hasStones = showHasStones,
-                                    stoneName = showStoneName,
-                                    stoneQuantity = showStoneQuantity,
-                                    stoneRate = showStoneRate,
-                                    cwWeight = showCwWeight,
-                                    stoneAmount = showStoneAmount,
-                                    netWeight = showNetWeight,
-                                    totalProductCost = showTotalProductCost,
+                                    stones = showStones,
                                     customPrice = showCustomPrice,
+                                    materialWeight = showMaterialWeight,
+                                    stoneWeight = showStoneWeight,
+                                    makingPercent = showMakingPercent,
+                                    labourCharges = showLabourCharges,
+                                    effectiveWeight = showEffectiveWeight,
+                                    effectiveMetalWeight = showEffectiveMetalWeight,
+                                    labourRate = showLabourRate,
+                                    stoneAmount = true,
                                     images = showImages,
                                     available = showAvailable,
                                     featured = showFeatured,
@@ -1691,13 +1358,12 @@ fun AddEditProductScreen(
                                 scope.launch {
                                     try {
                                         if (updatedProduct != null) {
-                                            println("📤 Updating product and related products...")
+                                            println("📤 Updating product...")
                                             println("   - Product ID: ${updatedProduct.id}")
-                                            println("   - Common ID: ${updatedProduct.commonId}")
                                             println("   - Product Name: ${updatedProduct.name}")
 
-                                            // Use the new bulk update method
-                                            viewModel.updateProductsWithCommonId(updatedProduct)
+                                            // Update the product
+                                            viewModel.updateProduct(updatedProduct)
                                             println("✅ Product and related products updated successfully")
                                             isSaving = false
                                             onSave()
@@ -1727,10 +1393,7 @@ fun AddEditProductScreen(
                                                 for (barcode in generatedBarcodes) {
                                                     val inventoryItem = InventoryItem(
                                                         productId = productId,
-                                                        barcodeId = barcode,
-                                                        status = InventoryStatus.AVAILABLE,
-                                                        location = "",
-                                                        notes = ""
+                                                        barcodeId = barcode
                                                     )
                                                     val inventoryId = viewModel.addInventoryItem(inventoryItem)
                                                     if (inventoryId != null) {
@@ -1772,10 +1435,7 @@ fun AddEditProductScreen(
                                                 // Then create inventory item for the custom barcode
                                                 val inventoryItem = InventoryItem(
                                                     productId = productId,
-                                                    barcodeId = customProductId,
-                                                    status = InventoryStatus.AVAILABLE,
-                                                    location = "",
-                                                    notes = ""
+                                                    barcodeId = customProductId
                                                 )
                                                 val inventoryId = viewModel.addInventoryItem(inventoryItem)
                                                 if (inventoryId != null) {
@@ -1864,8 +1524,26 @@ fun StyledTextField(
     maxLines: Int = 1,
     keyboardType: KeyboardType = KeyboardType.Text,
     enabled: Boolean = true,
-    readOnly: Boolean = false
+    readOnly: Boolean = false,
+    onEnter: (() -> Unit)? = null
 ) {
+    val focusManager = LocalFocusManager.current
+    val enterHandler = remember(focusManager, onEnter, singleLine) {
+        if (!singleLine) null else onEnter ?: { focusManager.moveFocus(FocusDirection.Down) }
+    }
+    val enterModifier = remember(enterHandler) {
+        if (enterHandler == null) {
+            Modifier
+        } else {
+            Modifier.onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp && event.key == Key.Enter) {
+                    enterHandler()
+                    true
+                } else false
+            }
+        }
+    }
+
     Column(modifier = modifier) {
         OutlinedTextField(
             value = value,
@@ -1878,11 +1556,16 @@ fun StyledTextField(
             trailingIcon = if (suffix.isNotEmpty()) {
                 { Text(suffix, color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(end = 8.dp)) }
             } else null,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(enterModifier),
             isError = isError,
             singleLine = singleLine,
             maxLines = maxLines,
-            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = keyboardType,
+                imeAction = if (enterHandler != null) ImeAction.Next else ImeAction.Default
+            ),
             enabled = enabled,
             readOnly = readOnly,
             colors = TextFieldDefaults.outlinedTextFieldColors(
@@ -2001,6 +1684,84 @@ fun StyledDropdown(
                 fontSize = 12.sp,
                 modifier = Modifier.padding(start = 16.dp, top = 4.dp)
             )
+        }
+    }
+}
+
+// Material Specifications Table Component
+@Composable
+fun MaterialSpecificationsTable(
+    materials: List<ProductMaterial>,
+    onRemoveMaterial: (ProductMaterial) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        // Table Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colors.primary.copy(alpha = 0.1f))
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("Material", fontWeight = FontWeight.Bold, modifier = Modifier.weight(2f))
+            Text("Type", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.5f))
+            Text("Weight (g)", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text("Rate (₹/g)", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Text("Amount", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.width(40.dp)) // Space for delete button
+        }
+
+        // Table Rows
+        materials.forEach { material ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp, horizontal = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    material.materialName,
+                    modifier = Modifier.weight(2f)
+                )
+                Text(
+                    material.materialType,
+                    modifier = Modifier.weight(1.5f)
+                )
+                Text(
+                    String.format("%.2f", material.weight),
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    String.format("%.2f", material.rate),
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    // For Jarkan/Kundan, amount is the rate itself, not weight * rate
+                    String.format("%.2f", if (material.materialName.equals("Jarkan", ignoreCase = true) || material.materialName.equals("Kundan", ignoreCase = true)) {
+                        material.rate
+                    } else {
+                        material.weight * material.rate
+                    }),
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick = { onRemoveMaterial(material) },
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Remove",
+                        tint = MaterialTheme.colors.error
+                    )
+                }
+            }
+            if (material != materials.last()) {
+                Divider()
+            }
         }
     }
 }

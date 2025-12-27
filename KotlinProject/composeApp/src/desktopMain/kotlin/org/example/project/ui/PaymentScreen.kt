@@ -90,8 +90,8 @@ fun PaymentScreen(
                 extractKaratFromMaterialType(currentProduct.materialType)
             }
             
-            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
-            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else currentProduct.lessWeight
+            val grossWeight = currentProduct.totalWeight // grossWeight removed, using totalWeight
+            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
             val netWeight = grossWeight - lessWeight
             
             val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
@@ -110,11 +110,12 @@ fun PaymentScreen(
             }
             
             val quantity = cartItem.quantity
-            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else currentProduct.defaultMakingRate
-            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else currentProduct.cwWeight
-            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else currentProduct.stoneRate
-            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else currentProduct.stoneQuantity
-            val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.vaCharges
+            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
+            val firstStone = currentProduct.stones.firstOrNull()
+            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: currentProduct.stoneWeight)
+            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
+            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
+            val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.labourCharges // Use labourCharges instead of vaCharges
             
             val baseAmount = netWeight * metalRate * quantity
             val makingCharges = netWeight * makingChargesPerGram * quantity
@@ -138,8 +139,8 @@ fun PaymentScreen(
                 extractKaratFromMaterialType(currentProduct.materialType)
             }
 
-            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
-            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else currentProduct.lessWeight
+            val grossWeight = currentProduct.totalWeight // grossWeight removed, using totalWeight
+            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
             val netWeight = grossWeight - lessWeight
 
             val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
@@ -158,7 +159,7 @@ fun PaymentScreen(
             }
 
             val quantity = cartItem.quantity
-            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else currentProduct.defaultMakingRate
+            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
 
             // Calculate base amount (metal cost)
             val baseAmount = netWeight * metalRate * quantity
@@ -1116,8 +1117,8 @@ private fun OrderSummaryItem(
                 extractKaratFromMaterialType(currentProduct.materialType)
             }
 
-            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
-            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else currentProduct.lessWeight
+            val grossWeight = currentProduct.totalWeight // grossWeight removed, using totalWeight
+            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
             val netWeight = grossWeight - lessWeight
 
             val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
@@ -1136,11 +1137,12 @@ private fun OrderSummaryItem(
             }
 
             val quantity = cartItem.quantity
-            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else currentProduct.defaultMakingRate
-            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else currentProduct.cwWeight
-            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else currentProduct.stoneRate
-            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else currentProduct.stoneQuantity
-            val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.vaCharges
+            val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
+            val firstStone = currentProduct.stones.firstOrNull()
+            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: currentProduct.stoneWeight)
+            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
+            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
+            val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.labourCharges // Use labourCharges instead of vaCharges
 
             val baseAmount = netWeight * metalRate * quantity
             val makingCharges = netWeight * makingChargesPerGram * quantity

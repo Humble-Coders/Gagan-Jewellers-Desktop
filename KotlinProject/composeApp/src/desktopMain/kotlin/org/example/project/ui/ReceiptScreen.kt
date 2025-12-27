@@ -663,7 +663,7 @@ private fun PaymentSummaryBreakdown(
     val metalRates = MetalRatesManager.metalRates.value
     
     // Calculate subtotal as sum of all item totals (like payment screen)
-    val itemSubtotal = transaction.items.sumOf { cartItem ->
+    val itemSubtotal = transaction.items.sumOf { cartItem: org.example.project.data.CartItem ->
         // Use the same calculation logic as PaymentScreen
         val metalKarat = if (cartItem.metal.isNotEmpty()) {
             cartItem.metal.replace("K", "").toIntOrNull() ?: org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
@@ -687,15 +687,19 @@ private fun PaymentSummaryBreakdown(
         }
         
         // Use product values as fallbacks if cart item values are 0
-        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.product.totalWeight
-        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else cartItem.product.lessWeight
+        val grossWeight = cartItem.product.totalWeight // grossWeight removed, using totalWeight
+        // lessWeight removed from Product, using 0.0 as default
+        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0
         val netWeight = grossWeight - lessWeight
         val quantity = cartItem.quantity
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
-        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.cwWeight
-        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else cartItem.product.stoneRate
-        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else cartItem.product.stoneQuantity
-        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.vaCharges
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
+        // Use stoneWeight instead of cwWeight
+        val firstStone = cartItem.product.stones.firstOrNull()
+        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: cartItem.product.stoneWeight)
+        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
+        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
+        // Use labourCharges instead of vaCharges
+        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.labourCharges
         
         // Calculate item total (same as PaymentScreen)
         val baseAmount = netWeight * metalRate * quantity
@@ -707,7 +711,7 @@ private fun PaymentSummaryBreakdown(
     }
     
     // Calculate GST using the same logic as PaymentScreen (3% on metal, 5% on making)
-    val calculatedGstAmount = transaction.items.sumOf { cartItem ->
+    val calculatedGstAmount = transaction.items.sumOf { cartItem: org.example.project.data.CartItem ->
         val metalKarat = if (cartItem.metal.isNotEmpty()) {
             cartItem.metal.replace("K", "").toIntOrNull() ?: org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
         } else {
@@ -729,11 +733,12 @@ private fun PaymentSummaryBreakdown(
             else -> goldRate
         }
         
-        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.product.totalWeight
-        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else cartItem.product.lessWeight
+        val grossWeight = cartItem.product.totalWeight // grossWeight removed, using totalWeight
+        // lessWeight removed from Product, using 0.0 as default
+        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0
         val netWeight = grossWeight - lessWeight
         val quantity = cartItem.quantity
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else cartItem.product.defaultMakingRate
+        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
         
         val baseAmount = netWeight * metalRate * quantity
         val makingCharges = netWeight * makingChargesPerGram * quantity
@@ -755,10 +760,12 @@ private fun PaymentSummaryBreakdown(
     }
     
     // Calculate Stone Amount for display
-    val stoneCharges = transaction.items.sumOf { cartItem ->
-        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else cartItem.product.stoneRate
-        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else cartItem.product.stoneQuantity
-        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.cwWeight
+    val stoneCharges = transaction.items.sumOf { cartItem: org.example.project.data.CartItem ->
+        val firstStone = cartItem.product.stones.firstOrNull()
+        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
+        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
+        // Use stoneWeight instead of cwWeight
+        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.stoneWeight
         stoneRate * stoneQuantity * cwWeight * cartItem.quantity
     }
     
@@ -859,7 +866,10 @@ private fun PriceBreakdown(
     ) {
         // Calculate stone charges and VA charges from transaction items
         val stoneCharges = transaction?.items?.sumOf { item ->
-            item.stoneRate * item.stoneQuantity * item.cwWeight * item.quantity
+            val firstStone = item.product.stones.firstOrNull()
+            val stoneRate = if (item.stoneRate > 0) item.stoneRate else (firstStone?.rate ?: 0.0)
+            val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else (firstStone?.quantity ?: 0.0)
+            stoneRate * stoneQuantity * item.cwWeight * item.quantity
         } ?: 0.0
         
         val vaCharges = transaction?.items?.sumOf { item ->
@@ -968,15 +978,16 @@ private fun ItemDetailCard(
     }
     
     // Use product values as fallbacks if cart item values are 0
-    val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
-    val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else product.lessWeight
+    val grossWeight = product.totalWeight // grossWeight removed, using totalWeight
+    val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
     val netWeight = grossWeight - lessWeight
     val quantity = cartItem.quantity
-    val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else product.defaultMakingRate
-    val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else product.cwWeight
-    val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else product.stoneRate
-    val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else product.stoneQuantity
-    val vaCharges = if (cartItem.va > 0) cartItem.va else product.vaCharges
+    val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
+    val firstStone = product.stones.firstOrNull()
+    val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: product.stoneWeight)
+    val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
+    val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
+    val vaCharges = if (cartItem.va > 0) cartItem.va else product.labourCharges // Use labourCharges instead of vaCharges
     
     // Calculate base amount using metalRate (includes collection rate logic)
     val baseAmount = netWeight * metalRate * quantity

@@ -420,7 +420,7 @@ class BillPDFGenerator {
                 val metalCost = weight * item.quantity * pricePerGram
                 
                 // Use making rate from order item (it's stored as rate per gram from cartItem.makingCharges)
-                val makingRatePerGram = item.defaultMakingRate
+                val makingRatePerGram = 0.0 // defaultMakingRate removed from Product
                 val makingCharges = weight * item.quantity * makingRatePerGram
                 
                 // VA charges from the order item (stored from cartItem.va, which is per-item)

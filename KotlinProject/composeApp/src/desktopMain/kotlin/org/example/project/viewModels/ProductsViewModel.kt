@@ -14,9 +14,9 @@ import org.example.project.data.Product
 import org.example.project.data.GroupedProduct
 import org.example.project.data.ProductRepository
 import org.example.project.data.StonesRepository
+import org.example.project.data.Stone
 import org.example.project.data.InventoryRepository
 import org.example.project.data.InventoryItem
-import org.example.project.data.InventoryStatus
 
 // Data class to hold cached inventory information for a product
 data class InventoryData(
@@ -158,26 +158,32 @@ class ProductsViewModel(
     private val _stoneNames = mutableStateOf<List<String>>(emptyList())
     val stoneNames: State<List<String>> = _stoneNames
 
-    private val _stoneColors = mutableStateOf<List<String>>(emptyList())
-    val stoneColors: State<List<String>> = _stoneColors
+    private val _stonePurities = mutableStateOf<List<String>>(emptyList())
+    val stonePurities: State<List<String>> = _stonePurities
+    // Keep stoneColors for backward compatibility (maps to stonePurities)
+    val stoneColors: State<List<String>> = _stonePurities
+
+    private val _stones = mutableStateOf<List<Stone>>(emptyList())
+    val stones: State<List<Stone>> = _stones
 
     fun loadStoneSuggestions() {
         if (stonesRepository == null) return
         viewModelScope.launch {
             try {
                 _stoneNames.value = stonesRepository.getAllStoneNames()
-                _stoneColors.value = stonesRepository.getAllStoneColors()
+                _stonePurities.value = stonesRepository.getAllStonePurities()
+                _stones.value = stonesRepository.getAllStones()
             } catch (e: Exception) {
                 _error.value = "Failed to load stones: ${e.message}"
             }
         }
     }
 
-    fun addStoneSuggestion(name: String, color: String, onComplete: (String) -> Unit) {
+    fun addStoneSuggestion(name: String, onComplete: (String) -> Unit) {
         if (stonesRepository == null) return
         viewModelScope.launch {
             try {
-                val id = stonesRepository.addStone(name, color)
+                val id = stonesRepository.addStone(name)
                 loadStoneSuggestions()
                 onComplete(id)
             } catch (e: Exception) {
@@ -237,49 +243,24 @@ class ProductsViewModel(
     }
 
     /**
-     * Group products by commonId for dashboard display
-     * Products with same commonId are grouped together
-     * Products with null commonId are shown individually
+     * Group products by product ID for dashboard display
+     * Each product is shown individually with its inventory quantity
      * Note: Quantity is now fetched from inventory collection using where condition on product ID
      */
     fun getGroupedProducts(): List<GroupedProduct> {
         val allProducts = _products.value
 
-        // Group products by commonId
-        val groupedMap = allProducts.groupBy { it.commonId }
-
-        return groupedMap.map { (commonId, products) ->
-            if (commonId == null) {
-                // Single products (no grouping)
-                products.map { product ->
+        // Each product is shown individually (no grouping by commonId anymore)
+        return allProducts.map { product ->
                     val inventoryQuantity = getAvailableInventoryCountForProduct(product.id)
                     GroupedProduct(
                         baseProduct = product,
                         quantity = inventoryQuantity, // Quantity from inventory collection
                         individualProducts = listOf(product),
                         barcodeIds = getBarcodeIdsForProduct(product.id), // Get barcodes from inventory
-                        commonId = null
-                    )
-                }
-            } else {
-                // Grouped products - sum inventory quantities for all products in group
-                val totalInventoryQuantity = products.sumOf { product ->
-                    getAvailableInventoryCountForProduct(product.id)
-                }
-                val allBarcodeIds = products.flatMap { product ->
-                    getBarcodeIdsForProduct(product.id)
-                }
-                listOf(
-                    GroupedProduct(
-                        baseProduct = products.first(), // Use first product as representative
-                        quantity = totalInventoryQuantity, // Sum of inventory quantities
-                        individualProducts = products,
-                        barcodeIds = allBarcodeIds, // All barcodes from inventory
-                        commonId = commonId
-                    )
+                commonId = null // commonId removed from Product model
                 )
             }
-        }.flatten()
     }
 
     /**
@@ -288,33 +269,17 @@ class ProductsViewModel(
      */
     fun getAllGroupedProductsIncludingSold(): List<GroupedProduct> {
         val allProducts = _products.value
-        val groupedMap = allProducts.groupBy { it.commonId }
 
-        return groupedMap.map { (commonId, products) ->
-            if (commonId == null) {
-                // Single products (no grouping)
-                products.map { product ->
+        // Each product is shown individually (no grouping by commonId anymore)
+        return allProducts.map { product ->
                     GroupedProduct(
                         baseProduct = product,
                         quantity = 1,
                         individualProducts = listOf(product),
                         barcodeIds = emptyList(), // Barcodes are now in inventory collection
-                        commonId = null
-                    )
-                }
-            } else {
-                // Grouped products
-                listOf(
-                    GroupedProduct(
-                        baseProduct = products.first(), // Use first product as representative
-                        quantity = products.size,
-                        individualProducts = products,
-                        barcodeIds = emptyList(), // Barcodes are now in inventory collection
-                        commonId = commonId
-                    )
+                commonId = null // commonId removed from Product model
                 )
             }
-        }.flatten()
     }
 
     // New: add suggestion helpers used by UI
@@ -493,10 +458,7 @@ class ProductsViewModel(
                 // NO product document is created in products collection
                 val inventoryItem = InventoryItem(
                     productId = productId, // Use the same product ID
-                    barcodeId = barcodeId, // Use the new barcode ID
-                    status = InventoryStatus.AVAILABLE,
-                    location = "",
-                    notes = "Duplicated from original product"
+                    barcodeId = barcodeId // Use the new barcode ID
                 )
 
                 val inventoryId = inventoryRepository?.addInventoryItem(inventoryItem)
@@ -544,22 +506,12 @@ class ProductsViewModel(
             try {
                 println("🔄 Starting batch processing...")
 
-                // Generate common ID only if multiple barcodes (quantity > 1)
-                val commonId = if (barcodes.size > 1) {
-                    generateCommonId()
-                } else {
-                    null // Single product gets null commonId
-                }
-
-                println("📋 Common ID: $commonId")
-
                 // Create the base product first
                 val productForDoc = baseProduct.copy(
                     id = "", // repository will assign auto document id
-                    quantity = 1,
-                    commonId = commonId // Assign common ID for grouping
+                    quantity = 1
                 )
-                println("📝 Creating base product with commonId: $commonId")
+                println("📝 Creating base product")
                 val productId = repository.addProduct(productForDoc)
                 println("✅ Base product created with ID: $productId")
 
@@ -567,10 +519,7 @@ class ProductsViewModel(
                 for (code in barcodes) {
                     val inventoryItem = InventoryItem(
                         productId = productId,
-                        barcodeId = code,
-                        status = InventoryStatus.AVAILABLE,
-                        location = "",
-                        notes = ""
+                        barcodeId = code
                     )
                     inventoryRepository?.addInventoryItem(inventoryItem)
                     println("✅ Added inventory item for barcode: $code")
@@ -622,88 +571,11 @@ class ProductsViewModel(
     }
 
     /**
-     * Update all products that share the same commonId with the provided product data
-     * This ensures that when editing a product, all related products (same commonId) are updated
+     * Update product (commonId removed, so this just updates the single product)
      */
     fun updateProductsWithCommonId(product: Product) {
-        viewModelScope.launch {
-            _loading.value = true
-            try {
-                if (product.commonId == null) {
-                    // If no commonId, just update the single product
+        // Since commonId is removed, just update the single product
                     updateProduct(product)
-                    return@launch
-                }
-
-                // Find all products with the same commonId
-                val allProducts = repository.getAllProducts()
-                val productsWithSameCommonId = allProducts.filter { it.commonId == product.commonId }
-
-                println("🔄 BULK UPDATE: Found ${productsWithSameCommonId.size} products with commonId: ${product.commonId}")
-
-                var successCount = 0
-                var failureCount = 0
-
-                // Update each product with the same commonId
-                productsWithSameCommonId.forEach { existingProduct ->
-                    try {
-                        // Create updated product with same ID but updated fields from the edited product
-                        val updatedProduct = existingProduct.copy(
-                            name = product.name,
-                            description = product.description,
-                            categoryId = product.categoryId,
-                            materialId = product.materialId,
-                            materialType = product.materialType,
-                            totalWeight = product.totalWeight,
-                            defaultMakingRate = product.defaultMakingRate,
-                            isOtherThanGold = product.isOtherThanGold,
-                            lessWeight = product.lessWeight,
-                            hasStones = product.hasStones,
-                            stoneName = product.stoneName,
-                            stoneQuantity = product.stoneQuantity,
-                            stoneRate = product.stoneRate,
-                            cwWeight = product.cwWeight,
-                            vaCharges = product.vaCharges,
-                            hasCustomPrice = product.hasCustomPrice,
-                            customPrice = product.customPrice,
-                            available = product.available,
-                            featured = product.featured,
-                            images = product.images,
-                            show = product.show
-                            // Keep original: id, quantity, commonId, createdAt
-                        )
-
-                        val success = repository.updateProduct(updatedProduct)
-                        if (success) {
-                            successCount++
-                            println("✅ Updated product: ${updatedProduct.id} (${updatedProduct.name})")
-                        } else {
-                            failureCount++
-                            println("❌ Failed to update product: ${updatedProduct.id}")
-                        }
-                    } catch (e: Exception) {
-                        failureCount++
-                        println("❌ Error updating product ${existingProduct.id}: ${e.message}")
-                    }
-                }
-
-                if (failureCount == 0) {
-                    println("🎉 Successfully updated all ${successCount} products with commonId: ${product.commonId}")
-                    loadProducts() // Refresh the list
-                    loadFeaturedProducts() // Refresh featured products list
-                    _error.value = null
-                } else {
-                    _error.value = "Updated ${successCount} products successfully, ${failureCount} failed"
-                    loadProducts() // Still refresh to show partial updates
-                }
-
-            } catch (e: Exception) {
-                _error.value = "Failed to update products with common ID: ${e.message}"
-                println("❌ Bulk update error: ${e.message}")
-            } finally {
-                _loading.value = false
-            }
-        }
     }
 
     fun deleteProduct(productId: String) {
@@ -853,7 +725,6 @@ class ProductsViewModel(
                     println("✅ Inventory item found for barcode deletion:")
                     println("   - Inventory ID: ${inventoryItem.id}")
                     println("   - Product ID: ${inventoryItem.productId}")
-                    println("   - Status: ${inventoryItem.status}")
 
                     // Actually delete the inventory item document
                     val success = inventoryRepository?.deleteInventoryItem(inventoryItem.id) ?: false

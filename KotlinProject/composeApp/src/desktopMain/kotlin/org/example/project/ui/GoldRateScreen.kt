@@ -24,6 +24,7 @@ import org.example.project.JewelryAppInitializer
 import org.example.project.data.MetalRate
 import org.example.project.data.Material
 import org.example.project.data.Category
+import org.example.project.data.Stone
 import org.example.project.viewModels.MetalRateViewModel
 import org.example.project.viewModels.ProductsViewModel
 import java.text.NumberFormat
@@ -50,9 +51,13 @@ fun GoldRateScreen(
 
     val metalRates by metalRateViewModel.metalRates.collectAsState()
     val materials by productsViewModel.materials
+    val stones = productsViewModel.stones.value
     val loading by metalRateViewModel.loading.collectAsState()
     val error by metalRateViewModel.error.collectAsState()
     val scope = rememberCoroutineScope()
+
+    // Scroll state for right side form
+    val scrollState = rememberScrollState()
 
     // Local state for update form
     var selectedMaterialId by remember { mutableStateOf("") }
@@ -64,12 +69,16 @@ fun GoldRateScreen(
     // Material suggestions from Firestore
     val materialSuggestions = materials.map { it.name }
 
-    // Material type suggestions - Only 24K for base rate input
-    val materialTypeSuggestions = listOf("24K")
+    // Material type suggestions - Get from existing metal rates and common types
+    val materialTypeSuggestions = remember(metalRates) {
+        val existingTypes = metalRates.map { it.materialType }.distinct().sorted()
+        val commonTypes = listOf("24K", "22K", "20K", "18K", "14K", "10K")
+        (commonTypes + existingTypes).distinct()
+    }
 
-    // Stones suggestions from Firestore (names and treat colors as purities)
+    // Stones suggestions from Firestore (names and purities)
     val stoneNameSuggestions = productsViewModel.stoneNames.value
-    val stonePuritySuggestions = productsViewModel.stoneColors.value
+    val stonePuritySuggestions = productsViewModel.stonePurities.value
 
     // Stone UI local state
     var stoneName by remember { mutableStateOf("") }
@@ -102,12 +111,87 @@ fun GoldRateScreen(
             Column(
                 modifier = Modifier
                     .weight(0.6f)
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 CurrentMetalRatesCard(
                     metalRates = metalRates,
-                    loading = loading
+                    loading = loading,
+                    materials = materials,
+                    stones = stones,
+                    onEditRate = { metalRate ->
+                        // Check if it's a metal (in materials collection) or stone (in stones collection)
+                        val isMetal = materials.any { it.name.equals(metalRate.materialName, ignoreCase = true) }
+                        val isStone = stones.any { it.name.equals(metalRate.materialName, ignoreCase = true) }
+                        
+                        if (isMetal) {
+                            // Populate metal rate form
+                            val material = materials.find { it.name.equals(metalRate.materialName, ignoreCase = true) }
+                            selectedMaterialId = material?.id ?: ""
+                            selectedMaterialType = metalRate.materialType
+                            rateInput = metalRate.pricePerGram.toString()
+                            materialDisplayValue = metalRate.materialName
+                            materialTypeDisplayValue = metalRate.materialType
+                            
+                            // Clear stone form
+                            stoneName = ""
+                            stonePurity = ""
+                            
+                            // Scroll to top (metal form is first)
+                            scope.launch {
+                                scrollState.animateScrollTo(0)
+                            }
+                        } else if (isStone) {
+                            // Populate stone rate form
+                            stoneName = metalRate.materialName
+                            stonePurity = metalRate.materialType
+                            
+                            // Clear metal form
+                            selectedMaterialId = ""
+                            selectedMaterialType = ""
+                            rateInput = ""
+                            materialDisplayValue = ""
+                            materialTypeDisplayValue = ""
+                            
+                            // Scroll to stone form (below metal form)
+                            scope.launch {
+                                // Estimate scroll position for stone form (approximately after metal form)
+                                // Metal form is typically around 400-500px, so scroll to show stone form
+                                val maxScroll = scrollState.maxValue
+                                scrollState.animateScrollTo(maxScroll.coerceAtMost(500))
+                            }
+                        } else {
+                            // Fallback: treat as metal if materialId is not empty, otherwise as stone
+                            if (metalRate.materialId.isNotEmpty()) {
+                                selectedMaterialId = metalRate.materialId
+                                selectedMaterialType = metalRate.materialType
+                                rateInput = metalRate.pricePerGram.toString()
+                                materialDisplayValue = metalRate.materialName
+                                materialTypeDisplayValue = metalRate.materialType
+                                
+                                stoneName = ""
+                                stonePurity = ""
+                                
+                                scope.launch {
+                                    scrollState.animateScrollTo(0)
+                                }
+                            } else {
+                                stoneName = metalRate.materialName
+                                stonePurity = metalRate.materialType
+                                
+                                selectedMaterialId = ""
+                                selectedMaterialType = ""
+                                rateInput = ""
+                                materialDisplayValue = ""
+                                materialTypeDisplayValue = ""
+                                
+                                scope.launch {
+                                    val maxScroll = scrollState.maxValue
+                                    scrollState.animateScrollTo(maxScroll.coerceAtMost(500))
+                                }
+                            }
+                        }
+                    }
                 )
             }
 
@@ -115,7 +199,7 @@ fun GoldRateScreen(
             Column(
                 modifier = Modifier
                     .weight(0.4f)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScroll(scrollState),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Metal Rate Update Card
@@ -176,27 +260,27 @@ fun GoldRateScreen(
                     onStoneNameChange = { stoneName = it },
                     onStonePurityChange = { stonePurity = it },
                     onAddNewStoneName = { newName ->
-                        productsViewModel.addStoneSuggestion(newName, stonePurity.ifBlank { "" }) { }
-                        if (materials.none { it.name.equals(newName, ignoreCase = true) }) {
-                            productsViewModel.addMaterialSuggestion(newName) { }
-                        }
+                        // When adding a new stone name, only save the name to stones collection
+                        // Do NOT add it to materials collection
+                        productsViewModel.addStoneSuggestion(newName) { }
                     },
                     onAddNewStonePurity = { newPurity ->
-                        productsViewModel.addStoneSuggestion(stoneName.ifBlank { "" }, newPurity) { }
+                        // When adding a new purity, don't create a new stone document
+                        // Purity is only stored in the rates collection, not in stones collection
+                        // So we don't call addStoneSuggestion here
                     },
                     onUpdate = { rate ->
                         val targetName = stoneName.trim()
                         val targetPurity = stonePurity.trim().ifBlank { "DEFAULT" }
                         if (targetName.isEmpty()) return@StoneRateInputCard
                         scope.launch {
-                            val existing = materials.find { it.name.equals(targetName, ignoreCase = true) }
-                            if (existing != null) {
-                                metalRateViewModel.updateOrCreateMetalRate(existing.id, existing.name, targetPurity, rate)
-                            } else {
-                                productsViewModel.addMaterialSuggestion(targetName) { newId ->
-                                    metalRateViewModel.updateOrCreateMetalRate(newId, targetName, targetPurity, rate)
-                                }
-                            }
+                            // Update stone rate in stones collection
+                            metalRateViewModel.updateStoneRate(
+                                stoneName = targetName,
+                                purity = targetPurity,
+                                rate = rate
+                            )
+                            
                             stoneName = ""
                             stonePurity = ""
                         }
@@ -321,10 +405,15 @@ private fun ErrorBanner(
 @Composable
 private fun CurrentMetalRatesCard(
     metalRates: List<MetalRate>,
-    loading: Boolean
+    loading: Boolean,
+    materials: List<Material>,
+    stones: List<Stone>,
+    onEditRate: (MetalRate) -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(),
         elevation = 6.dp,
         shape = RoundedCornerShape(20.dp),
         backgroundColor = CardWhite
@@ -332,6 +421,7 @@ private fun CurrentMetalRatesCard(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .fillMaxHeight()
                 .padding(24.dp)
         ) {
             // Header Section
@@ -441,10 +531,15 @@ private fun CurrentMetalRatesCard(
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.heightIn(max = 500.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
                 ) {
                     items(metalRates) { metalRate ->
-                        EnhancedMetalRateRow(metalRate = metalRate)
+                        EnhancedMetalRateRow(
+                            metalRate = metalRate,
+                            onEdit = { onEditRate(metalRate) }
+                        )
                     }
                 }
             }
@@ -453,7 +548,10 @@ private fun CurrentMetalRatesCard(
 }
 
 @Composable
-private fun EnhancedMetalRateRow(metalRate: MetalRate) {
+private fun EnhancedMetalRateRow(
+    metalRate: MetalRate,
+    onEdit: () -> Unit
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -469,7 +567,8 @@ private fun EnhancedMetalRateRow(metalRate: MetalRate) {
         ) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
             ) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -493,7 +592,7 @@ private fun EnhancedMetalRateRow(metalRate: MetalRate) {
                         color = TextPrimary
                     )
                     Text(
-                        "Base: ${metalRate.karat}K",
+                        "Type: ${metalRate.materialType}",
                         fontSize = 12.sp,
                         color = TextSecondary,
                         modifier = Modifier.padding(top = 2.dp)
@@ -501,17 +600,36 @@ private fun EnhancedMetalRateRow(metalRate: MetalRate) {
                 }
             }
 
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = CardWhite
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "₹${formatCurrency(metalRate.pricePerGram)}",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = GoldPrimary,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = CardWhite
+                ) {
+                    Text(
+                        "₹${formatCurrency(metalRate.pricePerGram)}",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GoldPrimary,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onEdit,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(CardWhite, RoundedCornerShape(12.dp))
+                ) {
+                    Icon(
+                        Icons.Default.Edit,
+                        contentDescription = "Edit",
+                        tint = GoldPrimary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
     }
@@ -571,7 +689,7 @@ private fun UpdateRateCard(
                         color = TextPrimary
                     )
                     Text(
-                        "Enter 24K base rates",
+                        "Enter material name, type and rate",
                         fontSize = 12.sp,
                         color = TextSecondary
                     )
@@ -600,13 +718,21 @@ private fun UpdateRateCard(
             // Material Type Selection
             AutoCompleteTextField(
                 value = materialTypeDisplayValue,
-                onValueChange = onMaterialTypeDisplayValueChange,
+                onValueChange = { newValue ->
+                    onMaterialTypeDisplayValueChange(newValue)
+                    // Update selectedMaterialType when user types
+                    if (newValue.isNotEmpty()) {
+                        onMaterialTypeSelected(newValue)
+                    }
+                },
                 onItemSelected = onMaterialTypeSelected,
-                onAddNew = { },
+                onAddNew = { newType ->
+                    onMaterialTypeSelected(newType)
+                },
                 suggestions = materialTypeSuggestions,
                 label = "Material Type",
-                placeholder = "Select material type (e.g., 24K)",
-                maxSuggestions = 5
+                placeholder = "Enter or select material type (e.g., 24K, 22K, 18K)",
+                maxSuggestions = 8
             )
 
             // Rate Input
@@ -617,7 +743,7 @@ private fun UpdateRateCard(
                         onRateInputChange(input)
                     }
                 },
-                label = { Text("24K Rate per gram (₹)", fontSize = 14.sp) },
+                label = { Text("Rate per gram (₹)", fontSize = 14.sp) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,

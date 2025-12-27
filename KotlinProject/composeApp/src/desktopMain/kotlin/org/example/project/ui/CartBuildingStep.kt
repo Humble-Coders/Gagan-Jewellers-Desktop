@@ -53,6 +53,8 @@ import org.example.project.data.GroupedProduct
 import org.example.project.data.MetalRatesManager
 import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.ui.CartTable
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
 import org.example.project.utils.ImageLoader
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.ProductsViewModel
@@ -216,8 +218,28 @@ fun CartBuildingScreen(
 ) {
     val products by productsViewModel.products
     val categories by productsViewModel.categories
+    val inventoryLoading by productsViewModel.inventoryLoading
+    val inventoryRefreshTrigger by productsViewModel.inventoryRefreshTrigger
+    val inventoryData by productsViewModel.inventoryData
     val coroutineScope = rememberCoroutineScope()
     val cart by cartViewModel.cart
+    
+    // Load inventory data when screen loads (same as DashboardScreen)
+    LaunchedEffect(Unit) {
+        if (products.isEmpty()) {
+            productsViewModel.loadProducts()
+        } else if (!inventoryLoading && inventoryData.isEmpty()) {
+            // If products are loaded but inventory data is not, trigger inventory loading
+            productsViewModel.loadInventoryData()
+        }
+    }
+    
+    // Also trigger inventory loading when products change (in case products were loaded elsewhere)
+    LaunchedEffect(products) {
+        if (products.isNotEmpty() && !inventoryLoading && inventoryData.isEmpty()) {
+            productsViewModel.loadInventoryData()
+        }
+    }
     
     // Debug cart state changes
     LaunchedEffect(cart) {
@@ -244,16 +266,8 @@ fun CartBuildingScreen(
     
     // Load metal rates when screen loads
     LaunchedEffect(Unit) {
-        println("🏪 SHOP INVENTORY: Loading metal rates for dynamic pricing")
         ratesVM.loadMetalRates()
     }
-
-    // Add comprehensive logging for debugging
-    println("🏪 DEBUG: CartBuildingScreen initialized")
-    println("   - Total products count: ${products.size}")
-    println("   - Categories count: ${categories.size}")
-    println("   - Cart items count: ${cart.items.size}")
-    println("   - Cart item IDs: ${cart.items.map { it.productId }}")
 
     // Log all products to see what's available
     products.forEach { product ->
@@ -278,23 +292,21 @@ fun CartBuildingScreen(
     var selectedCategoryId by remember { mutableStateOf("") }
     var productImages by remember { mutableStateOf<Map<String, ImageBitmap>>(emptyMap()) }
 
-    // Get grouped products like dashboard
-    val groupedProducts = remember(products) { productsViewModel.getGroupedProducts() }
-
-    // Log grouped products
-    println("📊 DEBUG: Grouped products count: ${groupedProducts.size}")
-    groupedProducts.forEach { groupedProduct ->
-        println("   📦 Grouped Product: ${groupedProduct.baseProduct.name}")
-        println("      - Base Product ID: ${groupedProduct.baseProduct.id}")
-        println("      - Grouped Quantity: ${groupedProduct.quantity}")
-        println("      - Individual Products Count: ${groupedProduct.individualProducts.size}")
-        println("      - Barcode IDs: ${groupedProduct.barcodeIds}")
-        println("      - Common ID: ${groupedProduct.commonId}")
+    // Get grouped products like dashboard - update when inventory loads (same as DashboardScreen)
+    val groupedProducts = remember(products, inventoryRefreshTrigger, inventoryData) {
+        if (products.isEmpty()) {
+            emptyList()
+        } else {
+            try {
+                productsViewModel.getGroupedProducts()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
     }
 
     // Track cart items for selection state
     val cartItemIds = cart.items.map { it.productId }.toSet()
-    println("🛒 DEBUG: Cart item IDs: $cartItemIds")
 
     // Load product images
     LaunchedEffect(products) {
@@ -367,66 +379,24 @@ fun CartBuildingScreen(
         val filteredGroupedProducts = groupedProducts.filter { groupedProduct ->
             val product = groupedProduct.baseProduct
 
-            // Add comprehensive logging for debugging
-            println("🔍 DEBUG: Checking product: ${product.name}")
-            println("   - Product ID: ${product.id}")
-            println("   - Category ID: ${product.categoryId}")
-            println("   - Category Name: ${productsViewModel.getCategoryName(product.categoryId)}")
-            println("   - Available: ${product.available}")
-            println("   - Grouped Quantity: ${groupedProduct.quantity}")
-            println("   - Material Type: ${product.materialType}")
-            println("   - Description: ${product.description}")
-
             val matchesSearch = if (searchQuery.isEmpty()) true else {
                 val nameMatch = product.name.contains(searchQuery, ignoreCase = true)
                 val descMatch = product.description.contains(searchQuery, ignoreCase = true)
                 val categoryMatch = productsViewModel.getCategoryName(product.categoryId).contains(searchQuery, ignoreCase = true)
                 val materialMatch = productsViewModel.getMaterialName(product.materialId).contains(searchQuery, ignoreCase = true)
 
-                println("   - Search Query: '$searchQuery'")
-                println("   - Name Match: $nameMatch")
-                println("   - Description Match: $descMatch")
-                println("   - Category Match: $categoryMatch")
-                println("   - Material Match: $materialMatch")
-
                 nameMatch || descMatch || categoryMatch || materialMatch
             }
 
             val matchesCategory = if (selectedCategoryId.isEmpty()) true else {
-                val categoryMatch = product.categoryId == selectedCategoryId
-                println("   - Selected Category ID: '$selectedCategoryId'")
-                println("   - Category Match: $categoryMatch")
-                categoryMatch
+                product.categoryId == selectedCategoryId
             }
 
             // Add inventory check - only show products with quantity > 0
-            val finalResult = matchesSearch && matchesCategory && product.available && groupedProduct.quantity > 0
-
-            println("   - Final Filter Result: $finalResult")
-            println("   - Matches Search: $matchesSearch")
-            println("   - Matches Category: $matchesCategory")
-            println("   - Product Available: ${product.available}")
-            println("   - Quantity > 0: ${groupedProduct.quantity > 0}")
-            if (groupedProduct.quantity == 0) {
-                println("   - ⚠️ Product filtered out due to 0 quantity (correct behavior for CartBuildingStep)")
-            }
-            println("   ==========================================")
-
-            finalResult
-        }
-
-        // Log filtered results
-        println("🔍 DEBUG: Filtered grouped products count: ${filteredGroupedProducts.size}")
-        filteredGroupedProducts.forEach { groupedProduct ->
-            println("   ✅ Filtered Product: ${groupedProduct.baseProduct.name}")
-            println("      - Product ID: ${groupedProduct.baseProduct.id}")
-            println("      - Category: ${productsViewModel.getCategoryName(groupedProduct.baseProduct.categoryId)}")
-            println("      - Available: ${groupedProduct.baseProduct.available}")
-            println("      - Quantity: ${groupedProduct.quantity}")
+            matchesSearch && matchesCategory && product.available && groupedProduct.quantity > 0
         }
 
         if (filteredGroupedProducts.isEmpty()) {
-            println("❌ DEBUG: No products found after filtering")
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -457,25 +427,15 @@ fun CartBuildingScreen(
                         cartItems = cart.items,
                         metalRates = metalRates,
                         onCardClick = {
-                            // Add logging for card click
-                            println("🖱️ DEBUG: Card clicked for product: ${groupedProduct.baseProduct.name}")
-                            println("   - Product ID: ${groupedProduct.baseProduct.id}")
-                            println("   - Is in cart: ${cartItemIds.contains(groupedProduct.baseProduct.id)}")
-                            println("   - Cart item IDs: $cartItemIds")
-                            println("   - Available barcodes: ${groupedProduct.barcodeIds}")
-
                             // Toggle cart selection
                             if (cartItemIds.contains(groupedProduct.baseProduct.id)) {
-                                println("   - Removing from cart")
                                 cartViewModel.removeFromCart(groupedProduct.baseProduct.id)
                             } else {
                                 // Show barcode selection dialog if product has multiple barcodes
                                 if (groupedProduct.barcodeIds.size > 1) {
-                                    println("   - Showing barcode selection dialog")
                                     selectedGroupedProduct = groupedProduct
                                     showBarcodeDialog = true
                                 } else {
-                                    println("   - Adding to cart directly (single barcode)")
                                     cartViewModel.addToCart(groupedProduct.baseProduct, groupedProduct.barcodeIds)
                                 }
                             }
@@ -502,20 +462,19 @@ fun CartBuildingScreen(
                                         // Single barcode - update directly
                                         cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
                                     }
-                                } else {
-                                    // Product not in cart yet - show barcode dialog if multiple barcodes
-                                    if (groupedProduct.barcodeIds.size > 1) {
-                                        println("🖱️ Adding to cart - showing barcode selection dialog")
-                                        selectedGroupedProduct = groupedProduct
-                                        showBarcodeDialog = true
                                     } else {
-                                        // Single barcode - add directly
-                                        cartViewModel.addToCart(groupedProduct.baseProduct, groupedProduct.barcodeIds)
-                                        if (newQuantity > 1) {
-                                            cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
+                                        // Product not in cart yet - show barcode dialog if multiple barcodes
+                                        if (groupedProduct.barcodeIds.size > 1) {
+                                            selectedGroupedProduct = groupedProduct
+                                            showBarcodeDialog = true
+                                        } else {
+                                            // Single barcode - add directly
+                                            cartViewModel.addToCart(groupedProduct.baseProduct, groupedProduct.barcodeIds)
+                                            if (newQuantity > 1) {
+                                                cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
+                                            }
                                         }
                                     }
-                                }
                             } else {
                                 cartViewModel.removeFromCart(groupedProduct.baseProduct.id)
                             }
@@ -548,13 +507,6 @@ fun CartBuildingScreen(
                 selectedGroupedProduct = null
             },
             onConfirm = { selectedBarcodes ->
-                println("🏷️ BARCODE SELECTION CONFIRMED IN CART BUILDING")
-                println("   - Product: ${groupedProduct.baseProduct.name}")
-                println("   - Product ID: $productId")
-                println("   - Selected barcodes: $selectedBarcodes")
-                println("   - Selected barcodes count: ${selectedBarcodes.size}")
-                println("   - Target quantity: $targetQuantity")
-                
                 // Update the cart with selected barcodes
                 if (currentItem != null) {
                     // Always use updateCartItemBarcodes to replace barcodes (not merge)
@@ -566,10 +518,6 @@ fun CartBuildingScreen(
                 
                 // Save the selected state
                 selectedBarcodeStates = selectedBarcodeStates + (productId to selectedBarcodes)
-                
-                println("   - Cart update completed")
-                println("   - Current cart items count: ${cart.items.size}")
-                println("   - Current cart item IDs: ${cart.items.map { it.productId }}")
                 
                 showBarcodeDialog = false
                 selectedGroupedProduct = null
@@ -595,34 +543,12 @@ fun GroupedProductCard(
 ) {
     val product = groupedProduct.baseProduct
 
-    // Dynamic price calculation using metal rates (same as dashboard)
-    val displayPrice = remember(cartItems, product, cartItem, metalRates) {
-        if (cartItem != null) {
-            // Match cart item left card: use preferred metal rate and item fields
-            val karat = if (cartItem.metal.isNotEmpty()) {
-                cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(product.materialType)
-            } else extractKaratFromMaterialType(product.materialType)
-            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
-            val collectionRate = try {
-                ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
-            } catch (e: Exception) { 0.0 }
-            val metalRate = if (collectionRate > 0) collectionRate else getMaterialRateForProduct(product, metalRates)
-
-            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
-            val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else product.lessWeight
-            val netWeight = grossWeight - lessWeight
-            val makingPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else product.defaultMakingRate
-            val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else product.cwWeight
-            val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else product.stoneRate
-            val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else product.stoneQuantity
-            val vaCharges = if (cartItem.va > 0) cartItem.va else product.vaCharges
-
-            val baseAmount = netWeight * metalRate * cartItem.quantity
-            val makingCharges = netWeight * makingPerGram * cartItem.quantity
-            val stoneAmount = stoneRate * stoneQuantity * cwWeight
-            baseAmount + makingCharges + stoneAmount + vaCharges
+    // Dynamic price calculation - always use ProductPriceCalculator logic (same whether in cart or not)
+    val displayPrice = remember(product, metalRates) {
+        // Always use the same calculation as ProductPriceCalculator.kt
+        if (product.hasCustomPrice) {
+            product.customPrice
         } else {
-            // Not in cart: always use dynamic calculation with current metal rates
             calculateProductTotalCost(product, metalRates)
         }
     }
@@ -879,11 +805,9 @@ fun ProductCard(
     onCardClick: () -> Unit,
     onUpdateQuantity: (Int) -> Unit
 ) {
-    // Use the same price logic as dashboard: customPrice > totalProductCost > calculated
+    // Use the same price logic as dashboard: customPrice > calculated
     val displayPrice = if (product.hasCustomPrice) {
         product.customPrice
-    } else if (product.totalProductCost > 0) {
-        product.totalProductCost
     } else {
         calculateProductTotalCost(product, emptyList())
     }
@@ -1424,52 +1348,71 @@ fun CartScreen(
                             color = Color.Gray,
                             fontWeight = FontWeight.Medium
                         )
-                        // Calculate total as sum of all cart item display amounts (same as CompactCartItem)
+                        // Calculate total as sum of all cart item prices using ProductPriceCalculator logic
                         val metalRates by MetalRatesManager.metalRates
+                        val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
                         val cartTotal = remember(cart, metalRates) {
                             val total = cart.items.sumOf { cartItem ->
                                 val currentProduct = cartItem.product
+                                
+                                // Use ProductPriceCalculator logic (same as CompactCartItem)
+                                val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
+                                val makingPercentage = currentProduct.makingPercent
+                                val labourRatePerGram = currentProduct.labourRate
+                                
+                                // Extract kundan and jarkan from stones array
+                                val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                                val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                                
+                                // Sum all Kundan prices and weights
+                                val kundanPrice = kundanStones.sumOf { it.amount }
+                                val kundanWeight = kundanStones.sumOf { it.weight }
+                                
+                                // Sum all Jarkan prices and weights
+                                val jarkanPrice = jarkanStones.sumOf { it.amount }
+                                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                                
+                                // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
                                 val metalKarat = if (cartItem.metal.isNotEmpty()) {
                                     cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
                                 } else {
                                     extractKaratFromMaterialType(currentProduct.materialType)
                                 }
-                                
-                                val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
-                                val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else currentProduct.lessWeight
-                                val netWeight = grossWeight - lessWeight
-                                
-                                val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
                                 val collectionRate = try {
                                     ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
                                 } catch (e: Exception) { 0.0 }
-                                
                                 val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
                                 val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
-                                val silverRate = metalRates.getSilverRateForPurity(999) // Default to 999 purity
-                                
-                                val metalRate = if (collectionRate > 0) collectionRate else when {
+                                val silverPurity = extractSilverPurityFromMaterialType(currentProduct.materialType)
+                                val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                                val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
                                     currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
                                     currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
                                     else -> goldRate
                                 }
                                 
-                                val quantity = cartItem.quantity
-                                val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else currentProduct.defaultMakingRate
-                                val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else currentProduct.cwWeight
-                                val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else currentProduct.stoneRate
-                                val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else currentProduct.stoneQuantity
-                                val vaCharges = if (cartItem.va > 0) cartItem.va else currentProduct.vaCharges
+                                // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+                                val priceInputs = ProductPriceInputs(
+                                    grossWeight = grossWeight,
+                                    goldPurity = currentProduct.materialType,
+                                    goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                                    makingPercentage = makingPercentage,
+                                    labourRatePerGram = labourRatePerGram,
+                                    kundanPrice = kundanPrice,
+                                    kundanWeight = kundanWeight,
+                                    jarkanPrice = jarkanPrice,
+                                    jarkanWeight = jarkanWeight,
+                                    goldRatePerGram = goldRatePerGram
+                                )
                                 
-                                val baseAmount = netWeight * metalRate * quantity
-                                val makingCharges = netWeight * makingChargesPerGram * quantity
-                                val stoneAmount = stoneRate * stoneQuantity * cwWeight
-                                val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+                                // Use the same calculation function as ProductPriceCalculator
+                                val result = calculateProductPrice(priceInputs)
                                 
-                                println("🛒 CART TOTAL DEBUG: ${cartItem.product.name} = $totalCharges")
-                                totalCharges
+                                // Multiply by quantity for cart item total
+                                val itemTotal = result.totalProductPrice * cartItem.quantity
+                                
+                                itemTotal
                             }
-                            println("🛒 CART TOTAL CALCULATION: Total = $total")
                             total
                         }
                         
@@ -1613,42 +1556,43 @@ private fun formatCurrency(amount: Double): String {
 }
 
 /**
- * Calculate the total product cost based on dynamic metal rates (same as dashboard)
+ * Calculate the total product cost using the same logic as ProductPriceCalculator
+ * Fetches material rates from metal rates (same as ProductPriceCalculator)
  */
 private fun calculateProductTotalCost(product: Product, metalRates: List<org.example.project.data.MetalRate>): Double {
-    println("🧮 SHOP INVENTORY TOTAL COST CALCULATION for ${product.name}:")
-    println("   - Net Weight: ${product.totalWeight - product.lessWeight} (total: ${product.totalWeight}, less: ${product.lessWeight})")
+    // Extract kundan and jarkan from stones array
+    val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+    val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
     
-    // Calculate net weight (total weight - less weight)
-    val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
-    // Always show per-item price in inventory
-    val qty = 1
-
-    // Material cost (net weight × material rate × 1)
-    val materialRate = getMaterialRateForProduct(product, metalRates)
-    val baseAmount = netWeight * materialRate * qty
-
-    // Making charges (net weight × making rate × 1)
-    val makingCharges = netWeight * product.defaultMakingRate * qty
-
-    // Stone amount (if has stones) - STONE_RATE × STONE_QUANTITY × CW_WT
-    val stoneAmount = if (product.hasStones) {
-        if (product.cwWeight > 0 && product.stoneRate > 0) {
-            product.stoneRate * (product.stoneQuantity.takeIf { it > 0 } ?: 1.0) * product.cwWeight
-        } else 0.0
-    } else 0.0
-
-    // Total Charges = Base Amount + Making Charges + Stone Amount + VA Charges
-    val totalCharges = baseAmount + makingCharges + stoneAmount + product.vaCharges
+    // Sum all Kundan prices and weights
+    val kundanPrice = kundanStones.sumOf { it.amount }
+    val kundanWeight = kundanStones.sumOf { it.weight }
     
-    println("   - Base Amount: $baseAmount (netWeight: $netWeight × materialRate: $materialRate × quantity: $qty)")
-    println("   - Making Charges: $makingCharges (netWeight: $netWeight × makingRate: ${product.defaultMakingRate} × quantity: $qty)")
-    println("   - Stone Amount: $stoneAmount (stoneRate: ${product.stoneRate} × stoneQuantity: ${product.stoneQuantity} × cwWeight: ${product.cwWeight} × quantity: $qty)")
-    println("   - VA Charges: ${product.vaCharges}")
-    println("   - TOTAL CHARGES: $totalCharges")
-    println("🧮 SHOP INVENTORY CALCULATION END")
+    // Sum all Jarkan prices and weights
+    val jarkanPrice = jarkanStones.sumOf { it.amount }
+    val jarkanWeight = jarkanStones.sumOf { it.weight }
     
-    return totalCharges
+    // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
+    val goldRatePerGram = getMaterialRateForProduct(product, metalRates)
+    
+    // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+    val priceInputs = ProductPriceInputs(
+        grossWeight = product.totalWeight,
+        goldPurity = product.materialType,
+        goldWeight = product.materialWeight.takeIf { it > 0 } ?: product.totalWeight,
+        makingPercentage = product.makingPercent,
+        labourRatePerGram = product.labourRate,
+        kundanPrice = kundanPrice,
+        kundanWeight = kundanWeight,
+        jarkanPrice = jarkanPrice,
+        jarkanWeight = jarkanWeight,
+        goldRatePerGram = goldRatePerGram
+    )
+    
+    // Use the same calculation function as ProductPriceCalculator
+    val result = calculateProductPrice(priceInputs)
+    
+    return result.totalProductPrice
 }
 
 /**
@@ -1656,26 +1600,17 @@ private fun calculateProductTotalCost(product: Product, metalRates: List<org.exa
  * Uses dynamic metal rates from MetalRateViewModel (same as dashboard)
  */
 private fun getMaterialRateForProduct(product: Product, metalRates: List<org.example.project.data.MetalRate>): Double {
-    println("💰 SHOP INVENTORY RATE CALCULATION for ${product.name}:")
-    println("   - Material ID: ${product.materialId}")
-    println("   - Material Type: ${product.materialType}")
     val karat = extractKaratFromMaterialType(product.materialType)
-    println("   - Karat: $karat")
-    println("   - Total Metal Rates Available: ${metalRates.size}")
     
     // Prefer collection rate from rate view model (same as cart detail)
     val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
     val collectionRate = try {
         ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
     } catch (e: Exception) { 
-        println("   - Collection rate calculation failed: ${e.message}")
         0.0 
     }
 
     if (collectionRate > 0) {
-        println("💰 Calculated rate (exact) for ${product.materialType} $karat K: $collectionRate (base: $collectionRate for ${product.materialType})")
-        println("   - Collection Rate: $collectionRate")
-        println("   - Using Collection Rate: $collectionRate")
         return collectionRate
     }
 
@@ -1692,6 +1627,19 @@ private fun getMaterialRateForProduct(product: Product, metalRates: List<org.exa
     println("   - Using Collection Rate: $fallbackRate")
     
     return fallbackRate
+}
+
+/**
+ * Extract silver purity from material type string
+ */
+private fun extractSilverPurityFromMaterialType(materialType: String): Int {
+    val s = materialType.lowercase()
+    if (s.contains("999")) return 999
+    if (s.contains("925") || s.contains("92.5")) return 925
+    if (s.contains("900") || s.contains("90.0")) return 900
+    val threeDigits = Regex("(\\d{3})").find(s)?.groupValues?.getOrNull(1)?.toIntOrNull()
+    if (threeDigits != null && threeDigits in listOf(900, 925, 999)) return threeDigits
+    return 999
 }
 
 /**
@@ -1715,14 +1663,8 @@ fun BarcodeSelectionDialog(
         mutableStateOf(initialSelectedBarcodes) 
     }
 
-    println("🏷️ BARCODE SELECTION DIALOG SHOWN")
-    println("   - Product Name: ${groupedProduct.baseProduct.name}")
-    println("   - Available Barcodes: ${groupedProduct.barcodeIds}")
-    println("   - Dialog Visible: $isVisible")
-
     androidx.compose.material.AlertDialog(
         onDismissRequest = {
-            println("🏷️ BARCODE SELECTION DIALOG DISMISSED")
             onDismiss()
         },
         title = {
@@ -1809,9 +1751,6 @@ fun BarcodeSelectionDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    println("🏷️ BARCODE SELECTION CONFIRMED")
-                    println("   - Selected barcodes: $selectedBarcodes")
-                    println("   - Product: ${groupedProduct.baseProduct.name}")
                     onConfirm(selectedBarcodes)
                 },
                 enabled = selectedBarcodes.isNotEmpty()
@@ -1822,7 +1761,6 @@ fun BarcodeSelectionDialog(
         dismissButton = {
             TextButton(
                 onClick = {
-                    println("🏷️ BARCODE SELECTION CANCELLED")
                     onDismiss()
                 }
             ) {

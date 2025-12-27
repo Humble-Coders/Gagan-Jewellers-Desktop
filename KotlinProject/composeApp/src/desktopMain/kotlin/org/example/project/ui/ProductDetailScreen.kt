@@ -92,11 +92,13 @@ fun ProductDetailScreen(
                                 val image = withContext(Dispatchers.IO) {
                                     Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
                                 }
-                                // Update just this image in the list
+                                // Update state on Main dispatcher to prevent UI lag
+                                withContext(Dispatchers.Main) {
                                 val updatedList = productImages.toMutableList()
                                 if (index < updatedList.size) {
                                     updatedList[index] = imageUrl to image
                                     productImages = updatedList
+                                    }
                                 }
                             } catch (e: Exception) {
                                 println("Failed to decode image: $imageUrl - ${e.message}")
@@ -498,7 +500,9 @@ private fun formatCurrency(amount: Double): String {
  */
 private fun calculateProductTotalCost(product: Product): Double {
     // Calculate net weight (total weight - less weight)
-    val netWeight = (product.totalWeight - product.lessWeight).coerceAtLeast(0.0)
+    // lessWeight removed from Product, using 0.0 as default
+    val lessWeight = 0.0
+    val netWeight = (product.totalWeight - lessWeight).coerceAtLeast(0.0)
     
     // Material cost (net weight × material rate × quantity)
     val materialRate = getMaterialRateForProduct(product)
@@ -509,18 +513,20 @@ private fun calculateProductTotalCost(product: Product): Double {
     }
     
     // Making charges (net weight × making rate × quantity)
-    val makingCharges = netWeight * product.defaultMakingRate * product.quantity
+    val makingCharges = 0.0 // defaultMakingRate removed from Product
     
-    // Stone amount (if has stones) - CW_WT × STONE_RATE × QTY
-    val stoneAmount = if (product.hasStones) {
-        if (product.cwWeight > 0 && product.stoneRate > 0) {
-            product.cwWeight * product.stoneRate * product.quantity
-        } else 0.0
+    // Stone amount (if has stones) - Use stoneWeight instead of cwWeight
+    val stoneAmount = if (product.hasStones && product.stones.isNotEmpty()) {
+        product.stones.sumOf { stone ->
+            if (stone.weight > 0 && stone.rate > 0) {
+                stone.weight * stone.rate * (stone.quantity.takeIf { it > 0 } ?: 1.0) * product.quantity
+            } else stone.amount * product.quantity
+        }
     } else 0.0
     
-    // Total Charges = Base Amount + Making Charges + Stone Amount + VA Charges
-    // This matches the "Total Charges" display in cart item detail screen
-    return baseAmount + makingCharges + stoneAmount + product.vaCharges
+    // Total Charges = Base Amount + Making Charges + Stone Amount + Labour Charges
+    // Use labourCharges instead of vaCharges
+    return baseAmount + makingCharges + stoneAmount + product.labourCharges
 }
 
 /**

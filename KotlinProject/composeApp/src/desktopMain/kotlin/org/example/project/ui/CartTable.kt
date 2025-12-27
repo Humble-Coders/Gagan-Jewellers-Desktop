@@ -44,6 +44,8 @@ import org.example.project.data.CartItem
 import org.example.project.data.MetalRatesManager
 import org.example.project.data.Product
 import org.example.project.data.extractKaratFromMaterialType
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
 import org.example.project.viewModels.ProductsViewModel
 import java.text.DecimalFormat
 
@@ -95,7 +97,9 @@ fun CartTable(
         editingField?.let { currentField ->
             if (currentField != newField) {
                 val currentValue = fieldValues[currentField]?.text ?: ""
-                saveFieldValue(currentField, currentValue, cartItems, onItemUpdate)
+                if (currentValue.isNotEmpty()) {
+                    saveFieldValue(currentField, currentValue, cartItems, onItemUpdate)
+                }
             }
         }
         editingField = newField
@@ -132,9 +136,14 @@ fun CartTable(
     fun saveAndCloseEditing() {
         editingField?.let { currentField ->
             val currentValue = fieldValues[currentField]?.text ?: ""
-            saveFieldValue(currentField, currentValue, cartItems, onItemUpdate)
+            println("💾 SAVE AND CLOSE: field=$currentField, value='$currentValue'")
+            // Always save the value - for makingPercent and labourRate, allow empty to save as 0
+            if (currentValue.isNotEmpty() || currentField.contains("makingPercent") || currentField.contains("labourRate")) {
+                saveFieldValue(currentField, currentValue, cartItems, onItemUpdate)
+            }
             editingField = null
-            fieldValues = emptyMap()
+            // Clear fieldValues for the saved field to ensure fresh value is loaded from updated product
+            fieldValues = fieldValues.filterKeys { it != currentField }
             keyboardController?.hide()
         }
     }
@@ -476,12 +485,24 @@ private fun CompactCartItem(
     val displayAmount = remember(item, metalRates, metalKarat, currentProduct) {
         println("🛒 CART CALCULATION START - CompactCartItem for ${currentProduct.name}")
         
+        // Use ProductPriceCalculator logic (same as ProductPriceCalculator.kt)
         val grossWeight = if (item.grossWeight > 0) item.grossWeight else currentProduct.totalWeight
-        val lessWeight = if (item.lessWeight > 0) item.lessWeight else currentProduct.lessWeight
-        val netWeight = grossWeight - lessWeight
+        val makingPercentage = currentProduct.makingPercent
+        val labourRatePerGram = currentProduct.labourRate
         
-        println("📊 Weight Details: grossWeight=$grossWeight, lessWeight=$lessWeight, netWeight=$netWeight")
-
+        // Extract kundan and jarkan from stones array
+        val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+        val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+        
+        // Sum all Kundan prices and weights
+        val kundanPrice = kundanStones.sumOf { it.amount }
+        val kundanWeight = kundanStones.sumOf { it.weight }
+        
+        // Sum all Jarkan prices and weights
+        val jarkanPrice = jarkanStones.sumOf { it.amount }
+        val jarkanWeight = jarkanStones.sumOf { it.weight }
+        
+        // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
         val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
         val karatForRate = if (item.metal.isNotEmpty()) {
             item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
@@ -491,34 +512,46 @@ private fun CompactCartItem(
         val collectionRate = try {
             ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, karatForRate)
         } catch (e: Exception) { 0.0 }
-        val metalRate = if (collectionRate > 0) collectionRate else when {
+        val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
             currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
             currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
             else -> goldRate
         }
         
-        println("💰 Rate Details: karatForRate=$karatForRate, collectionRate=$collectionRate, metalRate=$metalRate")
-
-        val baseAmount = netWeight * metalRate * item.quantity
-        val makingChargesPerGram = if (item.makingCharges > 0) item.makingCharges else currentProduct.defaultMakingRate
-        val cwWeight = if (item.cwWeight > 0) item.cwWeight else currentProduct.cwWeight
-        val stoneRate = if (item.stoneRate > 0) item.stoneRate else currentProduct.stoneRate
-        val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else currentProduct.stoneQuantity
-        val vaCharges = if (item.va > 0) item.va else currentProduct.vaCharges
-
-        val makingCharges = netWeight * makingChargesPerGram * item.quantity
-        val stoneAmount = stoneRate * stoneQuantity * cwWeight * item.quantity
+        // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+        val priceInputs = ProductPriceInputs(
+            grossWeight = grossWeight,
+            goldPurity = currentProduct.materialType,
+            goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+            makingPercentage = makingPercentage,
+            labourRatePerGram = labourRatePerGram,
+            kundanPrice = kundanPrice,
+            kundanWeight = kundanWeight,
+            jarkanPrice = jarkanPrice,
+            jarkanWeight = jarkanWeight,
+            goldRatePerGram = goldRatePerGram
+        )
         
-        println("🔍 Stone Calculation Debug (Compact): stoneRate=$stoneRate, stoneQuantity=$stoneQuantity, cwWeight=$cwWeight, stoneAmount=$stoneAmount")
+        // Use the same calculation function as ProductPriceCalculator
+        val result = calculateProductPrice(priceInputs)
         
-        val totalCharges = baseAmount + makingCharges + stoneAmount + vaCharges
+        // Multiply by quantity for cart item
+        val totalCharges = result.totalProductPrice * item.quantity
         
-        println("💵 Amount Breakdown:")
-        println("   Base Amount: $baseAmount (netWeight=$netWeight * metalRate=$metalRate * quantity=${item.quantity})")
-        println("   Making Charges: $makingCharges (netWeight=$netWeight * makingRate=$makingChargesPerGram * quantity=${item.quantity})")
-        println("   Stone Amount: $stoneAmount (stoneRate=$stoneRate * stoneQuantity=$stoneQuantity * cwWeight=$cwWeight)")
-        println("   VA Charges: $vaCharges")
-        println("   TOTAL CHARGES: $totalCharges")
+        println("💵 Amount Breakdown (ProductPriceCalculator logic):")
+        println("   Gross Weight: ${grossWeight}g")
+        println("   Making %: ${makingPercentage}%")
+        println("   Making Weight: ${result.makingWeight}g")
+        println("   New Weight: ${result.newWeight}g")
+        println("   Effective Gold Weight: ${result.effectiveGoldWeight}g")
+        println("   Gold Rate: ₹${goldRatePerGram}/g")
+        println("   Gold Price: ₹${result.goldPrice}")
+        println("   Kundan Price: ₹${kundanPrice} (Weight: ${kundanWeight}g)")
+        println("   Jarkan Price: ₹${jarkanPrice} (Weight: ${jarkanWeight}g)")
+        println("   Labour Charges: ₹${result.labourCharges} (Rate: ₹${labourRatePerGram}/g × New Weight: ${result.newWeight}g)")
+        println("   Per Item Total: ₹${result.totalProductPrice}")
+        println("   Quantity: ${item.quantity}")
+        println("   TOTAL CHARGES: ₹$totalCharges")
         println("🛒 CART CALCULATION END - CompactCartItem")
         
         totalCharges
@@ -693,22 +726,56 @@ private fun DetailPanel(
     val silverPurity = extractSilverPurityFromMaterialType(currentProduct.materialType)
     val silverRate = metalRates.getSilverRateForPurity(silverPurity)
 
-    val calculatedValues = remember(item, metalRates, metalKarat, currentProduct, item.stoneRate, item.stoneQuantity, item.cwWeight) {
+    val firstStone = currentProduct.stones.firstOrNull()
+    
+    // Local state for Making % and Labour Rate (like Total Weight in AddEditProductScreen)
+    // Use item.productId as key to reset only when switching to a different cart item
+    var makingPercentText by remember(item.productId) { 
+        mutableStateOf(if (currentProduct.makingPercent > 0) currentProduct.makingPercent.toString() else "") 
+    }
+    var labourRateText by remember(item.productId) { 
+        mutableStateOf(if (currentProduct.labourRate > 0) currentProduct.labourRate.toString() else "") 
+    }
+    
+    // Get making % and labour rate from local state or product (for recalculation)
+    val makingPercent = makingPercentText.toDoubleOrNull() ?: currentProduct.makingPercent
+    val labourRate = labourRateText.toDoubleOrNull() ?: currentProduct.labourRate
+    
+    // Ensure remember block recomputes when product changes (including makingPercent and labourRate updates)
+    val calculatedValues = remember(
+        item.product.makingPercent, 
+        item.product.labourRate,
+        item.grossWeight,
+        item.quantity,
+        item.discountPercent,
+        metalRates, 
+        metalKarat, 
+        makingPercent, 
+        labourRate, 
+        editingField
+    ) {
         println("🔍 DETAIL PANEL CALCULATION START - ${currentProduct.name}")
         
+        // Use ProductPriceCalculator logic (same as ProductPriceCalculator.kt)
         val grossWeight = if (item.grossWeight > 0) item.grossWeight else currentProduct.totalWeight
-        val lessWeight = if (item.lessWeight > 0) item.lessWeight else currentProduct.lessWeight
+        val makingPercentage = makingPercent // Use from fieldValues or product
+        val labourRatePerGram = labourRate // Use from fieldValues or product
         val quantity = item.quantity
-        val makingChargesPerGram = if (item.makingCharges > 0) item.makingCharges else currentProduct.defaultMakingRate
-        val cwWeight = if (item.cwWeight > 0) item.cwWeight else currentProduct.cwWeight
-        val stoneRate = if (item.stoneRate > 0) item.stoneRate else currentProduct.stoneRate
-        val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else currentProduct.stoneQuantity
-        val vaCharges = if (item.va > 0) item.va else currentProduct.vaCharges
         val discountPercent = item.discountPercent
-
-        val netWeight = grossWeight - lessWeight
-        println("📊 Detail Panel Weight Details: grossWeight=$grossWeight, lessWeight=$lessWeight, netWeight=$netWeight, quantity=$quantity")
         
+        // Extract kundan and jarkan from stones array
+        val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+        val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+        
+        // Sum all Kundan prices and weights
+        val kundanPrice = kundanStones.sumOf { it.amount }
+        val kundanWeight = kundanStones.sumOf { it.weight }
+        
+        // Sum all Jarkan prices and weights
+        val jarkanPrice = jarkanStones.sumOf { it.amount }
+        val jarkanWeight = jarkanStones.sumOf { it.weight }
+        
+        // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
         val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
         val karatForRate = if (item.metal.isNotEmpty()) {
             item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
@@ -718,31 +785,51 @@ private fun DetailPanel(
         val collectionRate = try {
             ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, karatForRate)
         } catch (e: Exception) { 0.0 }
-        val metalRate = if (collectionRate > 0) collectionRate else when {
+        val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
             currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
             currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
             else -> goldRate
         }
         
-        println("💰 Detail Panel Rate Details: karatForRate=$karatForRate, collectionRate=$collectionRate, metalRate=$metalRate")
+        // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+        val priceInputs = ProductPriceInputs(
+            grossWeight = grossWeight,
+            goldPurity = currentProduct.materialType,
+            goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+            makingPercentage = makingPercentage,
+            labourRatePerGram = labourRatePerGram,
+            kundanPrice = kundanPrice,
+            kundanWeight = kundanWeight,
+            jarkanPrice = jarkanPrice,
+            jarkanWeight = jarkanWeight,
+            goldRatePerGram = goldRatePerGram
+        )
         
-        val baseAmount = netWeight * metalRate * quantity
-        val makingCharges = netWeight * makingChargesPerGram * quantity
-        val stoneAmount = stoneRate * stoneQuantity * cwWeight * quantity
-        println("🔍 Stone Calculation Debug: stoneRate=$stoneRate, stoneQuantity=$stoneQuantity, cwWeight=$cwWeight, stoneAmount=$stoneAmount")
+        // Use the same calculation function as ProductPriceCalculator
+        val result = calculateProductPrice(priceInputs)
         
-        val totalCharges = baseAmount + makingCharges + stoneAmount + (vaCharges * quantity)
+        // Calculate per-item total, then multiply by quantity
+        val perItemTotal = result.totalProductPrice
+        val totalCharges = perItemTotal * quantity
+        
+        // Apply discount
         val discountAmount = totalCharges * (discountPercent / 100)
         val taxableAmount = totalCharges - discountAmount
 
-        // Split GST model: 3% on base amount + 5% on making charges (after discount distributed proportionally)
+        // Split GST model: 3% on gold price + 5% on labour charges (after discount distributed proportionally)
+        // For ProductPriceCalculator logic: base = goldPrice, making = labourCharges
+        val goldPriceTotal = result.goldPrice * quantity
+        val labourChargesTotal = result.labourCharges * quantity
+        val kundanPriceTotal = result.kundanPrice * quantity
+        val jarkanPriceTotal = result.jarkanPrice * quantity
+        
         val discountFactor = if (totalCharges > 0) (taxableAmount / totalCharges) else 1.0
-        val discountedBase = baseAmount * discountFactor
-        val discountedMaking = makingCharges * discountFactor
+        val discountedGoldPrice = goldPriceTotal * discountFactor
+        val discountedLabourCharges = labourChargesTotal * discountFactor
 
-        val gstOnBase = discountedBase * 0.03
-        val gstOnMaking = discountedMaking * 0.05
-        val totalGst = gstOnBase + gstOnMaking
+        val gstOnGold = discountedGoldPrice * 0.03
+        val gstOnLabour = discountedLabourCharges * 0.05
+        val totalGst = gstOnGold + gstOnLabour
 
         // For intra-state representation, split total GST equally into CGST and SGST
         val cgst = totalGst / 2
@@ -750,33 +837,48 @@ private fun DetailPanel(
 
         val finalAmount = taxableAmount + totalGst
 
-        println("💵 Detail Panel Amount Breakdown:")
-        println("   Base Amount: $baseAmount (netWeight=$netWeight * metalRate=$metalRate * quantity=$quantity)")
-        println("   Making Charges: $makingCharges (netWeight=$netWeight * makingRate=$makingChargesPerGram * quantity=$quantity)")
-        println("   Stone Amount: $stoneAmount (stoneRate=$stoneRate * stoneQuantity=$stoneQuantity * cwWeight=$cwWeight)")
-        println("   VA Charges: $vaCharges")
-        println("   Total Charges: $totalCharges")
-        println("   Discount Amount: $discountAmount (${discountPercent}%)")
-        println("   Taxable Amount: $taxableAmount")
-        println("   CGST: $cgst (split of total GST)")
-        println("   SGST: $sgst (split of total GST)")
-        println("   Total GST (3% base + 5% making): $totalGst")
-        println("   Final Amount: $finalAmount")
+        println("💵 Detail Panel Amount Breakdown (ProductPriceCalculator logic):")
+        println("   Gross Weight: ${grossWeight}g")
+        println("   Making %: ${makingPercentage}%")
+        println("   Making Weight: ${result.makingWeight}g")
+        println("   New Weight: ${result.newWeight}g")
+        println("   Effective Gold Weight: ${result.effectiveGoldWeight}g")
+        println("   Gold Rate: ₹${goldRatePerGram}/g")
+        println("   Gold Price (per item): ₹${result.goldPrice}")
+        println("   Kundan Price (per item): ₹${result.kundanPrice} (Weight: ${kundanWeight}g)")
+        println("   Jarkan Price (per item): ₹${result.jarkanPrice} (Weight: ${jarkanWeight}g)")
+        println("   Labour Charges (per item): ₹${result.labourCharges} (Rate: ₹${labourRatePerGram}/g × New Weight: ${result.newWeight}g)")
+        println("   Per Item Total: ₹${perItemTotal}")
+        println("   Quantity: $quantity")
+        println("   Total Charges: ₹$totalCharges")
+        println("   Discount Amount: ₹$discountAmount (${discountPercent}%)")
+        println("   Taxable Amount: ₹$taxableAmount")
+        println("   CGST: ₹$cgst (split of total GST)")
+        println("   SGST: ₹$sgst (split of total GST)")
+        println("   Total GST (3% gold + 5% labour): ₹$totalGst")
+        println("   Final Amount: ₹$finalAmount")
         println("🔍 DETAIL PANEL CALCULATION END")
 
         mapOf(
             "grossWeight" to grossWeight,
-            "lessWeight" to lessWeight,
-            "netWeight" to netWeight,
+            "lessWeight" to 0.0, // lessWeight not used in ProductPriceCalculator logic
+            "netWeight" to result.effectiveGoldWeight, // Use effective gold weight
             "quantity" to quantity.toDouble(),
-            "makingChargesPerGram" to makingChargesPerGram,
-            "cwWeight" to cwWeight,
-            "stoneRate" to stoneRate,
-            "vaCharges" to vaCharges,
+            "makingChargesPerGram" to labourRatePerGram,
+            "makingWeight" to result.makingWeight,
+            "newWeight" to result.newWeight,
+            "effectiveGoldWeight" to result.effectiveGoldWeight,
+            "cwWeight" to (kundanWeight + jarkanWeight), // Combined kundan + jarkan weight
+            "stoneRate" to 0.0, // Not used in ProductPriceCalculator logic
+            "vaCharges" to 0.0, // Not used in ProductPriceCalculator logic (labour charges used instead)
             "discountPercent" to discountPercent,
-            "baseAmount" to baseAmount,
-            "makingCharges" to makingCharges,
-            "stoneAmount" to stoneAmount,
+            "baseAmount" to goldPriceTotal, // Gold price total
+            "makingCharges" to labourChargesTotal, // Labour charges total
+            "stoneAmount" to (kundanPriceTotal + jarkanPriceTotal), // Kundan + Jarkan total
+            "goldPrice" to goldPriceTotal,
+            "kundanPrice" to kundanPriceTotal,
+            "jarkanPrice" to jarkanPriceTotal,
+            "labourCharges" to labourChargesTotal,
             "totalCharges" to totalCharges,
             "discountAmount" to discountAmount,
             "taxableAmount" to taxableAmount,
@@ -784,7 +886,7 @@ private fun DetailPanel(
             "sgst" to sgst,
             "totalGst" to totalGst,
             "finalAmount" to finalAmount,
-            "metalRate" to metalRate
+            "metalRate" to goldRatePerGram
         )
     }
 
@@ -889,92 +991,132 @@ private fun DetailPanel(
                     Spacer(modifier = Modifier.height(4.dp))
                     InfoRow("Category", productsViewModel.getCategoryName(currentProduct.categoryId), Icons.Default.CheckCircle)
                     Spacer(modifier = Modifier.height(4.dp))
-                    InfoRow("Product ID", currentProduct.id, Icons.Default.Code)
+                    // Display barcode IDs with quantity in brackets
+                    val barcodeDisplay = if (item.selectedBarcodeIds.isNotEmpty()) {
+                        val barcodes = item.selectedBarcodeIds.joinToString(", ")
+                        "$barcodes (Qty: ${item.quantity})"
+                    } else {
+                        "No barcode (Qty: ${item.quantity})"
+                    }
+                    InfoRow("Barcode ID", barcodeDisplay, Icons.Default.Code)
                 }
             }
 
-            // Basic Information Section
-            EditableSection(
-                icon = Icons.Default.Edit,
-                title = "Basic Information"
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        EditableDetailField(
-                            label = "Metal Type",
-                            fieldKey = "metal_$index",
-                            currentValue = item.metal.ifEmpty { "${extractKaratFromMaterialType(currentProduct.materialType)}K" },
-                            editingField = editingField,
-                            fieldValues = fieldValues,
-                            onEditingFieldChange = onEditingFieldChange,
-                            onFieldValueChange = onFieldValueChange,
-                            onSaveAndCloseEditing = onSaveAndCloseEditing,
-                            keyboardType = KeyboardType.Text,
-                            icon = Icons.Default.Edit
-                        )
-                    }
-                    Box(modifier = Modifier.weight(1f)) {
-                        EditableDetailField(
-                            label = "Quantity",
-                            fieldKey = "qty_$index",
-                            currentValue = item.quantity.toString(),
-                            editingField = editingField,
-                            fieldValues = fieldValues,
-                            onEditingFieldChange = onEditingFieldChange,
-                            onFieldValueChange = onFieldValueChange,
-                            onSaveAndCloseEditing = onSaveAndCloseEditing,
-                            keyboardType = KeyboardType.Number,
-                            icon = Icons.Default.Add
-                        )
-                    }
-                }
-            }
+            // Basic Information Section (removed - now empty or can be removed entirely)
+            // Note: Metal Type moved to Metal Information, Quantity moved to Barcode ID section
 
-            // Weights Section
+            // Weight Details Section
             EditableSection(
                 icon = Icons.Default.Edit,
                 title = "Weight Details"
             ) {
-                EditableDetailField(
-                    label = "Gross Weight (g)",
-                    fieldKey = "grossWeight_$index",
-                    currentValue = if (item.grossWeight > 0) item.grossWeight.toString() else currentProduct.totalWeight.toString(),
-                    editingField = editingField,
-                    fieldValues = fieldValues,
-                    onEditingFieldChange = onEditingFieldChange,
-                    onFieldValueChange = onFieldValueChange,
-                    onSaveAndCloseEditing = onSaveAndCloseEditing,
-                    keyboardType = KeyboardType.Decimal
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                EditableDetailField(
-                    label = "Less Weight (g)",
-                    fieldKey = "lessWeight_$index",
-                    currentValue = if (item.lessWeight > 0) item.lessWeight.toString() else currentProduct.lessWeight.toString(),
-                    editingField = editingField,
-                    fieldValues = fieldValues,
-                    onEditingFieldChange = onEditingFieldChange,
-                    onFieldValueChange = onFieldValueChange,
-                    onSaveAndCloseEditing = onSaveAndCloseEditing,
-                    keyboardType = KeyboardType.Decimal
-                )
-                Spacer(modifier = Modifier.height(8.dp))
+                // Gross Weight
                 CalculatedValueRow(
-                    label = "Net Weight",
-                    value = formatWeight(calculatedValues["netWeight"] ?: 0.0),
+                    label = "Gross Weight",
+                    value = formatWeight(calculatedValues["grossWeight"] ?: 0.0),
+                    color = GoldPrimary,
+                    icon = Icons.Default.CheckCircle
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Making % (Editable) - Simple text field like Total Weight in AddEditProductScreen
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = null,
+                            tint = GoldPrimary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            "Making %",
+                            fontSize = 11.sp,
+                            color = TextSecondary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    OutlinedTextField(
+                        value = makingPercentText,
+                        onValueChange = { 
+                            makingPercentText = it
+                            // Save immediately on change (like Total Weight)
+                            val percent = it.toDoubleOrNull() ?: 0.0
+                            val updatedProduct = currentProduct.copy(makingPercent = percent)
+                            onItemUpdate(index, item.copy(product = updatedProduct))
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp, max = 60.dp),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done
+                        ),
+                        colors = TextFieldDefaults.outlinedTextFieldColors(
+                            focusedBorderColor = GoldPrimary,
+                            unfocusedBorderColor = GoldPrimary,
+                            cursorColor = GoldPrimary,
+                            backgroundColor = GoldLight.copy(alpha = 0.2f)
+                        ),
+                        shape = RoundedCornerShape(6.dp),
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                        maxLines = 1
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Effective Weight (New Weight)
+                CalculatedValueRow(
+                    label = "Effective Weight (New Weight)",
+                    value = formatWeight(calculatedValues["newWeight"] ?: 0.0),
                     color = GoldPrimary,
                     icon = Icons.Default.Done
                 )
             }
 
-            // Rates Section
+            // Metal Information Section
             EditableSection(
                 icon = Icons.Default.CheckCircle,
-                title = "Rates & Charges"
+                title = "Metal Information"
             ) {
+                // Metal Type (Editable)
+                EditableDetailField(
+                    label = "Metal Type",
+                    fieldKey = "metal_$index",
+                    currentValue = item.metal.ifEmpty { "${extractKaratFromMaterialType(currentProduct.materialType)}K" },
+                    editingField = editingField,
+                    fieldValues = fieldValues,
+                    onEditingFieldChange = onEditingFieldChange,
+                    onFieldValueChange = onFieldValueChange,
+                    onSaveAndCloseEditing = onSaveAndCloseEditing,
+                    keyboardType = KeyboardType.Text,
+                    icon = Icons.Default.Edit
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Material Name
+                CalculatedValueRow(
+                    label = "Material Name",
+                    value = productsViewModel.getMaterialName(currentProduct.materialId),
+                    color = GoldPrimary,
+                    icon = Icons.Default.CheckCircle
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Metal Weight (Material Weight)
+                CalculatedValueRow(
+                    label = "Metal Weight",
+                    value = formatWeight(currentProduct.materialWeight.takeIf { it > 0 } ?: calculatedValues["grossWeight"] ?: 0.0),
+                    color = GoldPrimary,
+                    icon = Icons.Default.CheckCircle
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Metal Rate
                 CalculatedValueRow(
                     label = "Metal Rate",
                     value = formatCurrency(calculatedValues["metalRate"] ?: 0.0),
@@ -983,110 +1125,171 @@ private fun DetailPanel(
                     isLarge = true
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                EditableDetailField(
-                    label = "Making Rate (per gram)",
-                    fieldKey = "makingRate_$index",
-                    currentValue = if (item.makingCharges > 0) item.makingCharges.toString() else if (currentProduct.makingRate > 0) currentProduct.makingRate.toString() else currentProduct.defaultMakingRate.toString(),
-                    editingField = editingField,
-                    fieldValues = fieldValues,
-                    onEditingFieldChange = onEditingFieldChange,
-                    onFieldValueChange = onFieldValueChange,
-                    onSaveAndCloseEditing = onSaveAndCloseEditing,
-                    keyboardType = KeyboardType.Decimal
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                EditableDetailField(
-                    label = "VA Charges",
-                    fieldKey = "vaCharges_$index",
-                    currentValue = if (item.va > 0) item.va.toString() else currentProduct.vaCharges.toString(),
-                    editingField = editingField,
-                    fieldValues = fieldValues,
-                    onEditingFieldChange = onEditingFieldChange,
-                    onFieldValueChange = onFieldValueChange,
-                    onSaveAndCloseEditing = onSaveAndCloseEditing,
-                    keyboardType = KeyboardType.Decimal
+                
+                // Effective Metal Weight
+                CalculatedValueRow(
+                    label = "Effective Metal Weight",
+                    value = formatWeight(calculatedValues["effectiveGoldWeight"] ?: 0.0),
+                    color = GoldPrimary,
+                    icon = Icons.Default.Done
                 )
             }
 
-            // Stone Details Section (if applicable)
-            if (currentProduct.hasStones) {
+            // Labour Section
+            EditableSection(
+                icon = Icons.Default.Edit,
+                title = "Labour"
+            ) {
+                // Labour Rate (Editable) - Simple text field like Total Weight in AddEditProductScreen
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = null,
+                            tint = GoldPrimary,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            "Labour Rate (per gram)",
+                            fontSize = 11.sp,
+                            color = TextSecondary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    OutlinedTextField(
+                        value = labourRateText,
+                        onValueChange = { 
+                            labourRateText = it
+                            // Save immediately on change (like Total Weight)
+                            val rate = it.toDoubleOrNull() ?: 0.0
+                            val updatedProduct = currentProduct.copy(labourRate = rate)
+                            onItemUpdate(index, item.copy(product = updatedProduct))
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp, max = 60.dp),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done
+                        ),
+                        colors = TextFieldDefaults.outlinedTextFieldColors(
+                            focusedBorderColor = GoldPrimary,
+                            unfocusedBorderColor = GoldPrimary,
+                            cursorColor = GoldPrimary,
+                            backgroundColor = GoldLight.copy(alpha = 0.2f)
+                        ),
+                        shape = RoundedCornerShape(6.dp),
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                        maxLines = 1
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Labour Charges (Calculated)
+                CalculatedValueRow(
+                    label = "Labour Charges",
+                    value = formatCurrency(calculatedValues["labourCharges"] ?: 0.0),
+                    color = GoldPrimary,
+                    icon = Icons.Default.CheckCircle,
+                    isLarge = true
+                )
+            }
+
+            // Stone Details Section - Show all stones from stones array
+            if (currentProduct.hasStones && currentProduct.stones.isNotEmpty()) {
                 EditableSection(
                     icon = Icons.Default.Diamond,
                     title = "Stone Details"
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            EditableDetailField(
-                                label = "Stone Name",
-                                fieldKey = "stoneName_$index",
-                                currentValue = currentProduct.stoneName,
-                                editingField = editingField,
-                                fieldValues = fieldValues,
-                                onEditingFieldChange = onEditingFieldChange,
-                                onFieldValueChange = onFieldValueChange,
-                                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                                keyboardType = KeyboardType.Text,
-                                icon = Icons.Default.Diamond
-                            )
+                    currentProduct.stones.forEachIndexed { stoneIndex, stone ->
+                        if (stoneIndex > 0) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                            Spacer(modifier = Modifier.height(12.dp))
                         }
-                        Box(modifier = Modifier.weight(1f)) {
-                            EditableDetailField(
-                                label = "Stone Quantity",
-                                fieldKey = "stoneQuantity_$index",
-                                currentValue = if (item.stoneQuantity > 0) item.stoneQuantity.toString() else currentProduct.stoneQuantity.toString(),
-                                editingField = editingField,
-                                fieldValues = fieldValues,
-                                onEditingFieldChange = onEditingFieldChange,
-                                onFieldValueChange = onFieldValueChange,
-                                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                                keyboardType = KeyboardType.Decimal,
-                                icon = Icons.Default.Add
-                            )
+                        
+                        // Stone Name
+                        CalculatedValueRow(
+                            label = "Stone Name",
+                            value = stone.name.ifEmpty { "N/A" },
+                            color = GoldPrimary,
+                            icon = Icons.Default.Diamond
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                CalculatedValueRow(
+                                    label = "Purity",
+                                    value = stone.purity.ifEmpty { "N/A" },
+                                    color = GoldPrimary,
+                                    icon = Icons.Default.CheckCircle
+                                )
+                            }
+                            Box(modifier = Modifier.weight(1f)) {
+                                CalculatedValueRow(
+                                    label = "Quantity",
+                                    value = stone.quantity.toString(),
+                                    color = GoldPrimary,
+                                    icon = Icons.Default.Add
+                                )
+                            }
                         }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                CalculatedValueRow(
+                                    label = "Weight (g)",
+                                    value = formatWeight(stone.weight),
+                                    color = GoldPrimary,
+                                    icon = Icons.Default.CheckCircle
+                                )
+                            }
+                            Box(modifier = Modifier.weight(1f)) {
+                                CalculatedValueRow(
+                                    label = "Rate",
+                                    value = formatCurrency(stone.rate),
+                                    color = GoldPrimary,
+                                    icon = Icons.Default.Edit
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        CalculatedValueRow(
+                            label = "Amount",
+                            value = formatCurrency(stone.amount),
+                            color = GoldPrimary,
+                            icon = Icons.Default.CheckCircle,
+                            isLarge = true
+                        )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            EditableDetailField(
-                                label = "CW Weight",
-                                fieldKey = "cwWeight_$index",
-                                currentValue = if (item.cwWeight > 0) item.cwWeight.toString() else currentProduct.cwWeight.toString(),
-                                editingField = editingField,
-                                fieldValues = fieldValues,
-                                onEditingFieldChange = onEditingFieldChange,
-                                onFieldValueChange = onFieldValueChange,
-                                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                                keyboardType = KeyboardType.Decimal
-                            )
-                        }
-                        Box(modifier = Modifier.weight(1f)) {
-                            EditableDetailField(
-                                label = "Stone Rate",
-                                fieldKey = "stoneRate_$index",
-                                currentValue = if (item.stoneRate > 0) item.stoneRate.toString() else currentProduct.stoneRate.toString(),
-                                editingField = editingField,
-                                fieldValues = fieldValues,
-                                onEditingFieldChange = onEditingFieldChange,
-                                onFieldValueChange = onFieldValueChange,
-                                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                                keyboardType = KeyboardType.Decimal,
-                                icon = Icons.Default.Edit
-                            )
-                        }
+                    
+                    // Total Stone Amount
+                    if (currentProduct.stones.size > 1) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        CalculatedValueRow(
+                            label = "Total Stone Amount",
+                            value = formatCurrency(calculatedValues["stoneAmount"] ?: 0.0),
+                            color = GoldPrimary,
+                            icon = Icons.Default.CheckCircle,
+                            isLarge = true
+                        )
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    CalculatedValueRow(
-                        label = "Stone Amount",
-                        value = formatCurrency(calculatedValues["stoneAmount"] ?: 0.0),
-                        color = GoldPrimary,
-                        icon = Icons.Default.CheckCircle
-                    )
                 }
             }
 
@@ -1098,7 +1301,7 @@ private fun DetailPanel(
             ) {
                 AmountRow("Base Amount", calculatedValues["baseAmount"] ?: 0.0, GoldPrimary)
                 Spacer(modifier = Modifier.height(4.dp))
-                AmountRow("Making Charges", calculatedValues["makingCharges"] ?: 0.0, GoldPrimary)
+                AmountRow("Labour Charges", calculatedValues["labourCharges"] ?: 0.0, GoldPrimary)
                 Spacer(modifier = Modifier.height(4.dp))
                 AmountRow("Stone Amount", calculatedValues["stoneAmount"] ?: 0.0, GoldPrimary)
                 Spacer(modifier = Modifier.height(6.dp))
@@ -1400,7 +1603,8 @@ private fun EditableDetailField(
     onFieldValueChange: (String, TextFieldValue) -> Unit,
     onSaveAndCloseEditing: () -> Unit,
     keyboardType: KeyboardType = KeyboardType.Decimal,
-    icon: androidx.compose.ui.graphics.vector.ImageVector? = null
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    isReadOnly: Boolean = false
 ) {
     Column {
         Row(
@@ -1469,15 +1673,15 @@ private fun EditableDetailField(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 48.dp, max = 60.dp)
-                    .clickable { onEditingFieldChange(fieldKey) }
+                    .then(if (!isReadOnly) Modifier.clickable { onEditingFieldChange(fieldKey) } else Modifier)
                     .border(1.dp, Color(0xFFE0E0E0), RoundedCornerShape(6.dp))
-                    .background(BackgroundGray, RoundedCornerShape(6.dp))
+                    .background(if (isReadOnly) BackgroundGray.copy(alpha = 0.5f) else BackgroundGray, RoundedCornerShape(6.dp))
                     .padding(horizontal = 12.dp, vertical = 12.dp)
             ) {
                 Text(
                     currentValue,
                     fontSize = 14.sp,
-                    color = TextPrimary,
+                    color = if (isReadOnly) TextSecondary else TextPrimary,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -1558,15 +1762,27 @@ private fun getCurrentFieldValue(fieldKey: String, cartItems: List<CartItem>, cu
         "size" -> "${item.selectedWeight}"
         "qty" -> item.quantity.toString()
         "grossWeight" -> if (item.grossWeight > 0) item.grossWeight.toString() else product.totalWeight.toString()
-        "lessWeight" -> if (item.lessWeight > 0) item.lessWeight.toString() else product.lessWeight.toString()
+        "lessWeight" -> if (item.lessWeight > 0) item.lessWeight.toString() else "0.0" // lessWeight removed from Product
         "netWeight" -> item.netWeight.toString()
-        "makingRate" -> if (item.makingCharges > 0) item.makingCharges.toString() else if (product.makingRate > 0) product.makingRate.toString() else product.defaultMakingRate.toString()
-        "cwWeight" -> if (item.cwWeight > 0) item.cwWeight.toString() else product.cwWeight.toString()
-        "stoneRate" -> if (item.stoneRate > 0) item.stoneRate.toString() else product.stoneRate.toString()
-        "vaCharges" -> if (item.va > 0) item.va.toString() else product.vaCharges.toString()
+        "makingRate" -> if (item.makingCharges > 0) item.makingCharges.toString() else if (product.makingRate > 0) product.makingRate.toString() else "0.0" // defaultMakingRate removed from Product
+        "cwWeight" -> if (item.cwWeight > 0) item.cwWeight.toString() else product.stoneWeight.toString() // Use stoneWeight instead of cwWeight
+        "stoneRate" -> {
+            val firstStone = product.stones.firstOrNull()
+            if (item.stoneRate > 0) item.stoneRate.toString() else (firstStone?.rate ?: 0.0).toString()
+        }
+        "vaCharges" -> if (item.va > 0) item.va.toString() else product.labourCharges.toString() // Use labourCharges instead of vaCharges
         "discountPercent" -> item.discountPercent.toString()
-        "stoneName" -> product.stoneName
-        "stoneQuantity" -> if (item.stoneQuantity > 0) item.stoneQuantity.toString() else product.stoneQuantity.toString()
+        "makingPercent" -> product.makingPercent.toString()
+        "labourRate" -> product.labourRate.toString()
+        "materialName" -> "" // Read-only, handled separately
+        "stoneName" -> {
+            val firstStone = product.stones.firstOrNull()
+            firstStone?.name ?: ""
+        }
+        "stoneQuantity" -> {
+            val firstStone = product.stones.firstOrNull()
+            if (item.stoneQuantity > 0) item.stoneQuantity.toString() else (firstStone?.quantity ?: 0.0).toString()
+        }
         else -> ""
     }
 }
@@ -1662,6 +1878,30 @@ private fun saveFieldValue(
                 val quantity = if (value.trim().isNotEmpty()) value.trim().toDoubleOrNull() ?: item.stoneQuantity else item.stoneQuantity
                 println("   Updating stone quantity: ${item.stoneQuantity} -> $quantity")
                 onItemUpdate(index, item.copy(stoneQuantity = quantity))
+            }
+            "makingPercent" -> {
+                // Allow empty string to be treated as 0
+                val percent = if (value.trim().isEmpty()) {
+                    0.0
+                } else {
+                    value.trim().toDoubleOrNull() ?: item.product.makingPercent
+                }
+                println("   Updating making percent: ${item.product.makingPercent} -> $percent")
+                // Update product's makingPercent - this will trigger recalculation via remember block
+                val updatedProduct = item.product.copy(makingPercent = percent)
+                onItemUpdate(index, item.copy(product = updatedProduct))
+            }
+            "labourRate" -> {
+                // Allow empty string to be treated as 0
+                val rate = if (value.trim().isEmpty()) {
+                    0.0
+                } else {
+                    value.trim().toDoubleOrNull() ?: item.product.labourRate
+                }
+                println("   Updating labour rate: ${item.product.labourRate} -> $rate")
+                // Update product's labourRate - this will trigger recalculation via remember block
+                val updatedProduct = item.product.copy(labourRate = rate)
+                onItemUpdate(index, item.copy(product = updatedProduct))
             }
         }
     } catch (e: Exception) {

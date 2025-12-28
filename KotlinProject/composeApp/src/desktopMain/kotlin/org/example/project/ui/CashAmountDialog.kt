@@ -21,6 +21,7 @@ import androidx.compose.ui.window.Dialog
 import org.example.project.data.CashAmount
 import org.example.project.data.CashTransactionType
 import org.example.project.data.User
+import org.example.project.utils.CurrencyFormatter
 
 @Composable
 fun CashAmountDialog(
@@ -106,7 +107,7 @@ fun CashAmountDialog(
                                 color = Color(0xFF1A1A1A)
                             )
                             Text(
-                                text = "Current Balance: ₹${String.format("%.2f", customer.balance)}",
+                                text = "Current Balance: ${CurrencyFormatter.formatRupees(customer.balance, includeDecimals = true)}",
                                 fontSize = 14.sp,
                                 color = Color(0xFF6B7280)
                             )

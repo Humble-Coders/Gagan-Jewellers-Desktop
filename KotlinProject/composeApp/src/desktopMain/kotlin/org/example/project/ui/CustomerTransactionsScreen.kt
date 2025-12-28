@@ -32,6 +32,7 @@ import org.example.project.data.TransactionType
 import org.example.project.data.CashTransactionType
 import org.example.project.viewModels.ProfileViewModel
 import org.example.project.utils.PdfGeneratorService
+import org.example.project.utils.CurrencyFormatter
 import org.example.project.JewelryAppInitializer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -289,7 +290,7 @@ fun CustomerTransactionsScreen(
                                     color = if (updatedCustomer.balance >= 0) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)
                                 ) {
                                     Text(
-                                        text = "₹${String.format("%.2f", updatedCustomer.balance)}",
+                                        text = CurrencyFormatter.formatRupees(updatedCustomer.balance, includeDecimals = true),
                                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                                         fontSize = 20.sp,
                                         fontWeight = FontWeight.Bold,
@@ -708,7 +709,7 @@ fun TransactionCard(
                         color = Color(0xFFFFF8E1)
                     ) {
                         Text(
-                            text = "₹${String.format("%.2f", order.finalAmount)}",
+                            text = CurrencyFormatter.formatRupees(order.finalAmount, includeDecimals = true),
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
@@ -724,7 +725,7 @@ fun TransactionCard(
                                 color = Color(0xFFFEE2E2)
                             ) {
                                 Text(
-                                    text = "Due: ₹${String.format("%.2f", dueAmount)}",
+                                    text = "Due: ${CurrencyFormatter.formatRupees(dueAmount, includeDecimals = true)}",
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                     fontSize = 12.sp,
                                     color = Color(0xFFDC2626),
@@ -921,7 +922,7 @@ fun UnifiedTransactionCard(
                 }
 
                 Text(
-                    text = "₹${String.format("%.2f", transaction.finalAmount)}",
+                    text = CurrencyFormatter.formatRupees(transaction.finalAmount, includeDecimals = true),
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (transaction.transactionType == TransactionType.CASH && transaction.cashTransactionType != null) {
@@ -973,7 +974,7 @@ fun UnifiedTransactionCard(
                             color = Color(0xFFFEE2E2)
                         ) {
                             Text(
-                                text = "Due: ₹${String.format("%.2f", dueAmount)}",
+                                text = "Due: ${CurrencyFormatter.formatRupees(dueAmount, includeDecimals = true)}",
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                 fontSize = 12.sp,
                                 color = Color(0xFFDC2626),

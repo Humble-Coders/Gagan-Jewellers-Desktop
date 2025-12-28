@@ -9,6 +9,10 @@ import org.example.project.data.CartItem
 import org.example.project.data.InvoiceConfig
 import org.example.project.data.MetalRatesManager
 import org.example.project.data.extractKaratFromMaterialType
+import org.example.project.utils.CurrencyFormatter
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
+import org.example.project.JewelryAppInitializer
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -168,23 +172,23 @@ class PdfGeneratorService {
                     <div class="totals-table">
                         <div class="total-row">
                             <span class="total-label">Subtotal:</span>
-                            <span class="total-value">Rs ${String.format("%.2f", subtotal)}</span>
+                            <span class="total-value">Rs ${CurrencyFormatter.formatRupeesNumber(subtotal, includeDecimals = true)}</span>
                         </div>
                         ${if (gstAmount > 0) """
                         <div class="total-row">
                             <span class="total-label">GST (${gstPercentage}%):</span>
-                            <span class="total-value">Rs ${String.format("%.2f", gstAmount)}</span>
+                            <span class="total-value">Rs ${CurrencyFormatter.formatRupeesNumber(gstAmount, includeDecimals = true)}</span>
                         </div>
                         """ else ""}
                         ${if (discountAmount > 0) """
                         <div class="total-row discount-row">
                             <span class="total-label">Discount:</span>
-                            <span class="total-value">-Rs ${String.format("%.2f", discountAmount)}</span>
+                            <span class="total-value">-Rs ${CurrencyFormatter.formatRupeesNumber(discountAmount, includeDecimals = true)}</span>
                         </div>
                         """ else ""}
                         <div class="total-row final-total">
                             <span class="total-label"><strong>TOTAL:</strong></span>
-                            <span class="total-value"><strong>Rs ${String.format("%.2f", totalAmount)}</strong></span>
+                            <span class="total-value"><strong>Rs ${CurrencyFormatter.formatRupeesNumber(totalAmount, includeDecimals = true)}</strong></span>
                         </div>
                     </div>
                 </div>
@@ -213,59 +217,86 @@ class PdfGeneratorService {
     private fun generateItemsRows(items: List<CartItem>): String {
         return items.joinToString("\n") { item ->
             val metalRates = MetalRatesManager.metalRates.value
+            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+            val currentProduct = item.product
             
-            // Use the same calculation logic as CartTable.kt
+            // Use ProductPriceCalculator logic (same as ReceiptScreen)
+            val grossWeight = if (item.grossWeight > 0) item.grossWeight else currentProduct.totalWeight
+            val makingPercentage = currentProduct.makingPercent
+            val labourRatePerGram = currentProduct.labourRate
+            
+            // Extract kundan and jarkan from stones array
+            val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+            val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+            
+            // Sum all Kundan prices and weights
+            val kundanPrice = kundanStones.sumOf { it.amount }
+            val kundanWeight = kundanStones.sumOf { it.weight }
+            
+            // Sum all Jarkan prices and weights
+            val jarkanPrice = jarkanStones.sumOf { it.amount }
+            val jarkanWeight = jarkanStones.sumOf { it.weight }
+            
+            // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
             val metalKarat = if (item.metal.isNotEmpty()) {
-                item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(item.product.materialType)
+                item.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
             } else {
-                extractKaratFromMaterialType(item.product.materialType)
+                extractKaratFromMaterialType(currentProduct.materialType)
             }
-            
-            // Get rates using the same logic as cart screen
-            val goldRate = metalRates.getGoldRateForKarat(metalKarat)
-            val silverPurity = extractSilverPurityFromMaterialType(item.product.materialType)
-            val silverRate = metalRates.getSilverRateForPurity(silverPurity)
-            
-            // Try to get collection-specific rate first (same as cart)
-            val ratesVM = org.example.project.JewelryAppInitializer.getMetalRateViewModel()
             val collectionRate = try {
-                ratesVM.calculateRateForMaterial(item.product.materialId, item.product.materialType, metalKarat)
+                ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
             } catch (e: Exception) { 0.0 }
-            
-            val metalRate = if (collectionRate > 0) collectionRate else when {
-                item.product.materialType.contains("gold", ignoreCase = true) -> goldRate
-                item.product.materialType.contains("silver", ignoreCase = true) -> silverRate
+            val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+            val goldRate = if (item.customGoldRate > 0) item.customGoldRate else defaultGoldRate
+            // Extract silver purity from material type
+            val materialTypeLower = currentProduct.materialType.lowercase()
+            val silverPurity = when {
+                materialTypeLower.contains("999") -> 999
+                materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                else -> {
+                    val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
+                }
+            }
+            val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+            val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
+                currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
                 else -> goldRate
             }
             
-            // Use the same weight calculation as cart screen
-            val grossWeight = if (item.grossWeight > 0) item.grossWeight else item.product.totalWeight
-            // lessWeight removed from Product, using 0.0 as default
-            val lessWeight = if (item.lessWeight > 0) item.lessWeight else 0.0
-            val netWeight = grossWeight - lessWeight
+            // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+            val priceInputs = ProductPriceInputs(
+                grossWeight = grossWeight,
+                goldPurity = currentProduct.materialType,
+                goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                makingPercentage = makingPercentage,
+                labourRatePerGram = labourRatePerGram,
+                kundanPrice = kundanPrice,
+                kundanWeight = kundanWeight,
+                jarkanPrice = jarkanPrice,
+                jarkanWeight = jarkanWeight,
+                goldRatePerGram = goldRatePerGram
+            )
+            
+            // Use the same calculation function as ProductPriceCalculator
+            val result = calculateProductPrice(priceInputs)
+            
             val quantity = item.quantity
+            val baseAmount = result.goldPrice * quantity
+            val labourCharges = result.labourCharges * quantity
+            val stoneAmount = (result.kundanPrice + result.jarkanPrice) * quantity
+            val totalCharges = result.totalProductPrice * quantity
             
-            // Use the same charge calculations as cart screen
-            val makingChargesPerGram = if (item.makingCharges > 0) item.makingCharges else 0.0 // defaultMakingRate removed from Product
-            // Use stoneWeight instead of cwWeight
-            val firstStone = item.product.stones.firstOrNull()
-            val cwWeight = if (item.cwWeight > 0) item.cwWeight else (firstStone?.weight ?: item.product.stoneWeight)
-            val stoneRate = if (item.stoneRate > 0) item.stoneRate else (firstStone?.rate ?: 0.0)
-            val stoneQuantity = if (item.stoneQuantity > 0) item.stoneQuantity else (firstStone?.quantity ?: 0.0)
-            val vaCharges = if (item.va > 0) item.va else item.product.labourCharges // Use labourCharges instead of vaCharges
-            
-            // Calculate amounts using the same logic as cart screen
-            val baseAmount = netWeight * metalRate * quantity
-            // 🔧 FIX: Making charges should be rate per gram × weight × quantity
-            val makingCharges = makingChargesPerGram * netWeight * quantity  // Rate per gram × weight × quantity
-            val stoneAmount = stoneRate * stoneQuantity * cwWeight
-            val totalVaCharges = vaCharges * quantity  // Total VA charge per item × quantity
-            val totalCharges = baseAmount + makingCharges + stoneAmount + totalVaCharges
+            // For display: use result.newWeight (same as ReceiptScreen)
+            val netWeight = result.newWeight
+            val lessWeight = grossWeight - netWeight
             
             println("📄 PDF SERVICE CALCULATION for ${item.product.name}:")
             println("   - Base amount: ${baseAmount}")
-            println("   - Making charges (${makingChargesPerGram} × ${netWeight}g × ${quantity}): ${makingCharges}")
-            println("   - VA charges (${vaCharges} × ${quantity}): ${totalVaCharges}")
+            println("   - Labour charges: ${labourCharges}")
+            println("   - Stone amount: ${stoneAmount}")
             println("   - Total charges: ${totalCharges}")
             
             """
@@ -280,14 +311,13 @@ class PdfGeneratorService {
                     </div>
                 </td>
                 <td>${quantity}</td>
-                <td>Rs ${String.format("%.2f", metalRate)}</td>
+                <td>Rs ${CurrencyFormatter.formatRupeesNumber(goldRatePerGram, includeDecimals = true)}</td>
                 <td class="charges-breakdown">
-                    <div class="charge-item">Base: Rs ${String.format("%.2f", baseAmount)}</div>
-                    ${if (makingCharges > 0) "<div class=\"charge-item\">Making: Rs ${String.format("%.2f", makingCharges)}</div>" else ""}
-                    ${if (stoneAmount > 0) "<div class=\"charge-item\">Stone: Rs ${String.format("%.2f", stoneAmount)}</div>" else ""}
-                    ${if (totalVaCharges > 0) "<div class=\"charge-item\">VA: Rs ${String.format("%.2f", totalVaCharges)}</div>" else ""}
+                    <div class="charge-item">Base: Rs ${CurrencyFormatter.formatRupeesNumber(baseAmount, includeDecimals = true)}</div>
+                    ${if (labourCharges > 0) "<div class=\"charge-item\">Labour: Rs ${CurrencyFormatter.formatRupeesNumber(labourCharges, includeDecimals = true)}</div>" else ""}
+                    ${if (stoneAmount > 0) "<div class=\"charge-item\">Stone: Rs ${CurrencyFormatter.formatRupeesNumber(stoneAmount, includeDecimals = true)}</div>" else ""}
                 </td>
-                <td class="total-amount">Rs ${String.format("%.2f", totalCharges)}</td>
+                <td class="total-amount">Rs ${CurrencyFormatter.formatRupeesNumber(totalCharges, includeDecimals = true)}</td>
             </tr>
             """.trimIndent()
         }
@@ -300,24 +330,24 @@ class PdfGeneratorService {
         
         return buildString {
             if (paymentSplit.cashAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Cash:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.cashAmount)}</span></div>")
+                append("<div class=\"payment-row\"><span class=\"payment-label\">Cash:</span><span class=\"payment-value\">Rs ${CurrencyFormatter.formatRupeesNumber(paymentSplit.cashAmount, includeDecimals = true)}</span></div>")
             }
             if (paymentSplit.cardAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Card:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.cardAmount)}</span></div>")
+                append("<div class=\"payment-row\"><span class=\"payment-label\">Card:</span><span class=\"payment-value\">Rs ${CurrencyFormatter.formatRupeesNumber(paymentSplit.cardAmount, includeDecimals = true)}</span></div>")
             }
             if (paymentSplit.bankAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Bank Transfer:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.bankAmount)}</span></div>")
+                append("<div class=\"payment-row\"><span class=\"payment-label\">Bank Transfer:</span><span class=\"payment-value\">Rs ${CurrencyFormatter.formatRupeesNumber(paymentSplit.bankAmount, includeDecimals = true)}</span></div>")
             }
             if (paymentSplit.onlineAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Online:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.onlineAmount)}</span></div>")
+                append("<div class=\"payment-row\"><span class=\"payment-label\">Online:</span><span class=\"payment-value\">Rs ${CurrencyFormatter.formatRupeesNumber(paymentSplit.onlineAmount, includeDecimals = true)}</span></div>")
             }
             if (dueAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Due:</span><span class=\"payment-value\">Rs ${String.format("%.2f", dueAmount)}</span></div>")
+                append("<div class=\"payment-row\"><span class=\"payment-label\">Due:</span><span class=\"payment-value\">Rs ${CurrencyFormatter.formatRupeesNumber(dueAmount, includeDecimals = true)}</span></div>")
             } else if (dueAmount < 0) {
-                append("<div class=\"payment-row due-overpaid\"><span class=\"payment-label\">Due (Overpaid):</span><span class=\"payment-value\">Rs ${String.format("%.2f", dueAmount)}</span></div>")
+                append("<div class=\"payment-row due-overpaid\"><span class=\"payment-label\">Due (Overpaid):</span><span class=\"payment-value\">Rs ${CurrencyFormatter.formatRupeesNumber(dueAmount, includeDecimals = true)}</span></div>")
             }
             
-            append("<div class=\"payment-row payment-total\"><span class=\"payment-label\"><strong>Total Payment:</strong></span><span class=\"payment-value\"><strong>Rs ${String.format("%.2f", totalPayment)}</strong></span></div>")
+            append("<div class=\"payment-row payment-total\"><span class=\"payment-label\"><strong>Total Payment:</strong></span><span class=\"payment-value\"><strong>Rs ${CurrencyFormatter.formatRupeesNumber(totalPayment, includeDecimals = true)}</strong></span></div>")
             
             if (isDueAmountNegative) {
                 append("<div class=\"payment-warning\">⚠️ Due amount is negative! Payment split amounts need adjustment.</div>")
@@ -675,27 +705,101 @@ class PdfGeneratorService {
         return items.joinToString("") { item ->
             val product = products.find { it.id == item.productId }
             if (product != null) {
-                // 🔧 FIX: Use actual order data from Firestore instead of hardcoded values
-                println("📄 PDF SERVICE: Using Firestore order data for item ${item.productId}")
-                println("   - Making charges: 0.0 (defaultMakingRate removed)")
-                println("   - VA charges: ${item.vaCharges}")
-                println("   - Material type: ${item.materialType}")
+                // Use ProductPriceCalculator logic (same as ReceiptScreen)
+                val metalRates = MetalRatesManager.metalRates.value
+                val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+                val currentProduct = product
                 
-                generateItemsRows(listOf(org.example.project.data.CartItem(
-                    productId = item.productId,
-                    quantity = item.quantity,
-                    selectedBarcodeIds = listOf(item.barcodeId),
-                    product = product,
-                    metal = item.materialType.ifEmpty { product.materialType }, // Use order material type
-                    grossWeight = parseWeight(product.weight),
-                    totalWeight = parseWeight(product.weight),
-                    lessWeight = 0.0,
-                    makingCharges = 0.0, // defaultMakingRate removed from Product
-                    stoneRate = 0.0,
-                    stoneQuantity = 0.0,
-                    cwWeight = 0.0,
-                    va = item.vaCharges // ✅ Use actual VA charges from Firestore
-                )))
+                // Use ProductPriceCalculator logic
+                val grossWeight = currentProduct.totalWeight
+                val makingPercentage = currentProduct.makingPercent
+                val labourRatePerGram = currentProduct.labourRate
+                
+                // Extract kundan and jarkan from stones array
+                val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                
+                // Sum all Kundan prices and weights
+                val kundanPrice = kundanStones.sumOf { it.amount }
+                val kundanWeight = kundanStones.sumOf { it.weight }
+                
+                // Sum all Jarkan prices and weights
+                val jarkanPrice = jarkanStones.sumOf { it.amount }
+                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                
+                // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
+                val materialType = if (item.materialType.isNotBlank()) item.materialType else currentProduct.materialType
+                val metalKarat = extractKaratFromMaterialType(materialType)
+                val collectionRate = try {
+                    ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
+                } catch (e: Exception) { 0.0 }
+                val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                // Extract silver purity from material type
+                val materialTypeLower = currentProduct.materialType.lowercase()
+                val silverPurity = when {
+                    materialTypeLower.contains("999") -> 999
+                    materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                    materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                    else -> {
+                        val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                        if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
+                    }
+                }
+                val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                    currentProduct.materialType.contains("gold", ignoreCase = true) -> defaultGoldRate
+                    currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
+                    else -> defaultGoldRate
+                }
+                
+                // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+                val priceInputs = ProductPriceInputs(
+                    grossWeight = grossWeight,
+                    goldPurity = materialType,
+                    goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                    makingPercentage = makingPercentage,
+                    labourRatePerGram = labourRatePerGram,
+                    kundanPrice = kundanPrice,
+                    kundanWeight = kundanWeight,
+                    jarkanPrice = jarkanPrice,
+                    jarkanWeight = jarkanWeight,
+                    goldRatePerGram = goldRatePerGram
+                )
+                
+                // Use the same calculation function as ProductPriceCalculator
+                val result = calculateProductPrice(priceInputs)
+                
+                val quantity = item.quantity
+                val baseAmount = result.goldPrice * quantity
+                val labourCharges = result.labourCharges * quantity
+                val stoneAmount = (result.kundanPrice + result.jarkanPrice) * quantity
+                val totalCharges = result.totalProductPrice * quantity
+                
+                // For display: use result.newWeight (same as ReceiptScreen)
+                val netWeight = result.newWeight
+                val lessWeight = grossWeight - netWeight
+                
+                """
+                <tr>
+                    <td class="item-name">${product.name}</td>
+                    <td>${materialType}</td>
+                    <td class="weight-details">
+                        <div class="weight-breakdown">
+                            <div>Gross: ${String.format("%.2f", grossWeight)}g</div>
+                            <div>Less: ${String.format("%.2f", lessWeight)}g</div>
+                            <div class="net-weight">Net: ${String.format("%.2f", netWeight)}g</div>
+                        </div>
+                    </td>
+                    <td>${quantity}</td>
+                    <td>Rs ${CurrencyFormatter.formatRupeesNumber(goldRatePerGram, includeDecimals = true)}</td>
+                    <td class="charges-breakdown">
+                        <div class="charge-item">Base: Rs ${CurrencyFormatter.formatRupeesNumber(baseAmount, includeDecimals = true)}</div>
+                        ${if (labourCharges > 0) "<div class=\"charge-item\">Labour: Rs ${CurrencyFormatter.formatRupeesNumber(labourCharges, includeDecimals = true)}</div>" else ""}
+                        ${if (stoneAmount > 0) "<div class=\"charge-item\">Stone: Rs ${CurrencyFormatter.formatRupeesNumber(stoneAmount, includeDecimals = true)}</div>" else ""}
+                    </td>
+                    <td class="total-amount">Rs ${CurrencyFormatter.formatRupeesNumber(totalCharges, includeDecimals = true)}</td>
+                </tr>
+                """.trimIndent()
             } else {
                 generateSimplifiedItemsRows(listOf(item))
             }

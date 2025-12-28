@@ -30,7 +30,9 @@ import org.example.project.viewModels.CustomerViewModel
 import org.example.project.utils.ImageLoader
 import org.example.project.JewelryAppInitializer
 import org.example.project.utils.CurrencyFormatter
-import java.text.NumberFormat
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
+import org.example.project.data.extractKaratFromMaterialType
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -656,128 +658,96 @@ private fun PaymentSummaryBreakdown(
     productsViewModel: org.example.project.viewModels.ProductsViewModel
 ) {
     val metalRates = MetalRatesManager.metalRates.value
+    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
     
-    // Calculate subtotal as sum of all item totals (like payment screen)
-    val itemSubtotal = transaction.items.sumOf { cartItem: org.example.project.data.CartItem ->
-        // Use the same calculation logic as PaymentScreen
+    // Calculate subtotal using ProductPriceCalculator logic (same as PaymentScreen)
+    val itemSubtotal = remember(transaction.items, metalRates) {
+        transaction.items.sumOf { cartItem ->
+            val currentProduct = cartItem.product
+            
+            // Use ProductPriceCalculator logic (same as PaymentScreen)
+            val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
+            val makingPercentage = currentProduct.makingPercent
+            val labourRatePerGram = currentProduct.labourRate
+            
+            // Extract kundan and jarkan from stones array
+            val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+            val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+            
+            // Sum all Kundan prices and weights
+            val kundanPrice = kundanStones.sumOf { it.amount }
+            val kundanWeight = kundanStones.sumOf { it.weight }
+            
+            // Sum all Jarkan prices and weights
+            val jarkanPrice = jarkanStones.sumOf { it.amount }
+            val jarkanWeight = jarkanStones.sumOf { it.weight }
+            
+            // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
         val metalKarat = if (cartItem.metal.isNotEmpty()) {
-            cartItem.metal.replace("K", "").toIntOrNull() ?: org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
+                cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
         } else {
-            org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
+                extractKaratFromMaterialType(currentProduct.materialType)
         }
-        
-        val ratesVM = org.example.project.JewelryAppInitializer.getMetalRateViewModel()
         val collectionRate = try {
-            ratesVM.calculateRateForMaterial(cartItem.product.materialId, cartItem.product.materialType, metalKarat)
+                ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
         } catch (e: Exception) { 0.0 }
-        
         val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
         val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
-        val silverRate = metalRates.getSilverRateForPurity(999)
-        
-        val metalRate = if (collectionRate > 0) collectionRate else when {
-            cartItem.product.materialType.contains("gold", ignoreCase = true) -> goldRate
-            cartItem.product.materialType.contains("silver", ignoreCase = true) -> silverRate
+            // Extract silver purity from material type
+            val materialTypeLower = currentProduct.materialType.lowercase()
+            val silverPurity = when {
+                materialTypeLower.contains("999") -> 999
+                materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                else -> {
+                    val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
+                }
+            }
+            val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+            val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
+                currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
             else -> goldRate
         }
         
-        // Use product values as fallbacks if cart item values are 0
-        val grossWeight = cartItem.product.totalWeight // grossWeight removed, using totalWeight
-        // lessWeight removed from Product, using 0.0 as default
-        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0
-        val netWeight = grossWeight - lessWeight
-        val quantity = cartItem.quantity
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
-        // Use stoneWeight instead of cwWeight
-        val firstStone = cartItem.product.stones.firstOrNull()
-        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: cartItem.product.stoneWeight)
-        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
-        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
-        // Use labourCharges instead of vaCharges
-        val vaCharges = if (cartItem.va > 0) cartItem.va else cartItem.product.labourCharges
-        
-        // Calculate item total (same as PaymentScreen)
-        val baseAmount = netWeight * metalRate * quantity
-        val makingCharges = netWeight * makingChargesPerGram * quantity
-        val stoneAmount = stoneRate * stoneQuantity * cwWeight * quantity
-        val totalCharges = baseAmount + makingCharges + stoneAmount + (vaCharges * quantity)
-        
-        totalCharges
-    }
-    
-    // Calculate GST using the same logic as PaymentScreen (3% on metal, 5% on making)
-    val calculatedGstAmount = transaction.items.sumOf { cartItem: org.example.project.data.CartItem ->
-        val metalKarat = if (cartItem.metal.isNotEmpty()) {
-            cartItem.metal.replace("K", "").toIntOrNull() ?: org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
-        } else {
-            org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
+            // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+            val priceInputs = ProductPriceInputs(
+                grossWeight = grossWeight,
+                goldPurity = currentProduct.materialType,
+                goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                makingPercentage = makingPercentage,
+                labourRatePerGram = labourRatePerGram,
+                kundanPrice = kundanPrice,
+                kundanWeight = kundanWeight,
+                jarkanPrice = jarkanPrice,
+                jarkanWeight = jarkanWeight,
+                goldRatePerGram = goldRatePerGram
+            )
+            
+            // Use the same calculation function as ProductPriceCalculator
+            val result = calculateProductPrice(priceInputs)
+            
+            // Calculate per-item total, then multiply by quantity (no discount or GST)
+            val perItemTotal = result.totalProductPrice
+            val finalAmount = perItemTotal * cartItem.quantity
+            
+            finalAmount
         }
-        
-        val ratesVM = org.example.project.JewelryAppInitializer.getMetalRateViewModel()
-        val collectionRate = try {
-            ratesVM.calculateRateForMaterial(cartItem.product.materialId, cartItem.product.materialType, metalKarat)
-        } catch (e: Exception) { 0.0 }
-        
-        val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
-        val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
-        val silverRate = metalRates.getSilverRateForPurity(999)
-        
-        val metalRate = if (collectionRate > 0) collectionRate else when {
-            cartItem.product.materialType.contains("gold", ignoreCase = true) -> goldRate
-            cartItem.product.materialType.contains("silver", ignoreCase = true) -> silverRate
-            else -> goldRate
-        }
-        
-        val grossWeight = cartItem.product.totalWeight // grossWeight removed, using totalWeight
-        // lessWeight removed from Product, using 0.0 as default
-        val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0
-        val netWeight = grossWeight - lessWeight
-        val quantity = cartItem.quantity
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
-        
-        val baseAmount = netWeight * metalRate * quantity
-        val makingCharges = netWeight * makingChargesPerGram * quantity
-        
-        // Apply discount if any
-        val discountPercent = cartItem.discountPercent
-        val totalCharges = baseAmount + makingCharges
-        val discountAmount = totalCharges * (discountPercent / 100.0)
-        val taxableAmount = totalCharges - discountAmount
-        
-        val discountFactor = if (totalCharges > 0) (taxableAmount / totalCharges) else 1.0
-        val discountedBase = baseAmount * discountFactor
-        val discountedMaking = makingCharges * discountFactor
-        
-        // Calculate GST: 3% on metal, 5% on making charges
-        val gstOnBase = discountedBase * 0.03
-        val gstOnMaking = discountedMaking * 0.05
-        gstOnBase + gstOnMaking
     }
     
-    // Calculate Stone Amount for display
-    val stoneCharges = transaction.items.sumOf { cartItem: org.example.project.data.CartItem ->
-        val firstStone = cartItem.product.stones.firstOrNull()
-        val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
-        val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
-        // Use stoneWeight instead of cwWeight
-        val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else cartItem.product.stoneWeight
-        stoneRate * stoneQuantity * cwWeight * cartItem.quantity
-    }
-    
-    val vaCharges = transaction.items.sumOf { cartItem ->
-        cartItem.va * cartItem.quantity
-    }
-    
-    // Apply discount to subtotal
+    // Use stored GST and discount amounts from transaction (same as PaymentScreen)
     val discountAmount = transaction.discountAmount
-    val gstAmount = calculatedGstAmount
-    val subtotalWithGst = itemSubtotal + gstAmount
-    val taxableAmount = subtotalWithGst - discountAmount
+    val gstAmount = transaction.gstAmount
     
-    // Calculate GST percentage from gstAmount
-    val gstPercentage = if (itemSubtotal > 0) ((gstAmount / itemSubtotal) * 100).toInt() else 0
+    // Calculate GST percentage from stored gstAmount
+    val gstPercentage = if (itemSubtotal > 0 && gstAmount > 0) {
+        ((gstAmount / (itemSubtotal - discountAmount)) * 100).toInt()
+    } else {
+        0
+    }
     
-    // Final total = subtotal + GST - discount
+    // Final total = subtotal + GST - discount (same as PaymentScreen)
     val finalTotal = itemSubtotal + gstAmount - discountAmount
 
     Column(
@@ -787,13 +757,6 @@ private fun PaymentSummaryBreakdown(
             label = "Subtotal",
             amount = itemSubtotal
         )
-        
-        if (stoneCharges > 0) {
-            AmountRow(
-                label = "Stone Amount",
-                amount = stoneCharges
-            )
-        }
         
         if (discountAmount > 0) {
             AmountRow(
@@ -946,50 +909,82 @@ private fun ItemDetailCard(
     productsViewModel: org.example.project.viewModels.ProductsViewModel
 ) {
     val metalRates = MetalRatesManager.metalRates.value
+    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
     val product = cartItem.product
     
-    // Use the same calculation logic as CartViewModel
+    // Use ProductPriceCalculator logic (same as PaymentScreen)
+    val priceResult = remember(cartItem, metalRates) {
+        val currentProduct = cartItem.product
+        
+        // Use ProductPriceCalculator logic (same as PaymentScreen)
+        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else currentProduct.totalWeight
+        val makingPercentage = currentProduct.makingPercent
+        val labourRatePerGram = currentProduct.labourRate
+        
+        // Extract kundan and jarkan from stones array
+        val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+        val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+        
+        // Sum all Kundan prices and weights
+        val kundanPrice = kundanStones.sumOf { it.amount }
+        val kundanWeight = kundanStones.sumOf { it.weight }
+        
+        // Sum all Jarkan prices and weights
+        val jarkanPrice = jarkanStones.sumOf { it.amount }
+        val jarkanWeight = jarkanStones.sumOf { it.weight }
+        
+        // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
     val metalKarat = if (cartItem.metal.isNotEmpty()) {
-        cartItem.metal.replace("K", "").toIntOrNull() ?: org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
+            cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)
     } else {
-        org.example.project.data.extractKaratFromMaterialType(cartItem.product.materialType)
+            extractKaratFromMaterialType(currentProduct.materialType)
     }
-    
-    // Get collection rate first (like CartTable)
-    val ratesVM = org.example.project.JewelryAppInitializer.getMetalRateViewModel()
-    val karatForRate = metalKarat
     val collectionRate = try {
-        ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karatForRate)
+            ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
     } catch (e: Exception) { 0.0 }
-    
     val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
     val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
-    val silverRate = metalRates.getSilverRateForPurity(999)
-    
-    val metalRate = if (collectionRate > 0) collectionRate else when {
-        product.materialType.contains("gold", ignoreCase = true) -> goldRate
-        product.materialType.contains("silver", ignoreCase = true) -> silverRate
+        // Extract silver purity from material type
+        val materialTypeLower = currentProduct.materialType.lowercase()
+        val silverPurity = when {
+            materialTypeLower.contains("999") -> 999
+            materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+            materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+            else -> {
+                val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
+            }
+        }
+        val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+        val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+            currentProduct.materialType.contains("gold", ignoreCase = true) -> goldRate
+            currentProduct.materialType.contains("silver", ignoreCase = true) -> silverRate
         else -> goldRate
     }
     
-    // Use product values as fallbacks if cart item values are 0
-    val grossWeight = product.totalWeight // grossWeight removed, using totalWeight
-    val lessWeight = if (cartItem.lessWeight > 0) cartItem.lessWeight else 0.0 // lessWeight removed from Product
-    val netWeight = grossWeight - lessWeight
+        // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+        val priceInputs = ProductPriceInputs(
+            grossWeight = grossWeight,
+            goldPurity = currentProduct.materialType,
+            goldWeight = currentProduct.materialWeight.takeIf { it > 0 } ?: grossWeight,
+            makingPercentage = makingPercentage,
+            labourRatePerGram = labourRatePerGram,
+            kundanPrice = kundanPrice,
+            kundanWeight = kundanWeight,
+            jarkanPrice = jarkanPrice,
+            jarkanWeight = jarkanWeight,
+            goldRatePerGram = goldRatePerGram
+        )
+        
+        // Use the same calculation function as ProductPriceCalculator
+        calculateProductPrice(priceInputs)
+    }
+    
     val quantity = cartItem.quantity
-    val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
-    val firstStone = product.stones.firstOrNull()
-    val cwWeight = if (cartItem.cwWeight > 0) cartItem.cwWeight else (firstStone?.weight ?: product.stoneWeight)
-    val stoneRate = if (cartItem.stoneRate > 0) cartItem.stoneRate else (firstStone?.rate ?: 0.0)
-    val stoneQuantity = if (cartItem.stoneQuantity > 0) cartItem.stoneQuantity else (firstStone?.quantity ?: 0.0)
-    val vaCharges = if (cartItem.va > 0) cartItem.va else product.labourCharges // Use labourCharges instead of vaCharges
-    
-    // Calculate base amount using metalRate (includes collection rate logic)
-    val baseAmount = netWeight * metalRate * quantity
-    
-    val makingCharges = netWeight * makingChargesPerGram * quantity
-    val stoneAmount = stoneRate * stoneQuantity * cwWeight * quantity
-    val totalCharges = baseAmount + makingCharges + stoneAmount + (vaCharges * quantity)
+    val baseAmount = priceResult.goldPrice * quantity
+    val makingCharges = priceResult.labourCharges * quantity
+    val stoneAmount = (priceResult.kundanPrice + priceResult.jarkanPrice) * quantity
+    val totalCharges = priceResult.totalProductPrice * quantity
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1033,15 +1028,15 @@ private fun ItemDetailCard(
                         color = Color(0xFF666666)
                     )
                     Text(
-                        text = "Weight: ${String.format("%.2f", netWeight)}g",
+                        text = "Weight: ${String.format("%.2f", priceResult.newWeight)}g",
                         fontSize = 12.sp,
                         color = Color(0xFF666666)
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    if (makingChargesPerGram > 0) {
+                    if (product.makingPercent > 0) {
                         Text(
-                            text = "Making: ${CurrencyFormatter.formatRupees(makingChargesPerGram, includeDecimals = true)}/g",
+                            text = "Making: ${String.format("%.2f", product.makingPercent)}%",
                             fontSize = 12.sp,
                             color = Color(0xFF666666)
                         )
@@ -1054,7 +1049,7 @@ private fun ItemDetailCard(
             
             ItemAmountRow(label = "Base Amount", amount = baseAmount)
             if (makingCharges > 0) {
-                ItemAmountRow(label = "Making Charges", amount = makingCharges)
+                ItemAmountRow(label = "Labour Charges", amount = makingCharges)
             }
             if (stoneAmount > 0) {
                 ItemAmountRow(label = "Stone Amount", amount = stoneAmount)

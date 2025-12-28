@@ -95,6 +95,8 @@ import java.net.URL
 import javax.imageio.ImageIO
 import org.example.project.JewelryAppInitializer
 import org.example.project.utils.CurrencyFormatter
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
 
 // Image cache to store loaded images
 object ImageCache {
@@ -767,24 +769,65 @@ private fun GroupedProductRow(
 
         // Price - Always compute dynamic price; optionally show custom price as secondary
         // lessWeight removed from Product, using 0.0 as default
-        val firstStone = product.stones.firstOrNull()
-        val dynamicPrice = remember(product.id, product.totalWeight, product.stoneWeight, firstStone?.rate, firstStone?.quantity, product.labourCharges, metalRatesList) {
+        // Use ProductPriceCalculator logic (same as AddEditProductScreen)
+        val dynamicPrice = remember(product.id, product.totalWeight, product.materialWeight, product.makingPercent, product.labourRate, product.stones, metalRatesList) {
             try {
-                val lessWeight = 0.0 // lessWeight removed from Product
-                val netWeight = (product.totalWeight - lessWeight).coerceAtLeast(0.0)
-                val materialRate = getMaterialRateForProduct(product, metalRatesList)
-                val baseAmount = netWeight * materialRate
-                val makingCharges = 0.0 // defaultMakingRate removed from Product
-                // Calculate stone amount from stones array
-                val stoneAmount = if (product.hasStones && product.stones.isNotEmpty()) {
-                    product.stones.sumOf { stone ->
-                        if (stone.weight > 0 && stone.rate > 0) {
-                            stone.rate * (stone.quantity.takeIf { it > 0 } ?: 1.0) * stone.weight
-                        } else stone.amount
+                val metalRates = MetalRatesManager.metalRates.value
+                val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+                
+                // Extract kundan and jarkan from stones array
+                val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                
+                // Sum all Kundan prices and weights
+                val kundanPrice = kundanStones.sumOf { it.amount }
+                val kundanWeight = kundanStones.sumOf { it.weight }
+                
+                // Sum all Jarkan prices and weights
+                val jarkanPrice = jarkanStones.sumOf { it.amount }
+                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                
+                // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
+                val metalKarat = extractKaratFromMaterialType(product.materialType)
+                val collectionRate = try {
+                    ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
+                } catch (e: Exception) { 0.0 }
+                val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                // Extract silver purity from material type
+                val materialTypeLower = product.materialType.lowercase()
+                val silverPurity = when {
+                    materialTypeLower.contains("999") -> 999
+                    materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                    materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                    else -> {
+                        val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                        if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
                     }
-                } else 0.0
-                // Use labourCharges instead of vaCharges
-                baseAmount + makingCharges + stoneAmount + product.labourCharges
+                }
+                val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                    product.materialType.contains("gold", ignoreCase = true) -> defaultGoldRate
+                    product.materialType.contains("silver", ignoreCase = true) -> silverRate
+                    else -> defaultGoldRate
+                }
+                
+                // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+                val priceInputs = ProductPriceInputs(
+                    grossWeight = product.totalWeight,
+                    goldPurity = product.materialType,
+                    goldWeight = product.materialWeight.takeIf { it > 0 } ?: product.totalWeight,
+                    makingPercentage = product.makingPercent,
+                    labourRatePerGram = product.labourRate,
+                    kundanPrice = kundanPrice,
+                    kundanWeight = kundanWeight,
+                    jarkanPrice = jarkanPrice,
+                    jarkanWeight = jarkanWeight,
+                    goldRatePerGram = goldRatePerGram
+                )
+                
+                // Use the same calculation function as ProductPriceCalculator
+                val result = calculateProductPrice(priceInputs)
+                result.totalProductPrice
             } catch (e: Exception) {
                 0.0
             }
@@ -1099,24 +1142,65 @@ fun ProductRow(
 
         // Price - Always compute dynamic price; optionally show custom price as secondary
         // lessWeight removed from Product, using 0.0 as default
-        val firstStone = product.stones.firstOrNull()
-        val dynamicPrice = remember(product.id, product.totalWeight, product.stoneWeight, firstStone?.rate, firstStone?.quantity, product.labourCharges, metalRatesList) {
+        // Use ProductPriceCalculator logic (same as AddEditProductScreen)
+        val dynamicPrice = remember(product.id, product.totalWeight, product.materialWeight, product.makingPercent, product.labourRate, product.stones, metalRatesList) {
             try {
-                val lessWeight = 0.0 // lessWeight removed from Product
-                val netWeight = (product.totalWeight - lessWeight).coerceAtLeast(0.0)
-                val materialRate = getMaterialRateForProduct(product, metalRatesList)
-                val baseAmount = netWeight * materialRate
-                val makingCharges = 0.0 // defaultMakingRate removed from Product
-                // Calculate stone amount from stones array
-                val stoneAmount = if (product.hasStones && product.stones.isNotEmpty()) {
-                    product.stones.sumOf { stone ->
-                        if (stone.weight > 0 && stone.rate > 0) {
-                            stone.rate * (stone.quantity.takeIf { it > 0 } ?: 1.0) * stone.weight
-                        } else stone.amount
+                val metalRates = MetalRatesManager.metalRates.value
+                val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+                
+                // Extract kundan and jarkan from stones array
+                val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                
+                // Sum all Kundan prices and weights
+                val kundanPrice = kundanStones.sumOf { it.amount }
+                val kundanWeight = kundanStones.sumOf { it.weight }
+                
+                // Sum all Jarkan prices and weights
+                val jarkanPrice = jarkanStones.sumOf { it.amount }
+                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                
+                // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
+                val metalKarat = extractKaratFromMaterialType(product.materialType)
+                val collectionRate = try {
+                    ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
+                } catch (e: Exception) { 0.0 }
+                val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                // Extract silver purity from material type
+                val materialTypeLower = product.materialType.lowercase()
+                val silverPurity = when {
+                    materialTypeLower.contains("999") -> 999
+                    materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                    materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                    else -> {
+                        val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                        if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
                     }
-                } else 0.0
-                // Use labourCharges instead of vaCharges
-                baseAmount + makingCharges + stoneAmount + product.labourCharges
+                }
+                val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                    product.materialType.contains("gold", ignoreCase = true) -> defaultGoldRate
+                    product.materialType.contains("silver", ignoreCase = true) -> silverRate
+                    else -> defaultGoldRate
+                }
+                
+                // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+                val priceInputs = ProductPriceInputs(
+                    grossWeight = product.totalWeight,
+                    goldPurity = product.materialType,
+                    goldWeight = product.materialWeight.takeIf { it > 0 } ?: product.totalWeight,
+                    makingPercentage = product.makingPercent,
+                    labourRatePerGram = product.labourRate,
+                    kundanPrice = kundanPrice,
+                    kundanWeight = kundanWeight,
+                    jarkanPrice = jarkanPrice,
+                    jarkanWeight = jarkanWeight,
+                    goldRatePerGram = goldRatePerGram
+                )
+                
+                // Use the same calculation function as ProductPriceCalculator
+                val result = calculateProductPrice(priceInputs)
+                result.totalProductPrice
             } catch (e: Exception) {
                 0.0
             }

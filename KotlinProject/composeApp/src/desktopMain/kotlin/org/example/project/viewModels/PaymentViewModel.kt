@@ -374,7 +374,7 @@ class PaymentViewModel(
         _successMessage.value = null
     }
 
-    private fun generateOrderPDF(order: Order, customer: User) {
+    private fun generateOrderPDF(order: Order, customer: User, transaction: PaymentTransaction? = null) {
         viewModelScope.launch {
             _isGeneratingPDF.value = true
             _errorMessage.value = null
@@ -397,6 +397,8 @@ class PaymentViewModel(
                 
                 // Use the order retrieved from Firestore instead of the passed order
                 val orderToUse = firestoreOrder
+                // Get CartItem data from transaction if available (for accurate pricing with overrides)
+                val cartItems = transaction?.items
                 val userHome = System.getProperty("user.home")
                 if (userHome.isNullOrBlank()) {
                     throw Exception("User home directory not found")

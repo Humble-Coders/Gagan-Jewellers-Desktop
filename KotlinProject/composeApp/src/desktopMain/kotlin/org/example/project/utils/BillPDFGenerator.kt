@@ -7,10 +7,15 @@ import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.font.PDType1Font
 import org.example.project.data.Order
 import org.example.project.data.User
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
+import org.example.project.data.MetalRatesManager
+import org.example.project.data.extractKaratFromMaterialType
+import org.example.project.JewelryAppInitializer
+import org.example.project.utils.CurrencyFormatter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
-import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -31,7 +36,8 @@ class BillPDFGenerator {
         companyEmail: String = "info@vishalgems.com",
         gstNumber: String = "22AAAAA0000A1Z5",
         goldPricePerGram: Double = 6080.0,
-        silverPricePerGram: Double = 75.0
+        silverPricePerGram: Double = 75.0,
+        cartItems: List<org.example.project.data.CartItem>? = null // Optional CartItem data for accurate pricing
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             println("🔄 ========== PDFBOX PDF GENERATION STARTED ==========")
@@ -106,7 +112,7 @@ class BillPDFGenerator {
 
                     println("🔧 Drawing items table...")
                     yPosition = drawCorrectItemsTable(
-                        contentStream, order, products, goldPricePerGram, silverPricePerGram, margin, yPosition, pageWidth
+                        contentStream, order, products, goldPricePerGram, silverPricePerGram, margin, yPosition, pageWidth, cartItems
                     )
                     println("✅ Items table drawn, yPosition: $yPosition")
 
@@ -317,7 +323,8 @@ class BillPDFGenerator {
         silverPricePerGram: Double,
         margin: Float,
         startY: Float,
-        pageWidth: Float
+        pageWidth: Float,
+        cartItems: List<org.example.project.data.CartItem>? = null
     ): Float {
         var yPos = startY - 10f
         val tableWidth = pageWidth - (2 * margin)
@@ -331,9 +338,9 @@ class BillPDFGenerator {
                 "Weight\n(grams)",
                 "Rate\n(per gram)",
                 "Metal\nCost",
-                "Making\nCharges",
+                "Labour\nCharges",
                 "Sub\nTotal",
-                "GST\n(18%)",
+                "GST",
                 "Item\nTotal"
             )
 
@@ -392,8 +399,12 @@ class BillPDFGenerator {
             // Draw items with correct calculations
             contentStream.setFont(helvetica, 7f)
 
+            // Get metal rates for ProductPriceCalculator
+            val metalRates = MetalRatesManager.metalRates.value
+            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+
             // Display each item separately (no grouping)
-            order.items.forEach { item ->
+            order.items.forEachIndexed { itemIndex, item ->
                 val itemRowHeight = rowHeight * 1.2f
                 yPos -= itemRowHeight
 
@@ -403,52 +414,132 @@ class BillPDFGenerator {
 
                 xPos = margin + 1f
                 
-                // Get product details for this item (for name and other reference details)
+                // Get product details for this item
                 val product = products.find { it.id == item.productId }
-                val weight = if (product != null) parseWeight(product.weight) else 5.0
-                
-                // Use materialType from order item, fallback to product if not available
-                val materialType = if (item.materialType.isNotBlank()) item.materialType else (product?.materialType ?: "Unknown")
-                
-                val pricePerGram = when {
-                    materialType.contains("gold", ignoreCase = true) -> goldPricePerGram
-                    materialType.contains("silver", ignoreCase = true) -> silverPricePerGram
-                    else -> goldPricePerGram
+                if (product == null) {
+                    // Skip if product not found
+                    totalQty += item.quantity
+                    return@forEachIndexed
                 }
                 
-                // Calculate costs for this individual item
-                val metalCost = weight * item.quantity * pricePerGram
+                // Get corresponding CartItem if available (for accurate pricing with overrides)
+                val cartItem = cartItems?.find { it.productId == item.productId && it.selectedBarcodeIds.contains(item.barcodeId) }
                 
-                // Use making rate from order item (it's stored as rate per gram from cartItem.makingCharges)
-                val makingRatePerGram = 0.0 // defaultMakingRate removed from Product
-                val makingCharges = weight * item.quantity * makingRatePerGram
+                // Use ProductPriceCalculator logic (same as ReceiptScreen)
+                // Use cartItem overrides if available, otherwise use product defaults
+                val grossWeight = if (cartItem != null && cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
+                val makingPercentage = product.makingPercent
+                val labourRatePerGram = product.labourRate
                 
-                // VA charges from the order item (stored from cartItem.va, which is per-item)
-                val vaCharges = if (item.vaCharges > 0) {
-                    item.vaCharges * item.quantity
-                } else 0.0
-                val subTotal = metalCost + makingCharges + vaCharges
-                // Calculate GST using split model: 3% on metal, 5% on making charges (matching receipt screen)
-                val gst = if (order.isGstIncluded) {
-                    // Simple split GST calculation without discount for now
-                    // GST: 3% on metal, 5% on making
-                    (metalCost * 0.03) + (makingCharges * 0.05)
-                } else 0.0
-                val itemTotal = subTotal + gst
+                // Extract kundan and jarkan from stones array
+                val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                
+                // Sum all Kundan prices and weights
+                val kundanPrice = kundanStones.sumOf { it.amount }
+                val kundanWeight = kundanStones.sumOf { it.weight }
+                
+                // Sum all Jarkan prices and weights
+                val jarkanPrice = jarkanStones.sumOf { it.amount }
+                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                
+                // Get material rate (fetched from metal rates, same as ReceiptScreen)
+                // Use cartItem.metal if available, otherwise use item.materialType or product.materialType
+                val materialType = if (cartItem != null && cartItem.metal.isNotEmpty()) {
+                    cartItem.metal
+                } else if (item.materialType.isNotBlank()) {
+                    item.materialType
+                } else {
+                    product.materialType
+                }
+                
+                // Extract metal karat (same as ReceiptScreen)
+                val metalKarat = if (cartItem != null && cartItem.metal.isNotEmpty()) {
+                    cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(product.materialType)
+                } else {
+                    extractKaratFromMaterialType(materialType)
+                }
+                
+                val collectionRate = try {
+                    ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
+                } catch (e: Exception) { 0.0 }
+                val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                
+                // Use cartItem.customGoldRate if available (same as ReceiptScreen)
+                val goldRate = if (cartItem != null && cartItem.customGoldRate > 0) {
+                    cartItem.customGoldRate
+                } else {
+                    defaultGoldRate
+                }
+                
+                // Extract silver purity from material type
+                val materialTypeLower = product.materialType.lowercase()
+                val silverPurity = when {
+                    materialTypeLower.contains("999") -> 999
+                    materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                    materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                    else -> {
+                        val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                        if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
+                    }
+                }
+                val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                    product.materialType.contains("gold", ignoreCase = true) -> goldRate
+                    product.materialType.contains("silver", ignoreCase = true) -> silverRate
+                    else -> goldRate
+                }
+                
+                // Build ProductPriceInputs (same structure as ProductPriceCalculator)
+                val priceInputs = ProductPriceInputs(
+                    grossWeight = grossWeight,
+                    goldPurity = materialType,
+                    goldWeight = product.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                    makingPercentage = makingPercentage,
+                    labourRatePerGram = labourRatePerGram,
+                    kundanPrice = kundanPrice,
+                    kundanWeight = kundanWeight,
+                    jarkanPrice = jarkanPrice,
+                    jarkanWeight = jarkanWeight,
+                    goldRatePerGram = goldRatePerGram
+                )
+                
+                // Use the same calculation function as ProductPriceCalculator
+                val result = calculateProductPrice(priceInputs)
+                
+                // Calculate per-item total, then multiply by quantity
+                val perItemTotal = result.totalProductPrice
+                val itemSubTotal = perItemTotal * item.quantity
+                
+                // For display in table, show per-item values
+                val metalCost = result.goldPrice
+                val makingCharges = result.labourCharges
+                val stoneAmount = result.kundanPrice + result.jarkanPrice
+                val weight = result.newWeight
+                
+                // GST is calculated on (subtotal - discountAmount), same as ReceiptScreen
+                // For individual items, calculate GST proportionally based on item's share
+                val taxableAmount = order.subtotal - order.discountAmount
+                val itemGst = if (order.isGstIncluded && taxableAmount > 0) {
+                    (itemSubTotal / order.subtotal) * order.gstAmount
+                } else {
+                    0.0
+                }
+                val itemTotal = itemSubTotal + itemGst
 
                 totalQty += item.quantity
                 totalWeight += weight * item.quantity
 
                 val values = listOf(
-                    product?.name ?: "Product ${item.productId}",
+                    product.name,
                     materialType,
                     "${item.quantity}",
                     String.format("%.2f", weight * item.quantity),
-                    formatCurrency(pricePerGram),
-                    formatCurrency(metalCost),
-                    formatCurrency(makingCharges),
-                    formatCurrency(subTotal),
-                    if (order.isGstIncluded) formatCurrency(gst) else "0.00",
+                    formatCurrency(goldRatePerGram),
+                    formatCurrency(metalCost * item.quantity),
+                    formatCurrency(makingCharges * item.quantity),
+                    formatCurrency(itemSubTotal),
+                    if (order.isGstIncluded) formatCurrency(itemGst) else "0.00",
                     formatCurrency(itemTotal)
                 )
 
@@ -491,12 +582,14 @@ class BillPDFGenerator {
             contentStream.setFont(helveticaBold, 8f)
             xPos = margin + 1f
 
+            // Use stored order values for totals (same as ReceiptScreen)
+            // Note: order.subtotal already includes all item prices calculated correctly
             val totalValues = listOf(
                 "TOTAL", "", "${totalQty}", String.format("%.2f", totalWeight),
-                "", formatCurrency(totalMetalCost), "",
-                formatCurrency(totalMetalCost),
-                if (order.isGstIncluded) formatCurrency(totalGst) else "0.00",
-                formatCurrency(grandTotal)
+                "", formatCurrency(order.subtotal), "",
+                formatCurrency(order.subtotal),
+                if (order.isGstIncluded) formatCurrency(order.gstAmount) else "0.00",
+                formatCurrency(order.totalAmount)
             )
 
             totalValues.forEachIndexed { index, value ->
@@ -558,12 +651,15 @@ class BillPDFGenerator {
             contentStream.endText()
             yPos -= 20f
 
-            // Payment breakdown using actual order values
+            // Payment breakdown using stored order values (same as ReceiptScreen)
+            // ReceiptScreen uses: itemSubtotal + gstAmount - discountAmount = finalTotal
+            // But displays stored transaction values
             contentStream.setFont(helvetica, 9f)
 
+            // Subtotal (use stored order.subtotal, same as ReceiptScreen displays calculated itemSubtotal)
             contentStream.beginText()
             contentStream.newLineAtOffset(margin, yPos)
-            contentStream.showText("Metal Cost:")
+            contentStream.showText("Subtotal:")
             contentStream.endText()
             contentStream.beginText()
             contentStream.newLineAtOffset(margin + 120f, yPos)
@@ -571,6 +667,7 @@ class BillPDFGenerator {
             contentStream.endText()
             yPos -= 15f
 
+            // Discount (use stored order.discountAmount, same as ReceiptScreen)
             if (order.discountAmount > 0) {
                 contentStream.beginText()
                 contentStream.newLineAtOffset(margin, yPos)
@@ -583,12 +680,14 @@ class BillPDFGenerator {
                 yPos -= 15f
             }
 
+            // GST (use stored order.gstAmount, same as ReceiptScreen)
+            // Calculate GST percentage from stored gstAmount (same as ReceiptScreen line 745-746)
             if (order.isGstIncluded && order.gstAmount > 0) {
-                // Calculate GST percentage from the order data
-                val gstPercentage = if (order.subtotal > 0) {
-                    ((order.gstAmount / order.subtotal) * 100).toInt()
+                val taxableAmount = order.subtotal - order.discountAmount
+                val gstPercentage = if (taxableAmount > 0 && order.gstAmount > 0) {
+                    ((order.gstAmount / taxableAmount) * 100).toInt()
                 } else {
-                    3 // Default fallback percentage
+                    0
                 }
                 
                 contentStream.beginText()
@@ -609,7 +708,9 @@ class BillPDFGenerator {
             contentStream.stroke()
             yPos -= 10f
 
-            // Total Amount
+            // Total Amount (use stored order.totalAmount, same as ReceiptScreen finalTotal)
+            // ReceiptScreen: finalTotal = itemSubtotal + gstAmount - discountAmount
+            // But we use stored order.totalAmount which should match
             contentStream.setFont(helveticaBold, 10f)
             contentStream.beginText()
             contentStream.newLineAtOffset(margin, yPos)
@@ -704,14 +805,8 @@ class BillPDFGenerator {
     }
 
     private fun formatCurrency(amount: Double): String {
-        return try {
-            val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-            formatter.maximumFractionDigits = 2
-            formatter.minimumFractionDigits = 2
-            formatter.format(amount)
-        } catch (e: Exception) {
-            String.format("%.2f", amount)
-        }
+        // Use CurrencyFormatter for consistent Indian currency formatting
+        return CurrencyFormatter.formatRupeesNumber(amount, includeDecimals = true)
     }
 
     private fun truncateText(text: String, maxLength: Int): String {

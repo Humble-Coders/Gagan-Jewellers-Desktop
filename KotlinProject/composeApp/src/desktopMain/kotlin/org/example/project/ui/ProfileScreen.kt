@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.example.project.data.User
 import org.example.project.viewModels.ProfileViewModel
+import org.example.project.utils.CurrencyFormatter
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -351,7 +352,7 @@ fun CustomerCard(
                     color = if (customer.balance >= 0) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)
                 ) {
                     Text(
-                        text = "₹${String.format("%.2f", customer.balance)}",
+                        text = CurrencyFormatter.formatRupees(customer.balance, includeDecimals = true),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,

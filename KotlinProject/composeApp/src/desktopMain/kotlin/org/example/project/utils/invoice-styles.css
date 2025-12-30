@@ -1,0 +1,405 @@
+@page {
+    size: A4;
+    margin: 10mm;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    font-size: 8pt;
+    line-height: 1.2;
+    color: #000;
+}
+
+.invoice-container {
+    max-width: 100%;
+    background: white;
+    border: 1px solid #000;
+}
+
+.logo-section {
+    position: relative;
+    padding: 15px 20px 10px 20px;
+    background: white;
+    border-bottom: 1px solid #000;
+    min-height: 60px;
+}
+
+.logo-container {
+    text-align: center;
+    width: 100%;
+}
+
+.diamond-logo {
+    font-size: 32pt;
+    color: #B8973D;
+    display: inline-block;
+    line-height: 1;
+}
+
+.customer-copy-small {
+    position: absolute;
+    bottom: 5px;
+    right: 20px;
+    font-size: 7pt;
+    font-weight: bold;
+    color: #666;
+}
+
+.header {
+    padding: 8px 20px;
+    border-bottom: 1px solid #000;
+}
+
+.header-content-single-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.invoice-title {
+    font-size: 14pt;
+    font-weight: bold;
+    margin: 0;
+}
+
+.doc-info-inline {
+    text-align: right;
+    font-size: 8pt;
+}
+
+.doc-info-inline span {
+    white-space: nowrap;
+}
+
+.details-section {
+    border-bottom: 1px solid #000;
+}
+
+.details-row {
+    display: flex;
+    padding: 10px 20px;
+}
+
+.seller-details, .customer-details {
+    flex: 1;
+    font-size: 7pt;
+}
+
+.customer-details {
+    border-left: 1px solid #000;
+    padding-left: 15px;
+}
+
+.detail-label {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.detail-line {
+    margin: 2px 0;
+}
+
+.standard-rates-section {
+    padding: 8px 20px;
+    background: #f5f5f5;
+    border-bottom: 1px solid #000;
+    font-size: 7pt;
+}
+
+.rates-line {
+    margin: 2px 0;
+    line-height: 1.4;
+}
+
+.product-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 6pt;
+}
+
+.product-table th,
+.product-table td {
+    border: 1px solid #000;
+    padding: 3px 2px;
+    text-align: center;
+}
+
+.product-table thead th {
+    background: #e0e0e0;
+    font-weight: bold;
+}
+
+.product-table tbody td {
+    font-size: 6pt;
+}
+
+.product-table tfoot .totals-row {
+    background: #f0f0f0;
+    font-weight: bold;
+}
+
+.summary-section {
+    padding: 10px 20px;
+    border-bottom: 1px solid #000;
+}
+
+.summary-top-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.summary-item {
+    display: flex;
+    gap: 10px;
+    font-size: 8pt;
+}
+
+.summary-label {
+    font-weight: normal;
+}
+
+.summary-value {
+    font-weight: bold;
+}
+
+.section-divider {
+    height: 1px;
+    background: #000;
+    margin: 0;
+}
+
+.payment-charges-section {
+    display: flex;
+    border-bottom: 1px solid #000;
+    align-items: flex-start;
+    page-break-inside: avoid;
+}
+
+.payment-left-two-thirds {
+    flex: 2;
+    min-width: 0;
+    padding: 15px 20px;
+    border-right: 1px solid #000;
+    overflow: visible;
+}
+
+.payment-right-one-third {
+    flex: 1;
+    min-width: 0;
+    padding: 15px 20px;
+    overflow: visible;
+}
+
+.summary-box {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.summary-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 8pt;
+    padding: 3px 0;
+}
+
+.summary-row .summary-label {
+    font-weight: normal;
+}
+
+.summary-row .summary-value {
+    font-weight: normal;
+    text-align: right;
+}
+
+.summary-item-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    font-size: 7pt;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.summary-item-row .summary-label {
+    font-weight: normal;
+    flex: 1;
+    min-width: 0;
+    margin-right: 10px;
+}
+
+.summary-item-row .summary-value {
+    font-weight: bold;
+    text-align: right;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.total-payable {
+    margin-top: 10px;
+    border-top: 1px solid #000;
+    padding-top: 5px;
+}
+
+.summary-total {
+    border-top: 1px solid #000;
+    padding-top: 8px;
+    margin-top: 4px;
+}
+
+.summary-total .summary-label,
+.summary-total .summary-value {
+    font-weight: bold;
+}
+
+.amount-in-words {
+    margin-top: 10px;
+    font-size: 7pt;
+}
+
+.terms-section {
+    padding: 10px 20px;
+    font-size: 7pt;
+    border-top: 1px solid #000;
+}
+
+.terms-line {
+    margin: 3px 0;
+    line-height: 1.4;
+}
+
+.section-subtitle {
+    font-size: 9pt;
+    margin-bottom: 8px;
+    font-weight: bold;
+}
+
+.discount-title {
+    margin-top: 15px;
+}
+
+.payment-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 7pt;
+    table-layout: fixed;
+}
+
+.payment-table th,
+.payment-table td {
+    border: 1px solid #000;
+    padding: 4px 5px;
+    text-align: left;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.payment-table th {
+    background: #e0e0e0;
+    font-weight: bold;
+    text-align: center;
+}
+
+.payment-table th:nth-child(1),
+.payment-table td:nth-child(1) {
+    width: 25%;
+}
+
+.payment-table th:nth-child(2),
+.payment-table td:nth-child(2) {
+    width: 20%;
+}
+
+.payment-table th:nth-child(3),
+.payment-table td:nth-child(3) {
+    width: 30%;
+}
+
+.payment-table th:nth-child(4),
+.payment-table td:nth-child(4) {
+    width: 25%;
+    text-align: right;
+}
+
+.payment-table tfoot .payment-total-row {
+    background: #f0f0f0;
+    font-weight: bold;
+}
+
+.charges-box, .discount-box {
+    font-size: 7pt;
+    margin-bottom: 12px;
+}
+
+.charge-row, .discount-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+    border-bottom: 1px solid #ddd;
+}
+
+.charge-row.charge-total {
+    border-top: 2px solid #000;
+    border-bottom: 2px solid #000;
+    margin-top: 5px;
+    padding: 6px 0;
+    font-size: 8pt;
+}
+
+.charge-label, .charge-value,
+.discount-label, .discount-value {
+    font-weight: normal;
+}
+
+.final-total-section {
+    margin-top: 15px;
+    padding-top: 10px;
+    border-top: 1px solid #ddd;
+}
+
+.final-amount-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 9pt;
+    margin-bottom: 8px;
+}
+
+.final-label, .final-value {
+    font-weight: bold;
+}
+
+.footer {
+    padding: 10px 20px;
+    font-size: 7pt;
+    border-top: 1px solid #000;
+}
+
+.footer-content {
+    display: flex;
+    justify-content: flex-start;
+    margin-bottom: 5px;
+}
+
+.footer-left-section {
+    text-align: left;
+}
+
+.footer-text {
+    margin: 2px 0;
+    font-weight: normal;
+}
+
+.footer-terms {
+    margin-top: 8px;
+    font-style: normal;
+    font-size: 7pt;
+}
+

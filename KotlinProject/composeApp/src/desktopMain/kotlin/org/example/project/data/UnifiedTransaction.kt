@@ -14,8 +14,8 @@ data class UnifiedTransaction(
     val updatedAt: Long = System.currentTimeMillis(),
     val completedAt: Long? = null,
     val transactionDate: String = "",
-    val status: OrderStatus = OrderStatus.CONFIRMED,
-    val paymentStatus: PaymentStatus = PaymentStatus.COMPLETED,
+    val status: OrderStatus? = null,
+    val paymentStatus: PaymentStatus? = null,
     
     // Order-specific fields (null for cash transactions)
     val orderId: String? = null,
@@ -28,7 +28,6 @@ data class UnifiedTransaction(
     val totalAmount: Double = 0.0,
     val isGstIncluded: Boolean = true,
     val paymentSplit: PaymentSplit? = null,
-    val metalRatesReference: String = "",
     
     // Cash transaction-specific fields (null for orders)
     val cashAmountId: String? = null,
@@ -47,26 +46,25 @@ fun Order.toUnifiedTransaction(): UnifiedTransaction {
         id = this.orderId,
         customerId = this.customerId,
         transactionType = TransactionType.ORDER,
-        amount = this.finalAmount,
-        finalAmount = this.finalAmount,
+        amount = this.totalAmount,
+        finalAmount = this.totalAmount,
         notes = this.notes,
         createdAt = this.createdAt,
         updatedAt = this.updatedAt,
-        completedAt = this.completedAt,
+        completedAt = null, // Removed from Order model
         transactionDate = this.transactionDate,
-        status = this.status,
-        paymentStatus = this.paymentStatus,
+        status = null, // Removed from Order model
+        paymentStatus = null, // Removed from Order model
         orderId = this.orderId,
         items = this.items,
-        subtotal = this.subtotal,
+        subtotal = this.totalProductValue,
         discountAmount = this.discountAmount,
-        discountPercent = this.discountPercent,
-        taxableAmount = this.taxableAmount,
+        discountPercent = this.discountPercent ?: 0.0,
+        taxableAmount = this.totalProductValue - this.discountAmount,
         gstAmount = this.gstAmount,
         totalAmount = this.totalAmount,
         isGstIncluded = this.isGstIncluded,
         paymentSplit = this.paymentSplit,
-        metalRatesReference = this.metalRatesReference,
         cashAmountId = null,
         cashTransactionType = null,
         createdBy = "system"
@@ -97,7 +95,6 @@ fun CashAmount.toUnifiedTransaction(): UnifiedTransaction {
         totalAmount = this.totalAmount,
         isGstIncluded = this.isGstIncluded,
         paymentSplit = this.paymentSplit,
-        metalRatesReference = this.metalRatesReference,
         cashAmountId = this.cashAmountId,
         cashTransactionType = this.transactionType,
         createdBy = this.createdBy

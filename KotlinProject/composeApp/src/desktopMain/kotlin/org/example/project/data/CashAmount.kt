@@ -27,9 +27,6 @@ data class CashAmount(
     // Order Items - Empty for cash transactions but keeping structure
     val items: List<OrderItem> = emptyList(),
     
-    // Metal Rates Reference - Empty for cash transactions
-    val metalRatesReference: String = "",
-    
     // Timestamps (matching Order structure)
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),

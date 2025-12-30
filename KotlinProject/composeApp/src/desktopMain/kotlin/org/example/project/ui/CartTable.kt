@@ -1184,7 +1184,7 @@ private fun DetailPanel(
                     value = formatWeight(calculatedValues["newWeight"] ?: 0.0),
                     color = GoldPrimary,
                     icon = Icons.Default.Done
-                )
+                        )
             }
 
             // Metal Information Section

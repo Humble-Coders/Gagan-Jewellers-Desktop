@@ -83,7 +83,7 @@ class CartViewModel(
         val currentCart = _cart.value
         val existingItem = currentCart.items.find { it.productId == product.id }
         val currentQuantityInCart = existingItem?.quantity ?: 0
-
+        
         // Use selectedBarcodeIds count as available inventory (optimized - avoid blocking DB call)
         // The inventory check can be done asynchronously later if needed
         val availableInventoryCount = selectedBarcodeIds.size.takeIf { it > 0 } 

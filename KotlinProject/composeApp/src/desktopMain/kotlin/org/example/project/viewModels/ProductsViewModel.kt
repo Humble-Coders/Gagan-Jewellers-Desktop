@@ -97,16 +97,16 @@ class ProductsViewModel(
                 // Load inventory data in parallel for better performance
                 val deferredResults = allProducts.map { product ->
                     async(Dispatchers.IO) {
-                        try {
-                            val availableItems = inventoryRepository.getAvailableInventoryItemsByProductId(product.id)
-                            val allItems = inventoryRepository.getInventoryItemsByProductId(product.id)
-                            val barcodeIds = allItems.map { it.barcodeId }
+                    try {
+                        val availableItems = inventoryRepository.getAvailableInventoryItemsByProductId(product.id)
+                        val allItems = inventoryRepository.getInventoryItemsByProductId(product.id)
+                        val barcodeIds = allItems.map { it.barcodeId }
 
                             product.id to InventoryData(
-                                availableCount = availableItems.size,
-                                barcodeIds = barcodeIds
-                            )
-                        } catch (e: Exception) {
+                            availableCount = availableItems.size,
+                            barcodeIds = barcodeIds
+                        )
+                    } catch (e: Exception) {
                             // Silently fail - will use default InventoryData
                             product.id to InventoryData()
                         }

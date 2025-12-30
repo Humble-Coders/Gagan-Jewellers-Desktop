@@ -22,7 +22,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.example.project.data.Order
 import org.example.project.data.PaymentStatus
-import org.example.project.data.OrderStatus
 import org.example.project.data.User
 import org.example.project.data.CashAmount
 import org.example.project.data.CashAmountRepository
@@ -611,23 +610,20 @@ fun CustomerTransactionsScreen(
                                                 orderId = transaction.orderId ?: "",
                                                 customerId = transaction.customerId,
                                                 paymentSplit = transaction.paymentSplit,
-                                                paymentStatus = transaction.paymentStatus,
-                                                subtotal = transaction.subtotal,
+                                                totalProductValue = transaction.subtotal,
                                                 discountAmount = transaction.discountAmount,
-                                                discountPercent = transaction.discountPercent,
-                                                taxableAmount = transaction.taxableAmount,
+                                                discountPercent = transaction.discountPercent.takeIf { it > 0 },
                                                 gstAmount = transaction.gstAmount,
+                                                gstPercentage = if (transaction.taxableAmount > 0 && transaction.gstAmount > 0) {
+                                                    (transaction.gstAmount / transaction.taxableAmount) * 100.0
+                                                } else 0.0,
                                                 totalAmount = transaction.totalAmount,
-                                                finalAmount = transaction.finalAmount,
                                                 isGstIncluded = transaction.isGstIncluded,
                                                 items = transaction.items,
-                                                metalRatesReference = transaction.metalRatesReference,
                                                 createdAt = transaction.createdAt,
                                                 updatedAt = transaction.updatedAt,
-                                                completedAt = transaction.completedAt,
                                                 transactionDate = transaction.transactionDate,
-                                                notes = transaction.notes,
-                                                status = transaction.status
+                                                notes = transaction.notes
                                             )
                                             generateOrderPDF(order, updatedCustomer)
                                         }
@@ -709,7 +705,7 @@ fun TransactionCard(
                         color = Color(0xFFFFF8E1)
                     ) {
                         Text(
-                            text = CurrencyFormatter.formatRupees(order.finalAmount, includeDecimals = true),
+                            text = CurrencyFormatter.formatRupees(order.totalAmount, includeDecimals = true),
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
@@ -781,34 +777,7 @@ fun TransactionCard(
                 }
             }
 
-            // Status badges
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                StatusChip(
-                    text = order.status.name,
-                    color = when (order.status) {
-                        OrderStatus.CONFIRMED -> Color(0xFF3B82F6)
-                        OrderStatus.PROCESSING -> Color(0xFFF59E0B)
-                        OrderStatus.SHIPPED -> Color(0xFFA855F7)
-                        OrderStatus.DELIVERED -> Color(0xFF10B981)
-                        OrderStatus.CANCELLED -> Color(0xFFEF4444)
-                    }
-                )
-
-                StatusChip(
-                    text = order.paymentStatus.name,
-                    color = when (order.paymentStatus) {
-                        PaymentStatus.PENDING -> Color(0xFFF59E0B)
-                        PaymentStatus.PROCESSING -> Color(0xFF3B82F6)
-                        PaymentStatus.COMPLETED -> Color(0xFF10B981)
-                        PaymentStatus.FAILED -> Color(0xFFEF4444)
-                        PaymentStatus.CANCELLED -> Color(0xFF6B7280)
-                        PaymentStatus.REFUNDED -> Color(0xFFA855F7)
-                    }
-                )
-            }
+            // Status and PaymentStatus removed from Order model
 
             // Notes if available
             if (order.notes.isNotBlank()) {

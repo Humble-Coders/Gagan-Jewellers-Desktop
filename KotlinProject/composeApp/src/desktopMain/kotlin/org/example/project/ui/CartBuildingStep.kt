@@ -408,7 +408,7 @@ fun CartBuildingScreen(
                             color = Color.Gray,
                             fontSize = 12.sp
                         )
-                    }
+        }
                 }
             }
         } else if (filteredGroupedProducts.isEmpty()) {
@@ -477,19 +477,19 @@ fun CartBuildingScreen(
                                         // Single barcode - update directly
                                         cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
                                     }
+                                } else {
+                                    // Product not in cart yet - show barcode dialog if multiple barcodes
+                                    if (groupedProduct.barcodeIds.size > 1) {
+                                        selectedGroupedProduct = groupedProduct
+                                        showBarcodeDialog = true
                                     } else {
-                                        // Product not in cart yet - show barcode dialog if multiple barcodes
-                                        if (groupedProduct.barcodeIds.size > 1) {
-                                            selectedGroupedProduct = groupedProduct
-                                            showBarcodeDialog = true
-                                        } else {
-                                            // Single barcode - add directly
-                                            cartViewModel.addToCart(groupedProduct.baseProduct, groupedProduct.barcodeIds)
-                                            if (newQuantity > 1) {
-                                                cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
-                                            }
+                                        // Single barcode - add directly
+                                        cartViewModel.addToCart(groupedProduct.baseProduct, groupedProduct.barcodeIds)
+                                        if (newQuantity > 1) {
+                                            cartViewModel.updateQuantity(groupedProduct.baseProduct.id, newQuantity)
                                         }
                                     }
+                                }
                             } else {
                                 cartViewModel.removeFromCart(groupedProduct.baseProduct.id)
                             }
@@ -561,10 +561,10 @@ fun GroupedProductCard(
     // Dynamic price calculation - always use ProductPriceCalculator logic (same whether in cart or not)
     val displayPrice = remember(product, metalRates) {
         // Always use the same calculation as ProductPriceCalculator.kt
-        if (product.hasCustomPrice) {
-            product.customPrice
-        } else {
-            calculateProductTotalCost(product, metalRates)
+            if (product.hasCustomPrice) {
+                product.customPrice
+            } else {
+                calculateProductTotalCost(product, metalRates)
         }
     }
 

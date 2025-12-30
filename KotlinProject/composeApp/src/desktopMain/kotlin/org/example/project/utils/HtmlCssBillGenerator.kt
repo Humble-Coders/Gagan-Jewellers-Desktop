@@ -27,7 +27,7 @@ class HtmlCssBillGenerator {
             println("👤 Customer: ${customer.name} (ID: ${customer.id})")
             println("💰 Order total: ₹${String.format("%.2f", order.totalAmount)}")
             println("📦 Items count: ${order.items.size}")
-            println("💳 Payment status: ${order.paymentStatus}")
+            // PaymentStatus removed from Order model
             
             // Validate inputs
             if (order.orderId.isBlank()) {
@@ -105,7 +105,7 @@ class HtmlCssBillGenerator {
         val orderDate = dateFormat.format(Date(order.createdAt))
         
         // Calculate totals
-        val subtotal = order.subtotal
+        val subtotal = order.totalProductValue
         val gstAmount = order.gstAmount
         val discountAmount = order.discountAmount
         val totalAmount = order.totalAmount
@@ -311,20 +311,14 @@ class HtmlCssBillGenerator {
     private fun generatePaymentBreakdownRows(paymentSplit: org.example.project.data.PaymentSplit): String {
         val dueAmount = paymentSplit.dueAmount
         val isDueAmountNegative = dueAmount < 0
-        val totalPayment = paymentSplit.cashAmount + paymentSplit.cardAmount + paymentSplit.bankAmount + paymentSplit.onlineAmount + dueAmount
+        val totalPayment = paymentSplit.bank + paymentSplit.cash + dueAmount
         
         return buildString {
-            if (paymentSplit.cashAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Cash:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.cashAmount)}</span></div>")
+            if (paymentSplit.cash > 0) {
+                append("<div class=\"payment-row\"><span class=\"payment-label\">Cash:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.cash)}</span></div>")
             }
-            if (paymentSplit.cardAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Card:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.cardAmount)}</span></div>")
-            }
-            if (paymentSplit.bankAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Bank Transfer:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.bankAmount)}</span></div>")
-            }
-            if (paymentSplit.onlineAmount > 0) {
-                append("<div class=\"payment-row\"><span class=\"payment-label\">Online:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.onlineAmount)}</span></div>")
+            if (paymentSplit.bank > 0) {
+                append("<div class=\"payment-row\"><span class=\"payment-label\">Bank/Card/Online:</span><span class=\"payment-value\">Rs ${String.format("%.2f", paymentSplit.bank)}</span></div>")
             }
             if (dueAmount > 0) {
                 append("<div class=\"payment-row\"><span class=\"payment-label\">Due:</span><span class=\"payment-value\">Rs ${String.format("%.2f", dueAmount)}</span></div>")
@@ -721,15 +715,16 @@ class HtmlCssBillGenerator {
                 // 🔧 FIX: Use actual order data from Firestore instead of hardcoded values
                 println("📄 HTML BILL: Using Firestore order data for item ${item.productId}")
                 println("   - Making charges: 0.0 (defaultMakingRate removed)")
-                println("   - VA charges: ${item.vaCharges}")
-                println("   - Material type: ${item.materialType}")
+                // OrderItem no longer has vaCharges or materialType
+                println("   - Making percentage: ${item.makingPercentage}")
+                println("   - Labour charges: ${item.labourCharges}")
                 
                 generateItemsRows(listOf(org.example.project.data.CartItem(
                     productId = item.productId,
                     quantity = item.quantity,
                     selectedBarcodeIds = listOf(item.barcodeId),
                     product = product,
-                    metal = item.materialType.ifEmpty { product.materialType }, // Use order material type
+                    metal = product.materialType, // Use product material type
                     grossWeight = parseWeight(product.weight),
                     totalWeight = parseWeight(product.weight),
                     lessWeight = 0.0,
@@ -737,7 +732,7 @@ class HtmlCssBillGenerator {
                     stoneRate = 0.0,
                     stoneQuantity = 0.0,
                     cwWeight = 0.0,
-                    va = item.vaCharges // ✅ Use actual VA charges from Firestore
+                    va = item.labourCharges // Use labour charges from OrderItem
                 )))
             } else {
                 generateSimplifiedItemsRows(listOf(item))

@@ -11,6 +11,9 @@ import org.example.project.JewelryAppInitializer
 import org.example.project.data.*
 import org.example.project.utils.PdfGeneratorService
 import org.example.project.data.MetalRatesManager
+import org.example.project.data.extractKaratFromMaterialType
+import org.example.project.ui.ProductPriceInputs
+import org.example.project.ui.calculateProductPrice
 import java.awt.Desktop
 import java.io.File
 import java.nio.file.Path
@@ -229,6 +232,7 @@ class PaymentViewModel(
         gst: Double,
         finalTotal: Double,
         paymentSplit: PaymentSplit? = null,
+        notes: String = "",
         onSuccess: () -> Unit
     ) {
         // Allow order processing if either a payment method is selected OR a split payment is configured
@@ -248,16 +252,77 @@ class PaymentViewModel(
                 val gstRate = if (subtotal > 0) gst / subtotal else 0.0
                 
                 // Convert CartItem objects to OrderItem objects with additional fields
+                // Use ProductPriceCalculator to get making percentage, labour charges, and labour rate
+                val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
                 val orderItems = cart.items.flatMap { cartItem ->
                     cartItem.selectedBarcodeIds.map { barcodeId ->
-                OrderItem(
-                    productId = cartItem.productId,
-                    barcodeId = barcodeId,
-                    quantity = 1, // Each barcode represents 1 item
-                    defaultMakingRate = cartItem.makingCharges, // Use making charges from cart item
-                    vaCharges = cartItem.va, // Use VA charges from cart item
-                    materialType = cartItem.product.materialType // Use material type from product
-                )
+                        val product = cartItem.product
+                        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
+                        val makingPercentage = product.makingPercent
+                        val labourRate = product.labourRate
+                        
+                        // Calculate labour charges using ProductPriceCalculator logic
+                        val metalKarat = if (cartItem.metal.isNotEmpty()) {
+                            cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(product.materialType)
+                        } else {
+                            extractKaratFromMaterialType(product.materialType)
+                        }
+                        
+                        // Get material rate
+                        val collectionRate = try {
+                            ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
+                        } catch (e: Exception) { 0.0 }
+                        
+                        val metalRates = MetalRatesManager.metalRates.value
+                        val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                        val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
+                        
+                        // Extract kundan and jarkan from stones array
+                        val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                        val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                        val kundanPrice = kundanStones.sumOf { it.amount }
+                        val jarkanPrice = jarkanStones.sumOf { it.amount }
+                        
+                        // Calculate goldRatePerGram (use collectionRate if available, otherwise use goldRate)
+                        val materialTypeLower = product.materialType.lowercase()
+                        val silverPurity = when {
+                            materialTypeLower.contains("999") -> 999
+                            materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                            materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                            else -> 999
+                        }
+                        val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                        val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                            product.materialType.contains("gold", ignoreCase = true) -> goldRate
+                            product.materialType.contains("silver", ignoreCase = true) -> silverRate
+                            else -> goldRate
+                        }
+                        
+                        // Calculate using ProductPriceCalculator
+                        val priceInputs = ProductPriceInputs(
+                            grossWeight = grossWeight,
+                            goldPurity = product.materialType,
+                            goldWeight = product.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                            makingPercentage = makingPercentage,
+                            labourRatePerGram = labourRate,
+                            kundanPrice = kundanPrice,
+                            kundanWeight = kundanStones.sumOf { it.weight },
+                            jarkanPrice = jarkanPrice,
+                            jarkanWeight = jarkanStones.sumOf { it.weight },
+                            goldRatePerGram = goldRatePerGram
+                        )
+                        
+                        val priceResult = calculateProductPrice(priceInputs)
+                        val labourCharges = priceResult.labourCharges
+                        
+                        OrderItem(
+                            barcodeId = barcodeId,
+                            productId = cartItem.productId,
+                            quantity = 1, // Each barcode represents 1 item
+                            makingPercentage = makingPercentage,
+                            labourCharges = labourCharges,
+                            labourRate = labourRate
+                        )
                     }
                 }
                 
@@ -271,41 +336,64 @@ class PaymentViewModel(
                 // Get customer information
                 val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
 
-                // Calculate taxable amount (subtotal - discount amount)
-                val taxableAmount = subtotal - discountAmount
+                // Calculate totalProductValue (sum of all product prices before discount and GST)
+                // This is the subtotal from PaymentScreen
+                val totalProductValue = subtotal
+
+                // Calculate discount percentage if discount is applied
+                val discountPercent = if (discountAmount > 0 && totalProductValue > 0) {
+                    when (_discountType.value) {
+                        DiscountType.PERCENTAGE -> _discountAmount.value
+                        DiscountType.AMOUNT -> (discountAmount / totalProductValue) * 100.0
+                        DiscountType.TOTAL_PAYABLE -> {
+                            // Calculate percentage from total payable
+                            val totalPayable = totalProductValue + gst - discountAmount
+                            if (totalProductValue > 0) {
+                                ((totalProductValue - (totalProductValue + gst - _discountAmount.value)) / totalProductValue) * 100.0
+                            } else 0.0
+                        }
+                    }
+                } else null
+
+                // Calculate GST percentage
+                val taxableAmount = totalProductValue - discountAmount
+                val gstPercentage = if (taxableAmount > 0 && gst > 0) {
+                    (gst / taxableAmount) * 100.0
+                } else 0.0
+
+                // PaymentSplit already has bank (sum), cash, and dueAmount in new format
+                // No conversion needed - use as is
+                val updatedPaymentSplit = paymentSplit
 
                 // Format transaction date
                 val dateFormat = SimpleDateFormat("dd MMMM yyyy 'at' HH:mm:ss z", Locale.getDefault())
                 val transactionDate = dateFormat.format(Date())
 
-                // Get metal rates reference - this should point to the actual rates collection
-                val metalRatesReference = getCurrentMetalRatesReference()
-
                 println("📦 ORDER CREATION DETAILS")
                 println("   - Customer ID: ${cart.customerId}")
-                println("   - Subtotal: $subtotal")
+                println("   - Total Product Value: $totalProductValue")
                 println("   - Discount Amount: $discountAmount")
-                println("   - Taxable Amount: $taxableAmount")
+                println("   - Discount Percent: $discountPercent")
                 println("   - GST Amount: $gst")
-                println("   - Final Amount: $finalTotal")
+                println("   - GST Percentage: $gstPercentage")
+                println("   - Total Amount: $finalTotal")
                 println("   - Transaction Date: $transactionDate")
-                println("   - Metal Rates Reference: $metalRatesReference")
 
                 val order = Order(
                     orderId = generateOrderId(),
                     customerId = cart.customerId, // Reference to users collection
-                    paymentSplit = paymentSplit,
-                    subtotal = subtotal,
+                    paymentSplit = updatedPaymentSplit,
+                    totalProductValue = totalProductValue,
                     discountAmount = discountAmount,
-                    taxableAmount = taxableAmount, // Set taxable amount
+                    discountPercent = discountPercent,
                     gstAmount = gst,
-                    totalAmount = finalTotal,
-                    finalAmount = finalTotal, // Set final amount
-                    items = orderItems, // Simplified references for Firestore storage
-                    metalRatesReference = metalRatesReference, // Reference to rates collection
+                    gstPercentage = gstPercentage,
+                    totalAmount = finalTotal, // Total payable amount after GST and discount applied
+                    isGstIncluded = _isGstIncluded.value,
+                    items = orderItems,
                     transactionDate = transactionDate, // Set transaction date
-                    createdAt = System.currentTimeMillis(),
-                    paymentStatus = PaymentStatus.COMPLETED
+                    notes = notes, // Add notes from payment screen
+                    createdAt = System.currentTimeMillis()
                 )
 
                 // Save order to database
@@ -328,7 +416,7 @@ class PaymentViewModel(
                         cartId = order.customerId,
                         paymentMethod = PaymentMethod.CASH, // Default payment method
                         paymentSplit = order.paymentSplit,
-                        subtotal = order.subtotal,
+                        subtotal = order.totalProductValue, // Use totalProductValue for subtotal
                         discountAmount = order.discountAmount,
                         gstAmount = order.gstAmount,
                         totalAmount = order.totalAmount,
@@ -392,7 +480,7 @@ class PaymentViewModel(
                 println("   - Order ID: ${firestoreOrder.orderId}")
                 println("   - Items count: ${firestoreOrder.items.size}")
                 firestoreOrder.items.forEach { item ->
-                    println("   - Item: productId=${item.productId}, makingRate=${item.defaultMakingRate}, vaCharges=${item.vaCharges}, materialType=${item.materialType}")
+                    println("   - Item: productId=${item.productId}, makingPercentage=${item.makingPercentage}, labourCharges=${item.labourCharges}, labourRate=${item.labourRate}")
                 }
                 
                 // Use the order retrieved from Firestore instead of the passed order
@@ -504,31 +592,97 @@ class PaymentViewModel(
         val dateFormat = SimpleDateFormat("dd MMMM yyyy 'at' HH:mm:ss z", Locale.getDefault())
         val transactionDate = dateFormat.format(Date(transaction.timestamp))
         
+        // Calculate discount percent from transaction
+        val discountPercent = if (transaction.discountAmount > 0 && transaction.subtotal > 0) {
+            (transaction.discountAmount / transaction.subtotal) * 100.0
+        } else null
+        
+        // Calculate GST percentage
+        val gstPercentage = if (taxableAmount > 0 && transaction.gstAmount > 0) {
+            (transaction.gstAmount / taxableAmount) * 100.0
+        } else 0.0
+        
         val order = Order(
             orderId = transaction.id,
             customerId = transaction.cartId, // Reference to users collection
             paymentSplit = transaction.paymentSplit,
-            subtotal = transaction.subtotal,
+            totalProductValue = transaction.subtotal, // Use subtotal as totalProductValue
             discountAmount = transaction.discountAmount,
-            taxableAmount = taxableAmount, // Set taxable amount
+            discountPercent = discountPercent,
             gstAmount = transaction.gstAmount,
-            totalAmount = transaction.totalAmount,
-            finalAmount = transaction.totalAmount, // Set final amount
+            gstPercentage = gstPercentage,
+            totalAmount = transaction.totalAmount, // Total payable amount after GST and discount applied
+            isGstIncluded = true,
             items = transaction.items.map { cartItem ->
                 // Convert CartItem to OrderItem for PDF generation
+                val product = cartItem.product
+                val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
+                val makingPercentage = product.makingPercent
+                val labourRate = product.labourRate
+                
+                // Calculate labour charges using ProductPriceCalculator logic
+                val metalKarat = if (cartItem.metal.isNotEmpty()) {
+                    cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(product.materialType)
+                } else {
+                    extractKaratFromMaterialType(product.materialType)
+                }
+                
+                val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+                val collectionRate = try {
+                    ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
+                } catch (e: Exception) { 0.0 }
+                
+                val metalRates = MetalRatesManager.metalRates.value
+                val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
+                
+                val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                val kundanPrice = kundanStones.sumOf { it.amount }
+                val jarkanPrice = jarkanStones.sumOf { it.amount }
+                
+                // Calculate goldRatePerGram
+                val materialTypeLower = product.materialType.lowercase()
+                val silverPurity = when {
+                    materialTypeLower.contains("999") -> 999
+                    materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                    materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                    else -> 999
+                }
+                val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                    product.materialType.contains("gold", ignoreCase = true) -> goldRate
+                    product.materialType.contains("silver", ignoreCase = true) -> silverRate
+                    else -> goldRate
+                }
+                
+                val priceInputs = ProductPriceInputs(
+                    grossWeight = grossWeight,
+                    goldPurity = product.materialType,
+                    goldWeight = product.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                    makingPercentage = makingPercentage,
+                    labourRatePerGram = labourRate,
+                    kundanPrice = kundanPrice,
+                    kundanWeight = kundanStones.sumOf { it.weight },
+                    jarkanPrice = jarkanPrice,
+                    jarkanWeight = jarkanStones.sumOf { it.weight },
+                    goldRatePerGram = goldRatePerGram
+                )
+                
+                val priceResult = calculateProductPrice(priceInputs)
+                val labourCharges = priceResult.labourCharges
+                
                 OrderItem(
-                    productId = cartItem.productId,
                     barcodeId = cartItem.selectedBarcodeIds.firstOrNull() ?: "",
+                    productId = cartItem.productId,
                     quantity = cartItem.quantity,
-                    defaultMakingRate = cartItem.makingCharges, // Use making charges from cart item
-                    vaCharges = cartItem.va, // Use VA charges from cart item
-                    materialType = cartItem.product.materialType // Use material type from product
+                    makingPercentage = makingPercentage,
+                    labourCharges = labourCharges,
+                    labourRate = labourRate
                 )
             },
-            metalRatesReference = getCurrentMetalRatesReference(), // Reference to rates collection
             transactionDate = transactionDate, // Set transaction date
-            createdAt = transaction.timestamp,
-            paymentStatus = PaymentStatus.COMPLETED
+            createdAt = transaction.timestamp
         )
         generateOrderPDF(order, customer)
     }
@@ -682,14 +836,71 @@ class PaymentViewModel(
                 // Convert CartItem objects to OrderItem objects with additional fields
                 val orderItems = cart.items.flatMap { cartItem ->
                     cartItem.selectedBarcodeIds.map { barcodeId ->
+                        // Calculate making percentage, labour charges, and labour rate for OrderItem
+                        val product = cartItem.product
+                        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
+                        val makingPercentage = product.makingPercent
+                        val labourRate = product.labourRate
+                        
+                        // Calculate labour charges using ProductPriceCalculator
+                        val metalKarat = if (cartItem.metal.isNotEmpty()) {
+                            cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(product.materialType)
+                        } else {
+                            extractKaratFromMaterialType(product.materialType)
+                        }
+                        
+                        val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+                        val collectionRate = try {
+                            ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
+                        } catch (e: Exception) { 0.0 }
+                        
+                        val metalRates = MetalRatesManager.metalRates.value
+                        val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                        val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
+                        
+                        val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                        val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                        val kundanPrice = kundanStones.sumOf { it.amount }
+                        val jarkanPrice = jarkanStones.sumOf { it.amount }
+                        
+                        val materialTypeLower = product.materialType.lowercase()
+                        val silverPurity = when {
+                            materialTypeLower.contains("999") -> 999
+                            materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                            materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                            else -> 999
+                        }
+                        val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                        val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                            product.materialType.contains("gold", ignoreCase = true) -> goldRate
+                            product.materialType.contains("silver", ignoreCase = true) -> silverRate
+                            else -> goldRate
+                        }
+                        
+                        val priceInputs = ProductPriceInputs(
+                            grossWeight = grossWeight,
+                            goldPurity = product.materialType,
+                            goldWeight = product.materialWeight.takeIf { it > 0 } ?: grossWeight,
+                            makingPercentage = makingPercentage,
+                            labourRatePerGram = labourRate,
+                            kundanPrice = kundanPrice,
+                            kundanWeight = kundanStones.sumOf { it.weight },
+                            jarkanPrice = jarkanPrice,
+                            jarkanWeight = jarkanStones.sumOf { it.weight },
+                            goldRatePerGram = goldRatePerGram
+                        )
+                        
+                        val priceResult = calculateProductPrice(priceInputs)
+                        val labourCharges = priceResult.labourCharges
+                        
                         OrderItem(
-                    productId = cartItem.productId,
-                    barcodeId = barcodeId,
-                    quantity = 1, // Each barcode represents 1 item
-                    defaultMakingRate = cartItem.makingCharges, // Use making charges from cart item
-                    vaCharges = cartItem.va, // Use VA charges from cart item
-                    materialType = cartItem.product.materialType // Use material type from product
-                )
+                            barcodeId = barcodeId,
+                            productId = cartItem.productId,
+                            quantity = 1, // Each barcode represents 1 item
+                            makingPercentage = makingPercentage,
+                            labourCharges = labourCharges,
+                            labourRate = labourRate
+                        )
                     }
                 }
                 
@@ -703,20 +914,29 @@ class PaymentViewModel(
                 val dateFormat = SimpleDateFormat("dd MMMM yyyy 'at' HH:mm:ss z", Locale.getDefault())
                 val transactionDate = dateFormat.format(Date())
 
+                // Calculate discount percentage
+                val discountPercent = if (discountAmount > 0 && dynamicSubtotal > 0) {
+                    (discountAmount / dynamicSubtotal) * 100.0
+                } else null
+                
+                // Calculate GST percentage
+                val gstPercentage = if (taxableAmount > 0 && dynamicGst > 0) {
+                    (dynamicGst / taxableAmount) * 100.0
+                } else 0.0
+                
                 val order = Order(
                     orderId = generateOrderId(),
                     customerId = cart.customerId, // Reference to users collection
-                    subtotal = dynamicSubtotal,
+                    totalProductValue = dynamicSubtotal,
                     discountAmount = discountAmount,
-                    taxableAmount = taxableAmount, // Set taxable amount
+                    discountPercent = discountPercent,
                     gstAmount = dynamicGst,
-                    totalAmount = dynamicTotal,
-                    finalAmount = dynamicTotal, // Set final amount
-                    items = orderItems, // Simplified references for Firestore storage
-                    metalRatesReference = getCurrentMetalRatesReference(), // Reference to rates collection
+                    gstPercentage = gstPercentage,
+                    totalAmount = dynamicTotal, // Total payable amount after GST and discount applied
+                    isGstIncluded = _isGstIncluded.value,
+                    items = orderItems,
                     transactionDate = transactionDate, // Set transaction date
-                    createdAt = System.currentTimeMillis(),
-                    paymentStatus = PaymentStatus.COMPLETED
+                    createdAt = System.currentTimeMillis()
                 )
 
                 // Save order to database
@@ -737,7 +957,7 @@ class PaymentViewModel(
                         id = order.orderId,
                         cartId = order.customerId,
                         paymentMethod = PaymentMethod.CASH, // Default payment method
-                        subtotal = order.subtotal,
+                        subtotal = order.totalProductValue,
                         discountAmount = order.discountAmount,
                         gstAmount = order.gstAmount,
                         totalAmount = order.totalAmount,
@@ -779,16 +999,5 @@ class PaymentViewModel(
             println("❌ Error updating customer balance: ${e.message}")
             e.printStackTrace()
         }
-    }
-    
-    /**
-     * Gets the current metal rates reference for orders
-     * This should point to the actual rates collection document
-     */
-    private fun getCurrentMetalRatesReference(): String {
-        // TODO: This needs to be updated based on the actual collection structure
-        // For now, returning "current" but this should be the actual document ID
-        // from the rates collection that contains the current metal rates
-        return "current"
     }
 }

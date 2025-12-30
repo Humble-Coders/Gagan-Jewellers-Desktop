@@ -53,9 +53,6 @@ class FirestoreCashAmountRepository(private val firestore: Firestore) : CashAmou
                 // Order Items - Empty for cash transactions
                 "items" to emptyList<Map<String, Any>>(),
                 
-                // Metal Rates Reference - Empty for cash transactions
-                "metalRatesReference" to "",
-                
                 // Timestamps
                 "createdAt" to currentTime,
                 "updatedAt" to currentTime,
@@ -133,9 +130,6 @@ class FirestoreCashAmountRepository(private val firestore: Firestore) : CashAmou
                     // Order Items - Empty for cash transactions
                     items = emptyList(),
                     
-                    // Metal Rates Reference
-                    metalRatesReference = data["metalRatesReference"] as? String ?: "",
-                    
                     // Timestamps
                     createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                     updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
@@ -190,9 +184,6 @@ class FirestoreCashAmountRepository(private val firestore: Firestore) : CashAmou
                     
                     // Order Items
                     items = emptyList(),
-                    
-                    // Metal Rates Reference
-                    metalRatesReference = data["metalRatesReference"] as? String ?: "",
                     
                     // Timestamps
                     createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),

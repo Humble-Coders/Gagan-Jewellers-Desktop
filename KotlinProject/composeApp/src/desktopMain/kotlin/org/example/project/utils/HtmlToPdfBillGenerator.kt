@@ -39,7 +39,7 @@ class HtmlToPdfBillGenerator {
         val dateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
         val orderDate = dateFormat.format(Date(order.createdAt))
 
-        val subtotal = order.subtotal
+        val subtotal = order.totalProductValue
         val gstAmount = order.gstAmount
         val discountAmount = order.discountAmount
         val totalAmount = order.totalAmount

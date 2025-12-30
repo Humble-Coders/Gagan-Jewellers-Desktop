@@ -352,15 +352,17 @@ enum class PaymentMethod {
 
 // Enhanced payment splitting system
 data class PaymentSplit(
-    val cashAmount: Double = 0.0,
-    val cardAmount: Double = 0.0,
-    val bankAmount: Double = 0.0,
-    val onlineAmount: Double = 0.0,
-    val dueAmount: Double = 0.0,
-    val totalAmount: Double = 0.0
+    val bank: Double = 0.0, // Sum of bankAmount + cardAmount + onlineAmount
+    val cash: Double = 0.0,
+    val dueAmount: Double = 0.0
 ) {
     fun isValid(): Boolean {
-        return kotlin.math.abs((cashAmount + cardAmount + bankAmount + onlineAmount + dueAmount) - totalAmount) < 0.01
+        return true // Validation can be done at order level if needed
+    }
+    
+    // Helper function to get total paid
+    fun getTotalPaid(): Double {
+        return bank + cash
     }
 }
 
@@ -388,12 +390,12 @@ enum class DiscountType {
 }
 
 data class OrderItem(
-    val productId: String = "",
     val barcodeId: String = "",
+    val productId: String = "",
     val quantity: Int = 1,
-    val defaultMakingRate: Double = 0.0, // Default making rate per gram
-    val vaCharges: Double = 0.0, // VA (Value Addition) charges
-    val materialType: String = "" // Material type (e.g., "22K Gold", "Silver")
+    val makingPercentage: Double = 0.0, // Making percentage
+    val labourCharges: Double = 0.0, // Labour charges
+    val labourRate: Double = 0.0 // Labour rate per gram
 )
 
 data class Order(
@@ -402,33 +404,26 @@ data class Order(
     
     // Payment Information
     val paymentSplit: PaymentSplit? = null,
-    val paymentStatus: PaymentStatus = PaymentStatus.PENDING,
     
     // Financial Details
-    val subtotal: Double = 0.0, // Base metal cost
-    val discountAmount: Double = 0.0,
-    val discountPercent: Double = 0.0,
-    val taxableAmount: Double = 0.0,
+    val totalProductValue: Double = 0.0, // Total product value (stored in finalAmount field in Firestore for backward compatibility)
+    val discountAmount: Double = 0.0, // Always stored
+    val discountPercent: Double? = null, // Null if not applied, otherwise the percentage
     val gstAmount: Double = 0.0,
-    val totalAmount: Double = 0.0,
-    val finalAmount: Double = 0.0,
+    val gstPercentage: Double = 0.0, // GST percentage
+    val totalAmount: Double = 0.0, // Total payable amount after GST and discount applied
     val isGstIncluded: Boolean = true,
     
-    // Order Items - Simplified references for Firestore storage
+    // Order Items
     val items: List<OrderItem> = emptyList(),
-    
-    // Metal Rates Reference - Reference to rates collection
-    val metalRatesReference: String = "", // Reference to the rates document used for this order
     
     // Timestamps
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-    val completedAt: Long? = null,
     val transactionDate: String = "",
     
     // Additional Information
-    val notes: String = "",
-    val status: OrderStatus = OrderStatus.CONFIRMED
+    val notes: String = ""
 )
 
 data class PaymentTransaction(

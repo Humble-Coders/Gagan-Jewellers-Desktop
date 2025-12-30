@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Tax Invoice {{ORDER_ID}}</title>
+    <style>
+        {{CSS_CONTENT}}
+    </style>
+</head>
+<body>
+    <div class="invoice-container">
+        <!-- Logo Section with Customer Copy -->
+        <div class="logo-section">
+            <div class="logo-container">
+                <div class="diamond-logo">◆</div>
+            </div>
+            <div class="customer-copy-small">CUSTOMER COPY</div>
+        </div>
+
+        <!-- Main Header - TAX INVOICE and DOC/SAL/ID in same row -->
+        <div class="header">
+            <div class="header-content-single-line">
+                <h1 class="invoice-title">TAX INVOICE</h1>
+                <div class="doc-info-inline">
+                    <span><strong>DOC/SAL/{{DOC_ID}}</strong> | <strong>Date:</strong> {{ORDER_DATE}}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Seller and Customer Details - Side by Side -->
+        <div class="details-section">
+            <div class="details-row">
+                <div class="seller-details">
+                    {{SELLER_DETAILS}}
+                </div>
+                <div class="customer-details">
+                    <p class="detail-label">CUSTOMER DETAILS:</p>
+                    {{CUSTOMER_DETAILS}}
+                </div>
+            </div>
+        </div>
+
+        <!-- Standard Rates Section - One line for Gold, One line for Silver -->
+        <div class="standard-rates-section">
+            {{STANDARD_RATES}}
+        </div>
+
+        <!-- Product Details Table -->
+        <table class="product-table">
+            <thead>
+                <tr>
+                    <th>Variant no</th>
+                    <th>Product description</th>
+                    <th>Material with Purity</th>
+                    <th>Net Qty</th>
+                    <th>Gross Weight (grams)</th>
+                    <th>Net Stone Weight (grams)</th>
+                    <th>Net Metal Weight (grams)</th>
+                    <th>Making %</th>
+                    <th>Gross Product Price (Rs.)</th>
+                    <th>Labour Charges (Rs.)</th>
+                    <th>Stone Amount (Rs.)</th>
+                    <th>COST Value (Rs.)</th>
+                </tr>
+            </thead>
+            <tbody>
+                {{PRODUCT_TABLE_ROWS}}
+            </tbody>
+            <tfoot>
+                {{PRODUCT_TABLE_TOTALS}}
+            </tfoot>
+        </table>
+
+        <!-- Payment Details and Summary - Two Column Layout -->
+        <div class="payment-charges-section">
+            <!-- Left Column: Payment Details (2/3 width) -->
+            <div class="payment-left-two-thirds">
+                <h3 class="section-subtitle">Payment Details</h3>
+                <table class="payment-table">
+                    <thead>
+                        <tr>
+                            <th>Payment Mode</th>
+                            <th>Doc No</th>
+                            <th>Customer Name</th>
+                            <th>Amount (Rs)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{PAYMENT_TABLE_ROWS}}
+                    </tbody>
+                    <tfoot>
+                        {{PAYMENT_TABLE_TOTALS}}
+                    </tfoot>
+                </table>
+            </div>
+            
+            <!-- Right Column: Summary (1/3 width) -->
+            <div class="payment-right-one-third">
+                <div class="summary-box">
+                    {{SUMMARY_ROWS}}
+                    <div class="amount-in-words">
+                        <strong>Value in words:</strong> {{AMOUNT_IN_WORDS}}
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Terms and Conditions -->
+        <div class="terms-section">
+            {{TERMS_AND_CONDITIONS}}
+        </div>
+    </div>
+</body>
+</html>

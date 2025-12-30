@@ -548,7 +548,7 @@ private fun PaymentBreakdownSection(
 ) {
     val dueAmount = paymentSplit.dueAmount
     val isDueAmountNegative = dueAmount < 0
-    val totalPayment = paymentSplit.cashAmount + paymentSplit.cardAmount + paymentSplit.bankAmount + paymentSplit.onlineAmount + dueAmount
+    val totalPayment = paymentSplit.bank + paymentSplit.cash + dueAmount
 
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -560,17 +560,11 @@ private fun PaymentBreakdownSection(
             color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
         )
 
-        if (paymentSplit.cashAmount > 0) {
-            PaymentSplitRow("Cash", paymentSplit.cashAmount, Color(0xFF4CAF50))
+        if (paymentSplit.cash > 0) {
+            PaymentSplitRow("Cash", paymentSplit.cash, Color(0xFF4CAF50))
         }
-        if (paymentSplit.cardAmount > 0) {
-            PaymentSplitRow("Card", paymentSplit.cardAmount, Color(0xFF2196F3))
-        }
-        if (paymentSplit.bankAmount > 0) {
-            PaymentSplitRow("Bank Transfer", paymentSplit.bankAmount, Color(0xFF9C27B0))
-        }
-        if (paymentSplit.onlineAmount > 0) {
-            PaymentSplitRow("Online", paymentSplit.onlineAmount, Color(0xFF00BCD4))
+        if (paymentSplit.bank > 0) {
+            PaymentSplitRow("Bank/Card/Online", paymentSplit.bank, Color(0xFF2196F3))
         }
 
         if (dueAmount > 0) {

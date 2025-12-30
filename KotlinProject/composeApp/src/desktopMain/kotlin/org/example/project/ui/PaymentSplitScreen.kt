@@ -32,21 +32,44 @@ fun PaymentSplitScreen(
     onPaymentSplitComplete: (PaymentSplit) -> Unit,
     onBack: () -> Unit
 ) {
-    var cashAmount by remember { mutableStateOf(initialPaymentSplit?.cashAmount?.toString() ?: "") }
-    var cardAmount by remember { mutableStateOf(initialPaymentSplit?.cardAmount?.toString() ?: "") }
-    var bankAmount by remember { mutableStateOf(initialPaymentSplit?.bankAmount?.toString() ?: "") }
-    var onlineAmount by remember { mutableStateOf(initialPaymentSplit?.onlineAmount?.toString() ?: "") }
+    // Keep separate fields for UI, but combine when creating PaymentSplit
+    // For backward compatibility, extract from new format
+    val initialBank = initialPaymentSplit?.bank ?: 0.0
+    val initialCash = initialPaymentSplit?.cash ?: 0.0
+    
+    var cashAmount by remember { mutableStateOf(initialCash.toString()) }
+    var cardAmount by remember { mutableStateOf("") } // Keep for UI but combine into bank
+    var bankAmount by remember { mutableStateOf("") } // Keep for UI but combine into bank
+    var onlineAmount by remember { mutableStateOf("") } // Keep for UI but combine into bank
     var dueAmount by remember { mutableStateOf(initialPaymentSplit?.dueAmount?.toString() ?: "") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Calculate due amount automatically
-    val calculatedDueAmount = remember(cashAmount, cardAmount, bankAmount, onlineAmount, totalAmount) {
-        val paidAmount = (cashAmount.toDoubleOrNull() ?: 0.0) + 
-                        (cardAmount.toDoubleOrNull() ?: 0.0) + 
-                        (bankAmount.toDoubleOrNull() ?: 0.0) + 
-                        (onlineAmount.toDoubleOrNull() ?: 0.0)
+    // Calculate paid amount and due amount
+    val paidAmount = remember(cashAmount, cardAmount, bankAmount, onlineAmount) {
+        (cashAmount.toDoubleOrNull() ?: 0.0) + 
+        (cardAmount.toDoubleOrNull() ?: 0.0) + 
+        (bankAmount.toDoubleOrNull() ?: 0.0) + 
+        (onlineAmount.toDoubleOrNull() ?: 0.0)
+    }
+
+    // Calculate due amount - if paid exceeds total, due is 0 (overpayment)
+    val calculatedDueAmount = remember(paidAmount, totalAmount) {
         val due = totalAmount - paidAmount
         if (due > 0) due else 0.0
+    }
+
+    // Check if payment breakdown exceeds total
+    val exceedsTotal = remember(paidAmount, totalAmount) {
+        paidAmount > totalAmount
+    }
+
+    // Calculate total payment breakdown
+    val totalPaymentBreakdown = remember(cashAmount, cardAmount, bankAmount, onlineAmount, calculatedDueAmount) {
+        val bankTotal = (cardAmount.toDoubleOrNull() ?: 0.0) + 
+                       (bankAmount.toDoubleOrNull() ?: 0.0) + 
+                       (onlineAmount.toDoubleOrNull() ?: 0.0)
+        val cash = cashAmount.toDoubleOrNull() ?: 0.0
+        cash + bankTotal + calculatedDueAmount
     }
 
     // Update due amount when other amounts change
@@ -55,17 +78,21 @@ fun PaymentSplitScreen(
     }
 
     val paymentSplit = remember(cashAmount, cardAmount, bankAmount, onlineAmount, calculatedDueAmount) {
+        // Combine card, bank, and online into single bank field
+        val bankTotal = (cardAmount.toDoubleOrNull() ?: 0.0) + 
+                       (bankAmount.toDoubleOrNull() ?: 0.0) + 
+                       (onlineAmount.toDoubleOrNull() ?: 0.0)
         PaymentSplit(
-            cashAmount = cashAmount.toDoubleOrNull() ?: 0.0,
-            cardAmount = cardAmount.toDoubleOrNull() ?: 0.0,
-            bankAmount = bankAmount.toDoubleOrNull() ?: 0.0,
-            onlineAmount = onlineAmount.toDoubleOrNull() ?: 0.0,
-            dueAmount = calculatedDueAmount,
-            totalAmount = totalAmount
+            bank = bankTotal, // Combined bank/card/online
+            cash = cashAmount.toDoubleOrNull() ?: 0.0,
+            dueAmount = calculatedDueAmount
         )
     }
 
-    val isValid = paymentSplit.isValid()
+    // Validation: breakdown must match total exactly, and should not exceed
+    val isValid = remember(totalPaymentBreakdown, totalAmount, exceedsTotal) {
+        !exceedsTotal && kotlin.math.abs(totalPaymentBreakdown - totalAmount) < 0.01 // Allow small floating point differences
+    }
 
     Dialog(onDismissRequest = onBack) {
         Card(
@@ -112,7 +139,9 @@ fun PaymentSplitScreen(
                     // Summary and Validation
                     PaymentSummaryCard(
                         paymentSplit = paymentSplit,
-                        isValid = isValid
+                        isValid = isValid,
+                        totalAmount = totalAmount,
+                        exceedsTotal = exceedsTotal
                     )
 
                     // Action Buttons
@@ -136,7 +165,11 @@ fun PaymentSplitScreen(
                                 if (isValid) {
                                     onPaymentSplitComplete(paymentSplit)
                                 } else {
-                                    errorMessage = "Payment amounts must equal the total amount"
+                                    if (exceedsTotal) {
+                                        errorMessage = "Payment breakdown exceeds total amount. Please adjust the payment amounts."
+                                    } else {
+                                        errorMessage = "Payment amounts must equal the total amount"
+                                    }
                                 }
                             },
                             modifier = Modifier.weight(1f),
@@ -386,8 +419,12 @@ private fun PaymentInputField(
 @Composable
 private fun PaymentSummaryCard(
     paymentSplit: PaymentSplit,
-    isValid: Boolean
+    isValid: Boolean,
+    totalAmount: Double,
+    exceedsTotal: Boolean
 ) {
+    val totalPaymentBreakdown = paymentSplit.bank + paymentSplit.cash + paymentSplit.dueAmount
+    
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = 4.dp,
@@ -407,10 +444,8 @@ private fun PaymentSummaryCard(
                 color = Color(0xFF2E2E2E)
             )
 
-            PaymentSummaryRow("Cash", paymentSplit.cashAmount, Color(0xFF4CAF50))
-            PaymentSummaryRow("Card", paymentSplit.cardAmount, Color(0xFF2196F3))
-            PaymentSummaryRow("Bank Transfer", paymentSplit.bankAmount, Color(0xFF9C27B0))
-            PaymentSummaryRow("Online", paymentSplit.onlineAmount, Color(0xFF00BCD4))
+            PaymentSummaryRow("Cash", paymentSplit.cash, Color(0xFF4CAF50))
+            PaymentSummaryRow("Bank/Card/Online", paymentSplit.bank, Color(0xFF2196F3))
             PaymentSummaryRow("Due", paymentSplit.dueAmount, Color(0xFFFF9800))
 
             Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
@@ -426,15 +461,16 @@ private fun PaymentSummaryCard(
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF2E2E2E)
                 )
+                // Always show the actual total amount, not the breakdown total
                 Text(
-                    "₹${formatCurrency(paymentSplit.cashAmount + paymentSplit.cardAmount + paymentSplit.bankAmount + paymentSplit.onlineAmount + paymentSplit.dueAmount)}",
+                    "₹${formatCurrency(totalAmount)}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF2E2E2E)
+                    color = if (exceedsTotal) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
                 )
             }
 
-            if (!isValid) {
+            if (exceedsTotal) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -447,7 +483,26 @@ private fun PaymentSummaryCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        "Amounts don't match total",
+                        "Payment breakdown exceeds total amount by ₹${formatCurrency(totalPaymentBreakdown - totalAmount)}",
+                        fontSize = 14.sp,
+                        color = Color(0xFFD32F2F),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            } else if (!isValid) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = "Warning",
+                        tint = Color(0xFFD32F2F),
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "Payment amounts don't match total",
                         fontSize = 14.sp,
                         color = Color(0xFFD32F2F),
                         fontWeight = FontWeight.Medium
@@ -506,6 +561,7 @@ private fun PaymentSummaryRow(
 
 private fun formatCurrency(amount: Double): String {
     val formatter = NumberFormat.getNumberInstance(Locale("en", "IN"))
-    formatter.maximumFractionDigits = 0
+    formatter.minimumFractionDigits = 2
+    formatter.maximumFractionDigits = 2
     return formatter.format(amount)
 }

@@ -20,40 +20,33 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
             val orderMap = mapOf(
                 "orderId" to order.orderId,
                 "customerId" to order.customerId, // Reference to users collection
-                "paymentStatus" to order.paymentStatus.name,
-                "subtotal" to order.subtotal,
+                "totalProductValue" to order.totalProductValue, // Stored as finalAmount in Firestore for backward compatibility
+                "finalAmount" to order.totalProductValue, // Backward compatibility
                 "discountAmount" to order.discountAmount,
-                "discountPercent" to order.discountPercent,
-                "taxableAmount" to order.taxableAmount,
+                "discountPercent" to (order.discountPercent ?: 0.0), // Store 0.0 if null
                 "gstAmount" to order.gstAmount,
-                "totalAmount" to order.totalAmount,
-                "finalAmount" to order.finalAmount,
+                "gstPercentage" to order.gstPercentage,
+                "totalAmount" to order.totalAmount, // Total payable amount after GST and discount applied
                 "isGstIncluded" to order.isGstIncluded,
-                "status" to order.status.name,
                 "createdAt" to order.createdAt,
                 "updatedAt" to order.updatedAt,
-                "completedAt" to order.completedAt,
                 "transactionDate" to order.transactionDate,
                 "notes" to order.notes,
-                "metalRatesReference" to order.metalRatesReference, // Reference to rates collection
                 "items" to order.items.map { item ->
                     mapOf(
-                        "productId" to item.productId,
                         "barcodeId" to item.barcodeId,
+                        "productId" to item.productId,
                         "quantity" to item.quantity,
-                        "defaultMakingRate" to item.defaultMakingRate,
-                        "vaCharges" to item.vaCharges,
-                        "materialType" to item.materialType
+                        "makingPercentage" to item.makingPercentage,
+                        "labourCharges" to item.labourCharges,
+                        "labourRate" to item.labourRate
                     )
                 },
                 "paymentSplit" to order.paymentSplit?.let { split ->
                     mapOf(
-                        "cashAmount" to split.cashAmount,
-                        "cardAmount" to split.cardAmount,
-                        "bankAmount" to split.bankAmount,
-                        "onlineAmount" to split.onlineAmount,
-                        "dueAmount" to split.dueAmount,
-                        "totalAmount" to split.totalAmount
+                        "bank" to split.bank, // Sum of bankAmount + cardAmount + onlineAmount
+                        "cash" to split.cash,
+                        "dueAmount" to split.dueAmount
                     )
                 }
             )

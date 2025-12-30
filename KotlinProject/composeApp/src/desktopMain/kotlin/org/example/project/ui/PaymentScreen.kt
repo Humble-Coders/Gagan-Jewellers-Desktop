@@ -97,6 +97,10 @@ fun PaymentScreen(
     var selectedGstType by remember { mutableStateOf<GstType?>(null) }
     var customGstValue by remember { mutableStateOf("") }
     
+    // Notes state
+    var notes by remember { mutableStateOf("") }
+    var showNotesDialog by remember { mutableStateOf(false) }
+    
     // Calculate totals using the EXACT same logic as cart screen (ProductPriceCalculator)
     val metalRates by MetalRatesManager.metalRates
     val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
@@ -229,14 +233,13 @@ fun PaymentScreen(
         val online = onlineAmount.toDoubleOrNull() ?: 0.0
 
         // Only create payment split if at least one amount is entered
-        if (cash > 0 || card > 0 || bank > 0 || online > 0 || calculatedDueAmount > 0) {
+        // Combine bank, card, and online into single bank field
+        val bankTotal = bank + card + online
+        if (cash > 0 || bankTotal > 0 || calculatedDueAmount > 0) {
             paymentSplit = PaymentSplit(
-                cashAmount = cash,
-                cardAmount = card,
-                bankAmount = bank,
-                onlineAmount = online,
-                dueAmount = calculatedDueAmount,
-                totalAmount = totalAmountForSplit
+                bank = bankTotal, // Sum of bankAmount + cardAmount + onlineAmount
+                cash = cash,
+                dueAmount = calculatedDueAmount
             )
         } else {
             paymentSplit = null
@@ -263,6 +266,7 @@ fun PaymentScreen(
                         gst = gstAmount,
                         finalTotal = subtotal + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
                         paymentSplit = paymentSplit,
+                        notes = notes,
                         onSuccess = onPaymentComplete
                     )
                 } else {
@@ -331,6 +335,13 @@ fun PaymentScreen(
                     errorMessage = errorMessage
                 )
 
+                // Notes Section
+                NotesSection(
+                    notes = notes,
+                    onNotesChange = { notes = it },
+                    onAddNotesClick = { showNotesDialog = true }
+                )
+
             }
 
             // Right Side - Order Summary (40%)
@@ -364,6 +375,198 @@ fun PaymentScreen(
                 },
                 onBack = { showExchangeGold = false }
             )
+        }
+        
+        // Notes Dialog
+        if (showNotesDialog) {
+            NotesDialog(
+                notes = notes,
+                onNotesChange = { notes = it },
+                onDismiss = { showNotesDialog = false }
+            )
+        }
+    }
+}
+
+@Composable
+private fun NotesSection(
+    notes: String,
+    onNotesChange: (String) -> Unit,
+    onAddNotesClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = 2.dp,
+        shape = RoundedCornerShape(12.dp),
+        backgroundColor = Color.White
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Notes",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF2E2E2E)
+                )
+                Button(
+                    onClick = onAddNotesClick,
+                    modifier = Modifier.height(36.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        backgroundColor = Color(0xFFB8973D),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (notes.isNotEmpty()) Icons.Default.Edit else Icons.Default.Add,
+                        contentDescription = "Add Notes",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        if (notes.isNotEmpty()) "Edit Notes" else "Add Notes",
+                        fontSize = 12.sp
+                    )
+                }
+            }
+            
+            if (notes.isNotEmpty()) {
+                Text(
+                    notes,
+                    fontSize = 13.sp,
+                    color = Color(0xFF666666),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            } else {
+                Text(
+                    "No notes added",
+                    fontSize = 13.sp,
+                    color = Color(0xFF999999),
+                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotesDialog(
+    notes: String,
+    onNotesChange: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var currentNotes by remember { mutableStateOf(notes) }
+    
+    // Sync currentNotes with notes when dialog opens
+    LaunchedEffect(notes) {
+        currentNotes = notes
+    }
+    
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .fillMaxHeight(0.6f),
+            elevation = 8.dp,
+            shape = RoundedCornerShape(16.dp),
+            backgroundColor = Color(0xFFFAFAFA)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Add Notes",
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2E2E2E)
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color(0xFF666666)
+                        )
+                    }
+                }
+                
+                Divider(color = Color(0xFFE0E0E0))
+                
+                // Notes Input
+                OutlinedTextField(
+                    value = currentNotes,
+                    onValueChange = { currentNotes = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    label = { Text("Notes") },
+                    placeholder = { Text("Enter any additional notes for this order...") },
+                    maxLines = 10,
+                    textStyle = androidx.compose.ui.text.TextStyle(
+                        fontSize = 14.sp,
+                        color = Color(0xFF2E2E2E)
+                    ),
+                    colors = TextFieldDefaults.outlinedTextFieldColors(
+                        focusedBorderColor = Color(0xFFB8973D),
+                        cursorColor = Color(0xFFB8973D)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                
+                // Action Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = Color(0xFF666666)
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Cancel", fontSize = 14.sp)
+                    }
+                    Button(
+                        onClick = {
+                            onNotesChange(currentNotes)
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(44.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            backgroundColor = Color(0xFFB8973D),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("Save", fontSize = 14.sp)
+                    }
+                }
+            }
         }
     }
 }
@@ -986,9 +1189,9 @@ private fun PaymentSplitSummaryCompact(
     paymentSplit: PaymentSplit,
     totalAmount: Double
 ) {
-    val isValid = paymentSplit.isValid()
-    val totalPaid = paymentSplit.cashAmount + paymentSplit.cardAmount +
-            paymentSplit.bankAmount + paymentSplit.onlineAmount + paymentSplit.dueAmount
+    val totalPaymentBreakdown = paymentSplit.bank + paymentSplit.cash + paymentSplit.dueAmount
+    val exceedsTotal = totalPaymentBreakdown > totalAmount
+    val isValid = !exceedsTotal && kotlin.math.abs(totalPaymentBreakdown - totalAmount) < 0.01
 
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -997,26 +1200,20 @@ private fun PaymentSplitSummaryCompact(
             "Payment Summary",
             fontSize = 14.sp,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF2E2E2E)
+            color = if (exceedsTotal) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
         )
 
-        if (paymentSplit.cashAmount > 0) {
-            PaymentSplitRowCompact("Cash", paymentSplit.cashAmount, Color(0xFF4CAF50))
+        if (paymentSplit.cash > 0) {
+            PaymentSplitRowCompact("Cash", paymentSplit.cash, Color(0xFF4CAF50))
         }
-        if (paymentSplit.cardAmount > 0) {
-            PaymentSplitRowCompact("Card", paymentSplit.cardAmount, Color(0xFF2196F3))
-        }
-        if (paymentSplit.bankAmount > 0) {
-            PaymentSplitRowCompact("Bank", paymentSplit.bankAmount, Color(0xFF9C27B0))
-        }
-        if (paymentSplit.onlineAmount > 0) {
-            PaymentSplitRowCompact("Online", paymentSplit.onlineAmount, Color(0xFF00BCD4))
+        if (paymentSplit.bank > 0) {
+            PaymentSplitRowCompact("Bank/Card/Online", paymentSplit.bank, Color(0xFF2196F3))
         }
         if (paymentSplit.dueAmount > 0) {
             PaymentSplitRowCompact("Due", paymentSplit.dueAmount, Color(0xFFFF9800))
         }
 
-        Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
+        Divider(color = if (exceedsTotal) Color(0xFFD32F2F) else Color(0xFFE0E0E0), thickness = 1.dp)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1027,13 +1224,14 @@ private fun PaymentSplitSummaryCompact(
                 "Total",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF2E2E2E)
+                color = if (exceedsTotal) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
             )
+            // Always show the actual total amount, not the breakdown total
             Text(
-                "${CurrencyFormatter.formatRupees(totalPaid)}",
+                "${CurrencyFormatter.formatRupees(totalAmount)}",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isValid) Color(0xFF4CAF50) else Color(0xFFD32F2F)
+                color = if (exceedsTotal) Color(0xFFD32F2F) else if (isValid) Color(0xFF4CAF50) else Color(0xFFB8973D)
             )
         }
 
@@ -1173,7 +1371,8 @@ private fun OrderSummarySection(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 PaymentSplitSummary(
-                    paymentSplit = paymentSplit
+                    paymentSplit = paymentSplit,
+                    totalAmount = total
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1547,11 +1746,13 @@ private fun PriceRow(
 
 @Composable
 private fun PaymentSplitSummary(
-    paymentSplit: PaymentSplit
+    paymentSplit: PaymentSplit,
+    totalAmount: Double
 ) {
     val dueAmount = paymentSplit.dueAmount
+    val totalPaymentBreakdown = paymentSplit.bank + paymentSplit.cash + dueAmount
+    val exceedsTotal = totalPaymentBreakdown > totalAmount
     val isDueAmountNegative = dueAmount < 0
-    val totalPayment = paymentSplit.cashAmount + paymentSplit.cardAmount + paymentSplit.bankAmount + paymentSplit.onlineAmount + dueAmount
 
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1560,22 +1761,15 @@ private fun PaymentSplitSummary(
             "Payment Breakdown",
             fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
-            color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
+            color = if (exceedsTotal || isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
         )
 
-        if (paymentSplit.cashAmount > 0) {
-            PaymentSplitRow("Cash", paymentSplit.cashAmount, Color(0xFF4CAF50))
+        if (paymentSplit.cash > 0) {
+            PaymentSplitRow("Cash", paymentSplit.cash, Color(0xFF4CAF50))
         }
-        if (paymentSplit.cardAmount > 0) {
-            PaymentSplitRow("Card", paymentSplit.cardAmount, Color(0xFF2196F3))
+        if (paymentSplit.bank > 0) {
+            PaymentSplitRow("Bank/Card/Online", paymentSplit.bank, Color(0xFF2196F3))
         }
-        if (paymentSplit.bankAmount > 0) {
-            PaymentSplitRow("Bank Transfer", paymentSplit.bankAmount, Color(0xFF9C27B0))
-        }
-        if (paymentSplit.onlineAmount > 0) {
-            PaymentSplitRow("Online", paymentSplit.onlineAmount, Color(0xFF00BCD4))
-        }
-
 
         if (dueAmount > 0) {
             PaymentSplitRow("Due", dueAmount, Color(0xFFFF9800))
@@ -1583,7 +1777,7 @@ private fun PaymentSplitSummary(
             PaymentSplitRow("Due (Overpaid)", dueAmount, Color(0xFFD32F2F))
         }
 
-        Divider(color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFFE0E0E0), thickness = 1.dp)
+        Divider(color = if (exceedsTotal || isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFFE0E0E0), thickness = 1.dp)
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1594,17 +1788,40 @@ private fun PaymentSplitSummary(
                 "Total Payment",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
+                color = if (exceedsTotal || isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFF2E2E2E)
             )
+            // Always show the actual total amount, not the breakdown total
             Text(
-                "${CurrencyFormatter.formatRupees(totalPayment)}",
+                "${CurrencyFormatter.formatRupees(totalAmount)}",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold,
-                color = if (isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFFB8973D)
+                color = if (exceedsTotal || isDueAmountNegative) Color(0xFFD32F2F) else Color(0xFFB8973D)
             )
         }
 
-        if (isDueAmountNegative) {
+        if (exceedsTotal) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFFFEBEE), RoundedCornerShape(8.dp))
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = "Warning",
+                    tint = Color(0xFFD32F2F),
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Payment breakdown exceeds total amount by ₹${CurrencyFormatter.formatRupees(totalPaymentBreakdown - totalAmount)}. Please adjust payment amounts.",
+                    fontSize = 12.sp,
+                    color = Color(0xFFD32F2F),
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        } else if (isDueAmountNegative) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

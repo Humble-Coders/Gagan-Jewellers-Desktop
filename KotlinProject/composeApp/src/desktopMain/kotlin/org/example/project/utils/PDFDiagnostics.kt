@@ -38,7 +38,7 @@ object PDFDiagnostics {
         return Order(
             orderId = "TEST-ORDER-${System.currentTimeMillis()}",
             customerId = "test-customer", // Reference to users collection
-            subtotal = 25000.0,
+            totalProductValue = 25000.0,
             discountAmount = 0.0,
             gstAmount = 4500.0,
             totalAmount = 29500.0,
@@ -47,10 +47,9 @@ object PDFDiagnostics {
                 barcodeId = testCartItem.selectedBarcodeIds.firstOrNull() ?: "TEST-BARCODE",
                 quantity = testCartItem.quantity
             )),
-            metalRatesReference = "current", // Reference to rates collection - TODO: Update based on actual collection structure
             createdAt = System.currentTimeMillis(),
             transactionDate = "19 October 2025 at 10:30:14 UTC+5:30",
-            status = org.example.project.data.OrderStatus.CONFIRMED,
+            // status removed from Order model
             isGstIncluded = true
         )
     }

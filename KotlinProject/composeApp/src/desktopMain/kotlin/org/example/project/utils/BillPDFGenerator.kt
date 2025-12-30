@@ -392,7 +392,7 @@ class BillPDFGenerator {
             // Calculate totals using actual order values
             var totalQty = 0
             var totalWeight = 0.0
-            val totalMetalCost = order.subtotal
+            val totalMetalCost = order.totalProductValue
             val totalGst = order.gstAmount
             val grandTotal = order.totalAmount
 
@@ -447,8 +447,6 @@ class BillPDFGenerator {
                 // Use cartItem.metal if available, otherwise use item.materialType or product.materialType
                 val materialType = if (cartItem != null && cartItem.metal.isNotEmpty()) {
                     cartItem.metal
-                } else if (item.materialType.isNotBlank()) {
-                    item.materialType
                 } else {
                     product.materialType
                 }
@@ -519,9 +517,9 @@ class BillPDFGenerator {
                 
                 // GST is calculated on (subtotal - discountAmount), same as ReceiptScreen
                 // For individual items, calculate GST proportionally based on item's share
-                val taxableAmount = order.subtotal - order.discountAmount
+                val taxableAmount = order.totalProductValue - order.discountAmount
                 val itemGst = if (order.isGstIncluded && taxableAmount > 0) {
-                    (itemSubTotal / order.subtotal) * order.gstAmount
+                    (itemSubTotal / order.totalProductValue) * order.gstAmount
                 } else {
                     0.0
                 }
@@ -583,11 +581,11 @@ class BillPDFGenerator {
             xPos = margin + 1f
 
             // Use stored order values for totals (same as ReceiptScreen)
-            // Note: order.subtotal already includes all item prices calculated correctly
+                // Note: order.totalProductValue already includes all item prices calculated correctly
             val totalValues = listOf(
                 "TOTAL", "", "${totalQty}", String.format("%.2f", totalWeight),
-                "", formatCurrency(order.subtotal), "",
-                formatCurrency(order.subtotal),
+                "", formatCurrency(order.totalProductValue), "",
+                formatCurrency(order.totalProductValue),
                 if (order.isGstIncluded) formatCurrency(order.gstAmount) else "0.00",
                 formatCurrency(order.totalAmount)
             )
@@ -656,14 +654,14 @@ class BillPDFGenerator {
             // But displays stored transaction values
             contentStream.setFont(helvetica, 9f)
 
-            // Subtotal (use stored order.subtotal, same as ReceiptScreen displays calculated itemSubtotal)
+            // Subtotal (use stored order.totalProductValue, same as ReceiptScreen displays calculated itemSubtotal)
             contentStream.beginText()
             contentStream.newLineAtOffset(margin, yPos)
             contentStream.showText("Subtotal:")
             contentStream.endText()
             contentStream.beginText()
             contentStream.newLineAtOffset(margin + 120f, yPos)
-            contentStream.showText("Rs.${formatCurrency(order.subtotal)}")
+            contentStream.showText("Rs.${formatCurrency(order.totalProductValue)}")
             contentStream.endText()
             yPos -= 15f
 
@@ -683,7 +681,7 @@ class BillPDFGenerator {
             // GST (use stored order.gstAmount, same as ReceiptScreen)
             // Calculate GST percentage from stored gstAmount (same as ReceiptScreen line 745-746)
             if (order.isGstIncluded && order.gstAmount > 0) {
-                val taxableAmount = order.subtotal - order.discountAmount
+                val taxableAmount = order.totalProductValue - order.discountAmount
                 val gstPercentage = if (taxableAmount > 0 && order.gstAmount > 0) {
                     ((order.gstAmount / taxableAmount) * 100).toInt()
                 } else {
@@ -736,7 +734,7 @@ class BillPDFGenerator {
             contentStream.setFont(helvetica, 9f)
             contentStream.beginText()
             contentStream.newLineAtOffset(rightColumnX, rightY)
-            contentStream.showText("Payment Status: ${order.paymentStatus.name}")
+            // PaymentStatus removed from Order model
             contentStream.endText()
             rightY -= 15f
 

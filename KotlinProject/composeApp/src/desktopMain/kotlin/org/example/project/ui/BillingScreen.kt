@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.MailOutline
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -63,6 +64,29 @@ fun BillingScreen(
     paymentViewModel: PaymentViewModel = JewelryAppInitializer.getPaymentViewModel()
 ) {
     var currentStep by remember { mutableStateOf(BillingStep.CUSTOMER) }
+    
+    // Access state for validation
+    val selectedCustomer by customerViewModel.selectedCustomer
+    val cart by cartViewModel.cart
+
+    // Prevent invalid navigation with LaunchedEffect
+    LaunchedEffect(currentStep, selectedCustomer, cart.items.size) {
+        when (currentStep) {
+            BillingStep.CART -> {
+                // If no customer selected, go back to CUSTOMER step
+                if (selectedCustomer == null) {
+                    currentStep = BillingStep.CUSTOMER
+                }
+            }
+            BillingStep.PAYMENT -> {
+                // If cart is empty, go back to CART step
+                if (cart.items.isEmpty()) {
+                    currentStep = BillingStep.CART
+                }
+            }
+            else -> { /* No validation needed */ }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -72,7 +96,27 @@ fun BillingScreen(
         // Compact Step indicator without card
         CompactStepIndicator(
             currentStep = currentStep,
-            onStepSelected = { currentStep = it }
+            onStepSelected = { newStep ->
+                // Validate before allowing navigation
+                when (newStep) {
+                    BillingStep.CART -> {
+                        // Validate customer is selected
+                        if (customerViewModel.selectedCustomer.value == null) {
+                            // Don't navigate - stay on CUSTOMER step
+                            return@CompactStepIndicator
+                        }
+                    }
+                    BillingStep.PAYMENT -> {
+                        // Validate cart has items
+                        if (cartViewModel.cart.value.items.isEmpty()) {
+                            // Don't navigate - stay on CART step
+                            return@CompactStepIndicator
+                        }
+                    }
+                    else -> { /* Allow navigation */ }
+                }
+                currentStep = newStep
+            }
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -96,8 +140,10 @@ fun BillingScreen(
                             cartViewModel.setCustomerId(customer.id)
                         },
                         onContinue = {
-                            // Clear cart when continuing to next step
-                            cartViewModel.clearCart()
+                            // Don't clear cart here - preserve cart data when navigating
+                            // Cart should only be cleared when:
+                            // 1. Starting a new order (onStartNewOrder in ReceiptScreen)
+                            // 2. After successful payment (onPaymentComplete)
                             currentStep = BillingStep.CART
                         }
                     )

@@ -61,9 +61,8 @@ import org.example.project.data.Product
 import org.example.project.data.MetalRatesManager
 import org.example.project.JewelryAppInitializer
 import org.example.project.utils.CurrencyFormatter
+import org.example.project.data.extractKaratFromMaterialType
 import org.jetbrains.skia.Image
-import java.text.NumberFormat
-import java.util.Locale
 
 @Composable
 fun ProductDetailScreen(
@@ -76,15 +75,13 @@ fun ProductDetailScreen(
     val coroutineScope = rememberCoroutineScope()
     var productImages by remember { mutableStateOf<List<Pair<String, ImageBitmap?>>>(emptyList()) }
     var selectedImageIndex by remember { mutableStateOf(0) }
+    val metalRatesList by MetalRatesManager.metalRates
 
     // Load all product images
     LaunchedEffect(product) {
         product?.let { p ->
             if (p.images.isNotEmpty()) {
-                // Initialize the list with null images first
                 productImages = p.images.map { it to null }
-
-                // Load each image asynchronously
                 p.images.forEachIndexed { index, imageUrl ->
                     coroutineScope.launch {
                         val imageBytes = imageLoader.loadImage(imageUrl)
@@ -93,7 +90,6 @@ fun ProductDetailScreen(
                                 val image = withContext(Dispatchers.IO) {
                                     Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
                                 }
-                                // Update state on Main dispatcher to prevent UI lag
                                 withContext(Dispatchers.Main) {
                                 val updatedList = productImages.toMutableList()
                                 if (index < updatedList.size) {
@@ -103,10 +99,7 @@ fun ProductDetailScreen(
                                 }
                             } catch (e: Exception) {
                                 println("Failed to decode image: $imageUrl - ${e.message}")
-                                // Keep the null image to show placeholder
                             }
-                        } else {
-                            println("Failed to load image: $imageUrl - no data or empty data")
                         }
                     }
                 }
@@ -117,12 +110,15 @@ fun ProductDetailScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .background(Color(0xFFF5F5F5))
             .verticalScroll(rememberScrollState())
     ) {
         // Header with back button
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White)
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
@@ -134,42 +130,107 @@ fun ProductDetailScreen(
             Text(
                 text = "Product Details",
                 fontSize = 24.sp,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
             )
-            Spacer(modifier = Modifier.weight(1f))
             Button(
                 onClick = onEdit,
                 colors = ButtonDefaults.buttonColors(MaterialTheme.colors.primary)
             ) {
-                Icon(Icons.Default.Edit, contentDescription = "Edit")
+                Icon(Icons.Default.Edit, contentDescription = "Edit", modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("Edit Product")
+                Text("Edit")
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
         // Display product info or placeholder if not available
         product?.let { p ->
-            // Product Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                elevation = 4.dp
-            ) {
+            // Calculate price using dashboard method
+            val dynamicPrice = remember(p.id, p.totalWeight, p.materialWeight, p.makingPercent, p.labourRate, p.stones, metalRatesList) {
+                try {
+                    val metalRates = MetalRatesManager.metalRates.value
+                    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+                    
+                    // Extract kundan and jarkan from stones array
+                    val kundanStones = p.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+                    val jarkanStones = p.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+                    
+                    // Sum all Kundan prices and weights
+                    val kundanPrice = kundanStones.sumOf { it.amount }
+                    val kundanWeight = kundanStones.sumOf { it.weight }
+                    
+                    // Sum all Jarkan prices and weights
+                    val jarkanPrice = jarkanStones.sumOf { it.amount }
+                    val jarkanWeight = jarkanStones.sumOf { it.weight }
+                    
+                    // Get material rate
+                    val metalKarat = extractKaratFromMaterialType(p.materialType)
+                    val collectionRate = try {
+                        ratesVM.calculateRateForMaterial(p.materialId, p.materialType, metalKarat)
+                    } catch (e: Exception) { 0.0 }
+                    val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
+                    
+                    // Extract silver purity from material type
+                    val materialTypeLower = p.materialType.lowercase()
+                    val silverPurity = when {
+                        materialTypeLower.contains("999") -> 999
+                        materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
+                        materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
+                        else -> {
+                            val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                            if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
+                        }
+                    }
+                    val silverRate = metalRates.getSilverRateForPurity(silverPurity)
+                    val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
+                        p.materialType.contains("gold", ignoreCase = true) -> defaultGoldRate
+                        p.materialType.contains("silver", ignoreCase = true) -> silverRate
+                        else -> defaultGoldRate
+                    }
+                    
+                    // Build ProductPriceInputs
+                    val priceInputs = ProductPriceInputs(
+                        grossWeight = p.totalWeight,
+                        goldPurity = p.materialType,
+                        goldWeight = p.materialWeight.takeIf { it > 0 } ?: p.totalWeight,
+                        makingPercentage = p.makingPercent,
+                        labourRatePerGram = p.labourRate,
+                        kundanPrice = kundanPrice,
+                        kundanWeight = kundanWeight,
+                        jarkanPrice = jarkanPrice,
+                        jarkanWeight = jarkanWeight,
+                        goldRatePerGram = goldRatePerGram
+                    )
+                    
+                    // Use the same calculation function as ProductPriceCalculator
+                    val result = calculateProductPrice(priceInputs)
+                    result.totalProductPrice
+                } catch (e: Exception) {
+                    println("Error calculating price: ${e.message}")
+                    0.0
+                }
+            }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(16.dp)
                 ) {
-                    // Product images with image gallery
+                // Product Images Section
                     if (p.images.isNotEmpty()) {
-                        // Main selected image with navigation arrows
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        elevation = 4.dp,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            // Main selected image
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(350.dp)
+                                    .height(400.dp)
                                 .background(Color(0xFFF5F5F5))
-                                .border(1.dp, Color(0xFFEEEEEE)),
+                                    .clip(RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             val currentImage = if (productImages.isNotEmpty() &&
@@ -188,9 +249,8 @@ fun ProductDetailScreen(
                                 CircularProgressIndicator()
                             }
 
-                            // Add navigation arrows (only if there are multiple images)
+                                // Navigation arrows
                             if (productImages.size > 1) {
-                                // Left arrow
                                 IconButton(
                                     onClick = {
                                         selectedImageIndex = if (selectedImageIndex > 0)
@@ -200,20 +260,15 @@ fun ProductDetailScreen(
                                     },
                                     modifier = Modifier
                                         .align(Alignment.CenterStart)
-                                        .size(48.dp)
-                                        .background(
-                                            color = Color(0x80000000),
-                                            shape = CircleShape
-                                        )
+                                            .background(Color(0x80000000), CircleShape)
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                        contentDescription = "Previous image",
+                                            contentDescription = "Previous",
                                         tint = Color.White
                                     )
                                 }
 
-                                // Right arrow
                                 IconButton(
                                     onClick = {
                                         selectedImageIndex = if (selectedImageIndex < productImages.size - 1)
@@ -223,25 +278,20 @@ fun ProductDetailScreen(
                                     },
                                     modifier = Modifier
                                         .align(Alignment.CenterEnd)
-                                        .size(48.dp)
-                                        .background(
-                                            color = Color(0x80000000),
-                                            shape = CircleShape
-                                        )
+                                            .background(Color(0x80000000), CircleShape)
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                        contentDescription = "Next image",
+                                            contentDescription = "Next",
                                         tint = Color.White
                                     )
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Image pagination indicators
+                            // Image indicators
                         if (productImages.size > 1) {
+                                Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.Center
@@ -263,13 +313,10 @@ fun ProductDetailScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(16.dp))
-                        }
+                                Spacer(modifier = Modifier.height(12.dp))
 
                         // Thumbnail row
-                        if (productImages.size > 1) {
                             LazyRow(
-                                modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 items(productImages.size) { index ->
@@ -304,56 +351,51 @@ fun ProductDetailScreen(
                                     }
                                 }
                             }
-
-                            Spacer(modifier = Modifier.height(24.dp))
-                        }
-                    } else {
-                        // No images placeholder
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(200.dp)
-                                .background(Color(0xFFF5F5F5))
-                                .border(1.dp, Color(0xFFEEEEEE)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    Icons.Default.Info,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(64.dp),
-                                    tint = Color.Gray
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text("No images available", color = Color.Gray)
                             }
                         }
                     }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
 
-                    Spacer(modifier = Modifier.height(24.dp))
-
-                    // Product name and price
+                // Product Name and Price Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    elevation = 4.dp,
+                    shape = RoundedCornerShape(12.dp),
+                    backgroundColor = Color.White
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                            Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = p.name,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        Column(
-                            horizontalAlignment = Alignment.End
-                        ) {
+                                    fontSize = 28.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF1A1A1A)
+                                )
+                                if (p.description.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = p.description,
+                                        fontSize = 14.sp,
+                                        color = Color(0xFF6B7280),
+                                        lineHeight = 20.sp
+                                    )
+                                }
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = "${CurrencyFormatter.formatRupees(calculateProductTotalCost(p))}",
-                                fontSize = 24.sp,
+                                    text = CurrencyFormatter.formatRupees(dynamicPrice),
+                                    fontSize = 32.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colors.primary
                             )
                             if (p.hasCustomPrice && p.customPrice > 0) {
+                                    Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Custom: ${CurrencyFormatter.formatRupees(p.customPrice)}",
                                     fontSize = 14.sp,
@@ -363,96 +405,145 @@ fun ProductDetailScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
 
-                    // Status indicators (Available, Featured)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Available indicator
-                        Box(
-                            modifier = Modifier
-                                .padding(end = 8.dp)
-                                .background(
-                                    if (p.available) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
-                                    RoundedCornerShape(4.dp)
-                                )
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        // Status badges - check quantity for stock status
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = if (p.available) "In Stock" else "Out of Stock",
-                                color = if (p.available) Color(0xFF388E3C) else Color(0xFFD32F2F),
-                                fontSize = 14.sp
+                            // Stock status based on quantity: if quantity is 0, show "Out of Stock"
+                            val isInStock = p.quantity > 0 && p.available
+                            StatusBadge(
+                                text = if (isInStock) "In Stock" else "Out of Stock",
+                                color = if (isInStock) Color(0xFF4CAF50) else Color(0xFFD32F2F),
+                                backgroundColor = if (isInStock) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
                             )
-                        }
-
-                        // Featured indicator
                         if (p.featured) {
-                            Box(
-                                modifier = Modifier
-                                    .padding(end = 8.dp)
-                                    .background(
-                                        Color(0xFFFFF8E1),
-                                        RoundedCornerShape(4.dp)
-                                    )
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
+                                StatusBadge(
                                     text = "Featured",
                                     color = Color(0xFFFFA000),
-                                    fontSize = 14.sp
+                                    backgroundColor = Color(0xFFFFF8E1)
+                                )
+                            }
+                            if (p.isCollectionProduct && p.collectionId.isNotEmpty()) {
+                                StatusBadge(
+                                    text = "Collection",
+                                    color = Color(0xFF9C27B0),
+                                    backgroundColor = Color(0xFFF3E5F5)
                                 )
                             }
                         }
                     }
+                }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Divider()
-                    Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
-                    // Product details section
-                    Text(
-                        text = "Product Details",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Product attributes in a grid
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        DetailRow("Category", viewModel.getCategoryName(p.categoryId))
-                        DetailRow("Material", viewModel.getMaterialName(p.materialId))
-                        if (p.materialType.isNotEmpty()) {
-                            DetailRow("Material Type", p.materialType)
-                        }
-                        if (p.gender.isNotEmpty()) {
-                            DetailRow("Gender", p.gender)
-                        }
-                        if (p.weight.isNotEmpty()) {
-                            DetailRow("Weight", p.weight)
-                        }
-                        DetailRow("Product ID", p.id)
+                // Basic Information Card
+                InfoCard(title = "Basic Information") {
+                    InfoRow("Product ID", p.id)
+                    InfoRow("Category", viewModel.getCategoryName(p.categoryId).takeIf { it.isNotEmpty() } ?: "Not specified")
+                    InfoRow("Material", viewModel.getMaterialName(p.materialId).takeIf { it.isNotEmpty() } ?: "Not specified")
+                    if (p.materialType.isNotEmpty()) {
+                        InfoRow("Material Type", p.materialType)
+                    }
+                    if (p.materialName.isNotEmpty()) {
+                        InfoRow("Material Name", p.materialName)
+                    }
+                    if (p.gender.isNotEmpty()) {
+                        InfoRow("Gender", p.gender)
+                    }
+                    InfoRow("Quantity", p.quantity.toString() + if (p.quantity == 0) " (Out of Stock)" else "")
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    // Description section
-                    Text(
-                        text = "Description",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                // Weight Information Card
+                InfoCard(title = "Weight Details") {
+                    if (p.totalWeight > 0) {
+                        InfoRow("Total Weight", "${String.format("%.2f", p.totalWeight)} g")
+                    }
+                    if (p.materialWeight > 0) {
+                        InfoRow("Material Weight", "${String.format("%.2f", p.materialWeight)} g")
+                    }
+                    if (p.stoneWeight > 0) {
+                        InfoRow("Stone Weight", "${String.format("%.2f", p.stoneWeight)} g")
+                    }
+                    if (p.effectiveWeight > 0) {
+                        InfoRow("Effective Weight", "${String.format("%.2f", p.effectiveWeight)} g")
+                    }
+                    if (p.effectiveMetalWeight > 0) {
+                        InfoRow("Effective Metal Weight", "${String.format("%.2f", p.effectiveMetalWeight)} g")
+                    }
+                    if (p.weight.isNotEmpty()) {
+                        InfoRow("Weight (Legacy)", p.weight)
+                    }
+                }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    Text(
-                        text = p.description.ifEmpty { "No description available" },
-                        color = if (p.description.isEmpty()) Color.Gray else Color.Unspecified
-                    )
+                // Pricing & Charges Card
+                InfoCard(title = "Pricing & Charges") {
+                    if (p.makingPercent > 0) {
+                        InfoRow("Making Percentage", "${String.format("%.2f", p.makingPercent)}%")
+                    }
+                    if (p.labourRate > 0) {
+                        InfoRow("Labour Rate", "${CurrencyFormatter.formatRupees(p.labourRate)}/g")
+                    }
+                    if (p.labourCharges > 0) {
+                        InfoRow("Labour Charges", CurrencyFormatter.formatRupees(p.labourCharges))
+                    }
+                    if (p.makingCharges > 0) {
+                        InfoRow("Making Charges", CurrencyFormatter.formatRupees(p.makingCharges))
+                    }
+                    if (p.price > 0) {
+                        InfoRow("Base Price", CurrencyFormatter.formatRupees(p.price))
+                    }
+                }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                // Stones Information Card
+                if (p.hasStones && p.stones.isNotEmpty()) {
+                    InfoCard(title = "Stones Information") {
+                        if (p.stoneAmount > 0) {
+                            InfoRow("Total Stone Amount", CurrencyFormatter.formatRupees(p.stoneAmount))
+                        }
+                        p.stones.forEachIndexed { index, stone ->
+                            Divider(modifier = Modifier.padding(vertical = 8.dp))
+                            Text(
+                                text = "Stone ${index + 1}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colors.primary,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                            if (stone.name.isNotEmpty()) {
+                                InfoRow("Name", stone.name)
+                            }
+                            if (stone.weight > 0) {
+                                InfoRow("Weight", "${String.format("%.2f", stone.weight)} g")
+                            }
+                            if (stone.quantity > 0) {
+                                InfoRow("Quantity", String.format("%.2f", stone.quantity))
+                            }
+                            if (stone.rate > 0) {
+                                InfoRow("Rate", CurrencyFormatter.formatRupees(stone.rate))
+                            }
+                            if (stone.amount > 0) {
+                                InfoRow("Amount", CurrencyFormatter.formatRupees(stone.amount))
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // Additional Information Card
+                InfoCard(title = "Additional Information") {
+                    InfoRow("Created At", java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(p.createdAt)))
+                    if (p.autoGenerateId) {
+                        InfoRow("ID Generation", "Auto-generated")
+                    }
                 }
             }
         } ?: run {
@@ -463,114 +554,84 @@ fun ProductDetailScreen(
                     .padding(32.dp),
                 contentAlignment = Alignment.Center
             ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     "Product not found or still loading...",
-                    color = Color.Gray
+                        color = Color.Gray,
+                        fontSize = 16.sp
                 )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun DetailRow(label: String, value: String) {
+private fun StatusBadge(
+    text: String,
+    color: Color,
+    backgroundColor: Color
+) {
+    Box(
+        modifier = Modifier
+            .background(backgroundColor, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = text,
+            color = color,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun InfoCard(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        elevation = 2.dp,
+        shape = RoundedCornerShape(12.dp),
+        backgroundColor = Color.White
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                text = title,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1A1A1A),
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
     Row(
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
             text = "$label:",
             fontWeight = FontWeight.Medium,
-            modifier = Modifier.width(120.dp)
+            color = Color(0xFF6B7280),
+            fontSize = 14.sp,
+            modifier = Modifier.width(160.dp)
         )
         Text(
             text = value,
-            color = Color.DarkGray
+            color = Color(0xFF1A1A1A),
+            fontSize = 14.sp,
+            modifier = Modifier.weight(1f)
         )
     }
-}
-
-/**
- * Calculate the total product cost using the same logic as cart item detail screen (total charges)
- * This returns Total Charges (without GST) to match the item detail screen display
- */
-private fun calculateProductTotalCost(product: Product): Double {
-    // Calculate net weight (total weight - less weight)
-    // lessWeight removed from Product, using 0.0 as default
-    val lessWeight = 0.0
-    val netWeight = (product.totalWeight - lessWeight).coerceAtLeast(0.0)
-    
-    // Material cost (net weight × material rate × quantity)
-    val materialRate = getMaterialRateForProduct(product)
-    val baseAmount = when {
-        product.materialType.contains("gold", ignoreCase = true) -> netWeight * materialRate * product.quantity
-        product.materialType.contains("silver", ignoreCase = true) -> netWeight * materialRate * product.quantity
-        else -> netWeight * materialRate * product.quantity // Default to gold rate
-    }
-    
-    // Making charges (net weight × making rate × quantity)
-    val makingCharges = 0.0 // defaultMakingRate removed from Product
-    
-    // Stone amount (if has stones) - Use stoneWeight instead of cwWeight
-    val stoneAmount = if (product.hasStones && product.stones.isNotEmpty()) {
-        product.stones.sumOf { stone ->
-            if (stone.weight > 0 && stone.rate > 0) {
-                stone.weight * stone.rate * (stone.quantity.takeIf { it > 0 } ?: 1.0) * product.quantity
-            } else stone.amount * product.quantity
-        }
-    } else 0.0
-    
-    // Total Charges = Base Amount + Making Charges + Stone Amount + Labour Charges
-    // Use labourCharges instead of vaCharges
-    return baseAmount + makingCharges + stoneAmount + product.labourCharges
-}
-
-/**
- * Get material rate for a product based on material and type
- * Uses price_per_gram from rates collection to align with cart screen calculation
- */
-private fun getMaterialRateForProduct(product: Product): Double {
-    val metalRates = MetalRatesManager.metalRates.value
-    // Use collection rate from rate view model (same as cart detail screen)
-    val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
-    val karat = extractKaratFromMaterialTypeString(product.materialType)
-    
-    println("💰 PRODUCT DETAIL RATE CALCULATION for ${product.name}:")
-    println("   - Material ID: ${product.materialId}")
-    println("   - Material Type: ${product.materialType}")
-    println("   - Karat: $karat")
-    println("   - Total Metal Rates Available: ${ratesVM.metalRates.value.size}")
-    
-    // Get price_per_gram from rates collection (same as cart screen)
-    val collectionRate = try {
-        val rate = ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
-        println("   - Collection Rate: $rate")
-        rate
-    } catch (e: Exception) { 
-        println("   - Collection Rate Error: ${e.message}")
-        0.0 
-    }
-
-    // Always prefer collection rate if available, otherwise fallback to metal rates
-    if (collectionRate > 0) {
-        println("   - Using Collection Rate: $collectionRate")
-        return collectionRate
-    }
-
-    // Fallback to metal rates if collection rate not available
-    val fallbackRate = when {
-        product.materialType.contains("gold", ignoreCase = true) -> metalRates.getGoldRateForKarat(karat)
-        product.materialType.contains("silver", ignoreCase = true) -> metalRates.getSilverRateForPurity(999)
-        else -> metalRates.getGoldRateForKarat(22)
-    }
-    println("   - Using Fallback Rate: $fallbackRate")
-    return fallbackRate
-}
-
-/**
- * Extract karat from material type string (e.g., "18K Gold" -> 18)
- */
-private fun extractKaratFromMaterialTypeString(materialType: String): Int {
-    val karatRegex = Regex("""(\d+)K""", RegexOption.IGNORE_CASE)
-    val match = karatRegex.find(materialType)
-    return match?.groupValues?.get(1)?.toIntOrNull() ?: 22 // Default to 22K
 }

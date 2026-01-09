@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.example.project.data.Category
@@ -31,7 +32,7 @@ class ProductsViewModel(
     private val inventoryRepository: InventoryRepository? = null
 ) {
 
-    private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     // State for products list
     private val _products = mutableStateOf<List<Product>>(emptyList())
@@ -86,7 +87,7 @@ class ProductsViewModel(
      * This prevents UI blocking by loading inventory data in the background
      */
     fun loadInventoryData() {
-        if (inventoryRepository == null) return
+        val repo = inventoryRepository ?: return
 
         viewModelScope.launch {
             _inventoryLoading.value = true
@@ -97,16 +98,16 @@ class ProductsViewModel(
                 // Load inventory data in parallel for better performance
                 val deferredResults = allProducts.map { product ->
                     async(Dispatchers.IO) {
-                    try {
-                        val availableItems = inventoryRepository.getAvailableInventoryItemsByProductId(product.id)
-                        val allItems = inventoryRepository.getInventoryItemsByProductId(product.id)
-                        val barcodeIds = allItems.map { it.barcodeId }
+                        try {
+                            val availableItems = repo.getAvailableInventoryItemsByProductId(product.id)
+                            val allItems = repo.getInventoryItemsByProductId(product.id)
+                            val barcodeIds = allItems.map { it.barcodeId }
 
                             product.id to InventoryData(
-                            availableCount = availableItems.size,
-                            barcodeIds = barcodeIds
-                        )
-                    } catch (e: Exception) {
+                                availableCount = availableItems.size,
+                                barcodeIds = barcodeIds
+                            )
+                        } catch (e: Exception) {
                             // Silently fail - will use default InventoryData
                             product.id to InventoryData()
                         }
@@ -114,8 +115,8 @@ class ProductsViewModel(
                 }
 
                 // Wait for all parallel operations to complete
-                deferredResults.forEach { deferred ->
-                    val (productId, data) = deferred.await()
+                val results = deferredResults.awaitAll()
+                results.forEach { (productId, data) ->
                     inventoryDataMap[productId] = data
                 }
 
@@ -270,24 +271,6 @@ class ProductsViewModel(
             }
     }
 
-    /**
-     * Get all grouped products including sold items (for administrative purposes)
-     * Note: This method now works with inventory items instead of barcodeIds
-     */
-    fun getAllGroupedProductsIncludingSold(): List<GroupedProduct> {
-        val allProducts = _products.value
-
-        // Each product is shown individually (no grouping by commonId anymore)
-        return allProducts.map { product ->
-                    GroupedProduct(
-                        baseProduct = product,
-                        quantity = 1,
-                        individualProducts = listOf(product),
-                        barcodeIds = emptyList(), // Barcodes are now in inventory collection
-                commonId = null // commonId removed from Product model
-                )
-            }
-    }
 
     // New: add suggestion helpers used by UI
     fun addCategorySuggestion(name: String, onComplete: (String) -> Unit) {
@@ -449,7 +432,7 @@ class ProductsViewModel(
         viewModelScope.launch {
             _loading.value = true
             try {
-                // Verify the product exists (but don't modify products collection)
+                // Verify the product exists
                 val productToDuplicate = repository.getProductById(productId)
                 if (productToDuplicate == null) {
                     _error.value = "Product not found for duplication"
@@ -459,10 +442,8 @@ class ProductsViewModel(
                 println("🔄 Duplicating product: ${productToDuplicate.name}")
                 println("   - Original Product ID: $productId")
                 println("   - New Barcode ID: $barcodeId")
-                println("   - ⚠️ NO PRODUCT DOCUMENT WILL BE CREATED - ONLY INVENTORY ITEM")
 
-                // Create ONLY a new inventory item with the same product ID and new barcode ID
-                // NO product document is created in products collection
+                // Create a new inventory item with the same product ID and new barcode ID
                 val inventoryItem = InventoryItem(
                     productId = productId, // Use the same product ID
                     barcodeId = barcodeId // Use the new barcode ID
@@ -472,15 +453,24 @@ class ProductsViewModel(
                 if (inventoryId != null && inventoryId.isNotEmpty()) {
                     println("✅ Inventory item created successfully")
                     println("   - Inventory ID: $inventoryId")
-                    println("   - Product ID: $productId (same as original)")
-                    println("   - Barcode ID: $barcodeId (new)")
-                    println("   - Products collection: UNCHANGED")
+                    println("   - Product ID: $productId")
+                    println("   - Barcode ID: $barcodeId")
+
+                    // Update product quantity - increment by 1
+                    val updatedProduct = productToDuplicate.copy(quantity = productToDuplicate.quantity + 1)
+                    val updateSuccess = repository.updateProduct(updatedProduct)
+                    if (updateSuccess) {
+                        println("✅ Product quantity updated: ${productToDuplicate.quantity} -> ${updatedProduct.quantity}")
+                    } else {
+                        println("⚠️ Failed to update product quantity, but inventory item was created")
+                    }
 
                     // Trigger immediate refresh of dashboard to show updated quantity
                     triggerInventoryRefresh()
+                    loadProducts() // Refresh product list to show updated quantity
 
                     _error.value = null
-                    println("✅ Product duplicated successfully - ONLY inventory item added")
+                    println("✅ Product duplicated successfully - inventory item added and quantity incremented")
                 } else {
                     _error.value = "Failed to create inventory item for duplicated product"
                     println("❌ Failed to create inventory item")
@@ -493,15 +483,6 @@ class ProductsViewModel(
                 _loading.value = false
             }
         }
-    }
-
-    /**
-     * Generate a common ID for grouping multiple products
-     */
-    fun generateCommonId(): String {
-        val timestamp = System.currentTimeMillis()
-        val random = (1000..9999).random()
-        return "GRP_${timestamp}_${random}"
     }
 
     fun addProductsBatch(baseProduct: org.example.project.data.Product, barcodes: List<String>, onComplete: (() -> Unit)? = null) {
@@ -575,14 +556,6 @@ class ProductsViewModel(
                 _loading.value = false
             }
         }
-    }
-
-    /**
-     * Update product (commonId removed, so this just updates the single product)
-     */
-    fun updateProductsWithCommonId(product: Product) {
-        // Since commonId is removed, just update the single product
-                    updateProduct(product)
     }
 
     fun deleteProduct(productId: String) {
@@ -733,6 +706,9 @@ class ProductsViewModel(
                     println("   - Inventory ID: ${inventoryItem.id}")
                     println("   - Product ID: ${inventoryItem.productId}")
 
+                    // Get the product to update its quantity
+                    val product = repository.getProductById(inventoryItem.productId)
+
                     // Actually delete the inventory item document
                     val success = inventoryRepository?.deleteInventoryItem(inventoryItem.id) ?: false
 
@@ -742,8 +718,21 @@ class ProductsViewModel(
                         println("   - Barcode: $barcodeId")
                         println("   - Document removed from Firestore")
 
+                        // Update product quantity - decrement by 1 (but don't go below 0)
+                        if (product != null) {
+                            val newQuantity = (product.quantity - 1).coerceAtLeast(0)
+                            val updatedProduct = product.copy(quantity = newQuantity)
+                            val updateSuccess = repository.updateProduct(updatedProduct)
+                            if (updateSuccess) {
+                                println("✅ Product quantity updated: ${product.quantity} -> ${updatedProduct.quantity}")
+                            } else {
+                                println("⚠️ Failed to update product quantity, but inventory item was deleted")
+                            }
+                        }
+
                         // Trigger dashboard refresh to show updated quantities
                         triggerInventoryRefresh()
+                        loadProducts() // Refresh product list to show updated quantity
                         _error.value = null
                     } else {
                         println("❌ Failed to delete inventory item!")
@@ -782,10 +771,13 @@ class ProductsViewModel(
         viewModelScope.launch {
             _loading.value = true
             try {
-                // Add category to repository (you'll need to implement this in ProductRepository)
-                // For now, just add to local state
-                _categories.value = _categories.value + category
-                _error.value = null
+                val id = repository.addCompleteCategory(category)
+                if (id.isNotEmpty()) {
+                    loadCategories() // Refresh the list after adding
+                    _error.value = null
+                } else {
+                    _error.value = "Failed to add category to Firestore"
+                }
             } catch (e: Exception) {
                 _error.value = "Failed to add category: ${e.message}"
             } finally {
@@ -798,12 +790,13 @@ class ProductsViewModel(
         viewModelScope.launch {
             _loading.value = true
             try {
-                // Update category in repository (you'll need to implement this in ProductRepository)
-                // For now, just update local state
-                _categories.value = _categories.value.map {
-                    if (it.id == category.id) category else it
+                val success = repository.updateCategory(category)
+                if (success) {
+                    loadCategories() // Refresh the list after updating
+                    _error.value = null
+                } else {
+                    _error.value = "Failed to update category in Firestore"
                 }
-                _error.value = null
             } catch (e: Exception) {
                 _error.value = "Failed to update category: ${e.message}"
             } finally {
@@ -816,10 +809,13 @@ class ProductsViewModel(
         viewModelScope.launch {
             _loading.value = true
             try {
-                // Delete category from repository (you'll need to implement this in ProductRepository)
-                // For now, just remove from local state
-                _categories.value = _categories.value.filter { it.id != categoryId }
-                _error.value = null
+                val success = repository.deleteCategory(categoryId)
+                if (success) {
+                    loadCategories() // Refresh the list after deleting
+                    _error.value = null
+                } else {
+                    _error.value = "Failed to delete category from Firestore"
+                }
             } catch (e: Exception) {
                 _error.value = "Failed to delete category: ${e.message}"
             } finally {
@@ -846,12 +842,11 @@ class ProductsViewModel(
     // Inventory Management Methods
     suspend fun addInventoryItem(inventoryItem: InventoryItem): String? {
         return try {
-            println("🔍 DEBUG: inventoryRepository is ${if (inventoryRepository != null) "NOT NULL" else "NULL"}")
             if (inventoryRepository == null) {
                 println("❌ ERROR: inventoryRepository is null!")
                 return null
             }
-            val result = inventoryRepository?.addInventoryItem(inventoryItem)
+            val result = inventoryRepository.addInventoryItem(inventoryItem)
             println("🔍 DEBUG: addInventoryItem result: $result")
             result
         } catch (e: Exception) {
@@ -864,9 +859,23 @@ class ProductsViewModel(
     suspend fun updateInventoryItem(inventoryItem: InventoryItem): String? {
         return try {
             val success = inventoryRepository?.updateInventoryItem(inventoryItem) ?: false
-            if (success) inventoryItem.id else null
+            if (success) {
+                println("✅ PRODUCTS VIEWMODEL: Inventory item updated successfully")
+                println("   - Inventory ID: ${inventoryItem.id}")
+                println("   - Product ID: ${inventoryItem.productId}")
+                println("   - Barcode ID: ${inventoryItem.barcodeId}")
+                
+                // Trigger inventory refresh to update UI with new barcode
+                triggerInventoryRefresh()
+                
+                inventoryItem.id
+            } else {
+                println("❌ PRODUCTS VIEWMODEL: Failed to update inventory item")
+                null
+            }
         } catch (e: Exception) {
-            println("Failed to update inventory item: ${e.message}")
+            println("❌ PRODUCTS VIEWMODEL: Exception updating inventory item: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
@@ -954,54 +963,4 @@ class ProductsViewModel(
         }
     }
 
-    /**
-     * Test method to verify delete functionality works
-     * This bypasses all UI and directly tests the repository methods
-     */
-    fun testDeleteFunctionality(productId: String) {
-        println("🧪 TEST DELETE FUNCTIONALITY START")
-        println("   - Product ID: $productId")
-
-        viewModelScope.launch {
-            try {
-                // Test 1: Check if product exists
-                println("🧪 TEST 1: Checking if product exists")
-                val product = repository.getProductById(productId)
-                if (product != null) {
-                    println("   - ✅ Product found: ${product.name}")
-                } else {
-                    println("   - ❌ Product not found")
-                    return@launch
-                }
-
-                // Test 2: Check inventory items
-                println("🧪 TEST 2: Checking inventory items")
-                val inventoryItems = inventoryRepository?.getInventoryItemsByProductId(productId) ?: emptyList()
-                println("   - Found ${inventoryItems.size} inventory items")
-
-                // Test 3: Try to delete inventory items
-                println("🧪 TEST 3: Testing inventory deletion")
-                inventoryItems.forEach { item ->
-                    println("   - Attempting to delete inventory item: ${item.barcodeId}")
-                    val success = inventoryRepository?.deleteInventoryItem(item.id) ?: false
-                    println("   - Result: $success")
-                }
-
-                // Test 4: Try to delete product
-                println("🧪 TEST 4: Testing product deletion")
-                val productDeleteSuccess = repository.deleteProduct(productId)
-                println("   - Product deletion result: $productDeleteSuccess")
-
-                // Refresh data
-                loadProducts()
-                triggerInventoryRefresh()
-
-                println("🧪 TEST DELETE FUNCTIONALITY COMPLETE")
-
-            } catch (e: Exception) {
-                println("🧪 TEST DELETE ERROR: ${e.message}")
-                e.printStackTrace()
-            }
-        }
-    }
 }

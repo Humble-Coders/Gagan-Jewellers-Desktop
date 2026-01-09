@@ -50,6 +50,13 @@ fun BarcodeEditScreen(
     var hasCustomPrice by remember { mutableStateOf(false) }
     var customPrice by remember { mutableStateOf("") }
 
+    // Validation state
+    var nameError by remember { mutableStateOf(false) }
+    var totalWeightError by remember { mutableStateOf(false) }
+    var stoneNameError by remember { mutableStateOf(false) }
+    var customPriceError by remember { mutableStateOf(false) }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
     // Load product data when screen opens
     LaunchedEffect(barcodeId) {
         isLoading = true
@@ -162,10 +169,22 @@ fun BarcodeEditScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         StyledTextField(
                             value = name,
-                            onValueChange = { name = it },
-                            label = "Product Name",
-                            placeholder = "e.g., Gold Necklace"
+                            onValueChange = { 
+                                name = it
+                                nameError = false  // Clear error when user types
+                            },
+                            label = "Product Name *",
+                            placeholder = "e.g., Gold Necklace",
+                            isError = nameError
                         )
+                        if (nameError) {
+                            Text(
+                                "Product name is required",
+                                color = MaterialTheme.colors.error,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                            )
+                        }
 
                         StyledTextField(
                             value = description,
@@ -183,12 +202,24 @@ fun BarcodeEditScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         StyledTextField(
                             value = totalWeight,
-                            onValueChange = { totalWeight = it },
+                            onValueChange = { 
+                                totalWeight = it
+                                totalWeightError = false  // Clear error when user types
+                            },
                             label = "Total Weight",
                             placeholder = "0.00",
                             suffix = "grams",
-                            keyboardType = KeyboardType.Decimal
+                            keyboardType = KeyboardType.Decimal,
+                            isError = totalWeightError
                         )
+                        if (totalWeightError) {
+                            Text(
+                                "Total weight must be a valid number",
+                                color = MaterialTheme.colors.error,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                            )
+                        }
 
 
                     }
@@ -227,10 +258,22 @@ fun BarcodeEditScreen(
                             if (hasStones) {
                                 StyledTextField(
                                     value = stoneName,
-                                    onValueChange = { stoneName = it },
-                                    label = "Stone Name",
-                                    placeholder = "e.g., Diamond"
+                                    onValueChange = { 
+                                        stoneName = it
+                                        stoneNameError = false  // Clear error when user types
+                                    },
+                                    label = "Stone Name *",
+                                    placeholder = "e.g., Diamond",
+                                    isError = stoneNameError
                                 )
+                                if (stoneNameError) {
+                                    Text(
+                                        "Stone name is required when stones are enabled",
+                                        color = MaterialTheme.colors.error,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                                    )
+                                }
 
                                 StyledTextField(
                                     value = stoneQuantity,
@@ -275,12 +318,24 @@ fun BarcodeEditScreen(
                         if (hasCustomPrice) {
                             StyledTextField(
                                 value = customPrice,
-                                onValueChange = { customPrice = it },
-                                label = "Custom Price",
+                                onValueChange = { 
+                                    customPrice = it
+                                    customPriceError = false  // Clear error when user types
+                                },
+                                label = "Custom Price *",
                                 placeholder = "0.00",
                                 prefix = "₹",
-                                keyboardType = KeyboardType.Decimal
+                                keyboardType = KeyboardType.Decimal,
+                                isError = customPriceError
                             )
+                            if (customPriceError) {
+                                Text(
+                                    "Custom price must be a valid number greater than 0",
+                                    color = MaterialTheme.colors.error,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -300,6 +355,24 @@ fun BarcodeEditScreen(
                             description = "Highlight on homepage and promotions",
                             checked = featured,
                             onCheckedChange = { featured = it }
+                        )
+                    }
+                }
+
+                // Validation error display
+                validationError?.let { error ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        backgroundColor = MaterialTheme.colors.error.copy(alpha = 0.1f),
+                        elevation = 2.dp
+                    ) {
+                        Text(
+                            text = error,
+                            color = MaterialTheme.colors.error,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(12.dp)
                         )
                     }
                 }
@@ -325,43 +398,67 @@ fun BarcodeEditScreen(
 
                     Button(
                         onClick = {
-                            if (product != null) {
-                                isSaving = true
-                                scope.launch {
-                                    try {
-                                        // Create stones array
-                                        val stonesList = if (hasStones && stoneName.isNotBlank()) {
-                                            listOf(
-                                                org.example.project.data.ProductStone(
-                                                    name = stoneName,
-                                                    purity = "", // BarcodeEditScreen doesn't have purity field
-                                                    quantity = stoneQuantity.toDoubleOrNull() ?: 0.0,
-                                                    rate = stoneRate.toDoubleOrNull() ?: 0.0,
-                                                    weight = 0.0, // BarcodeEditScreen doesn't have weight field
-                                                    amount = 0.0 // Will be calculated if needed
-                                                )
+                            val currentProduct = product ?: run {
+                                validationError = "Product not found. Please go back and try again."
+                                return@Button
+                            }
+
+                            // Validate form before saving
+                            nameError = name.trim().isEmpty()
+                            totalWeightError = totalWeight.isNotBlank() && totalWeight.toDoubleOrNull() == null
+                            stoneNameError = hasStones && stoneName.trim().isEmpty()
+                            customPriceError = hasCustomPrice && (customPrice.isBlank() || customPrice.toDoubleOrNull() == null || customPrice.toDoubleOrNull()!! <= 0)
+
+                            val isValid = !nameError && !totalWeightError && !stoneNameError && !customPriceError
+
+                            if (!isValid) {
+                                validationError = when {
+                                    nameError -> "Product name is required"
+                                    totalWeightError -> "Total weight must be a valid number"
+                                    stoneNameError -> "Stone name is required when stones are enabled"
+                                    customPriceError -> "Custom price must be a valid number greater than 0"
+                                    else -> "Please fill all required fields correctly"
+                                }
+                                return@Button
+                            }
+
+                            validationError = null
+                            isSaving = true
+                            scope.launch {
+                                try {
+                                    // Create stones array
+                                    val stonesList = if (hasStones && stoneName.isNotBlank()) {
+                                        listOf(
+                                            org.example.project.data.ProductStone(
+                                                name = stoneName,
+                                                purity = "", // BarcodeEditScreen doesn't have purity field
+                                                quantity = stoneQuantity.toDoubleOrNull() ?: 0.0,
+                                                rate = stoneRate.toDoubleOrNull() ?: 0.0,
+                                                weight = 0.0, // BarcodeEditScreen doesn't have weight field
+                                                amount = 0.0 // Will be calculated if needed
                                             )
-                                        } else emptyList()
-                                        
-                                        val updatedProduct = product!!.copy(
-                                            name = name,
-                                            description = description,
-                                            totalWeight = totalWeight.toDoubleOrNull() ?: 0.0,
-                                            hasStones = hasStones,
-                                            stones = stonesList,
-                                            available = available,
-                                            featured = featured,
-                                            hasCustomPrice = hasCustomPrice,
-                                            customPrice = customPrice.toDoubleOrNull() ?: 0.0
                                         )
-                                        
-                                        viewModel.updateProduct(updatedProduct)
-                                        isSaving = false
-                                        onSave()
-                                    } catch (e: Exception) {
-                                        println("Error updating product: ${e.message}")
-                                        isSaving = false
-                                    }
+                                    } else emptyList()
+                                    
+                                    val updatedProduct = currentProduct.copy(
+                                        name = name.trim(),
+                                        description = description.trim(),
+                                        totalWeight = totalWeight.toDoubleOrNull() ?: 0.0,
+                                        hasStones = hasStones,
+                                        stones = stonesList,
+                                        available = available,
+                                        featured = featured,
+                                        hasCustomPrice = hasCustomPrice,
+                                        customPrice = customPrice.toDoubleOrNull() ?: 0.0
+                                    )
+                                    
+                                    viewModel.updateProduct(updatedProduct)
+                                    isSaving = false
+                                    onSave()
+                                } catch (e: Exception) {
+                                    println("Error updating product: ${e.message}")
+                                    validationError = "Failed to save: ${e.message}"
+                                    isSaving = false
                                 }
                             }
                         },
@@ -369,7 +466,7 @@ fun BarcodeEditScreen(
                             backgroundColor = MaterialTheme.colors.primary,
                             contentColor = Color.White
                         ),
-                        enabled = !isSaving,
+                        enabled = !isSaving && product != null,
                         shape = RoundedCornerShape(8.dp),
                         elevation = ButtonDefaults.elevation(4.dp)
                     ) {
@@ -397,7 +494,8 @@ fun StyledTextField(
     singleLine: Boolean = true,
     maxLines: Int = 1,
     keyboardType: KeyboardType = KeyboardType.Text,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    isError: Boolean = false
 ) {
     Column(modifier = modifier) {
         OutlinedTextField(
@@ -416,11 +514,14 @@ fun StyledTextField(
             maxLines = maxLines,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             enabled = enabled,
+            isError = isError,
             colors = TextFieldDefaults.outlinedTextFieldColors(
-                focusedBorderColor = MaterialTheme.colors.primary,
-                unfocusedBorderColor = Color(0xFFE0E0E0),
+                focusedBorderColor = if (isError) MaterialTheme.colors.error else MaterialTheme.colors.primary,
+                unfocusedBorderColor = if (isError) MaterialTheme.colors.error else Color(0xFFE0E0E0),
                 cursorColor = MaterialTheme.colors.primary,
-                focusedLabelColor = MaterialTheme.colors.primary
+                focusedLabelColor = if (isError) MaterialTheme.colors.error else MaterialTheme.colors.primary,
+                errorBorderColor = MaterialTheme.colors.error,
+                errorLabelColor = MaterialTheme.colors.error
             ),
             shape = RoundedCornerShape(8.dp)
         )

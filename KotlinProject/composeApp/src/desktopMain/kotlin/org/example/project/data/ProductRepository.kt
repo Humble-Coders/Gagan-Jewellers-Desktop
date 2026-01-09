@@ -1,9 +1,12 @@
 package org.example.project.data
 
 // Repository.kt
+import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.Transaction
 import com.google.cloud.storage.Storage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
@@ -49,7 +52,9 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 id = doc.id,
                 name = data["name"] as? String ?: "",
                 description = data["description"] as? String ?: "",
-                price = (data["price"] as? String)?.toDoubleOrNull() ?: 0.0,
+                price = (data["price"] as? Number)?.toDouble() 
+                    ?: (data["price"] as? String)?.toDoubleOrNull() 
+                    ?: 0.0,
                 categoryId = data["category_id"] as? String ?: "",
                 materialId = data["material_id"] as? String ?: "",
                 materialType = data["material_type"] as? String ?: "",
@@ -73,7 +78,11 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     val cwWeight = (data["cw_weight"] as? String)?.toDoubleOrNull() // Backward compatibility: old field name
                     parseProductStonesFromOldFormat(stoneName, stoneQuantity, stoneRate, stoneAmount, cwWeight)
                 },
-                materialWeight = (data["material_weight"] as? String)?.toDoubleOrNull() ?: (data["gold_weight"] as? String)?.toDoubleOrNull() ?: 0.0, // Backward compatibility
+                materialWeight = (data["material_weight"] as? Number)?.toDouble() 
+                    ?: (data["material_weight"] as? String)?.toDoubleOrNull() 
+                    ?: (data["gold_weight"] as? Number)?.toDouble() // Backward compatibility: gold_weight deprecated
+                    ?: (data["gold_weight"] as? String)?.toDoubleOrNull() // Backward compatibility: gold_weight deprecated
+                    ?: 0.0,
                 // Calculate stoneWeight and stoneAmount from stones array
                 stoneWeight = if (data["stones"] != null) {
                     parseProductStones(data["stones"]).sumOf { it.weight }
@@ -172,7 +181,9 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                     id = snapshot.id,
                     name = data?.get("name") as? String ?: "",
                     description = data?.get("description") as? String ?: "",
-                    price = (data?.get("price") as? String)?.toDoubleOrNull() ?: 0.0,
+                    price = (data?.get("price") as? Number)?.toDouble() 
+                        ?: (data?.get("price") as? String)?.toDoubleOrNull() 
+                        ?: 0.0,
                     categoryId = data?.get("category_id") as? String ?: "",
                     materialId = data?.get("material_id") as? String ?: "",
                     materialType = data?.get("material_type") as? String ?: "",
@@ -196,7 +207,11 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                         val cwWeight = (data?.get("cw_weight") as? String)?.toDoubleOrNull() // Backward compatibility: old field name
                         parseProductStonesFromOldFormat(stoneName, stoneQuantity, stoneRate, stoneAmount, cwWeight)
                     },
-                    materialWeight = (data?.get("material_weight") as? String)?.toDoubleOrNull() ?: (data?.get("gold_weight") as? String)?.toDoubleOrNull() ?: 0.0, // Backward compatibility
+                    materialWeight = (data?.get("material_weight") as? Number)?.toDouble() 
+                        ?: (data?.get("material_weight") as? String)?.toDoubleOrNull() 
+                        ?: (data?.get("gold_weight") as? Number)?.toDouble() // Backward compatibility: gold_weight deprecated
+                        ?: (data?.get("gold_weight") as? String)?.toDoubleOrNull() // Backward compatibility: gold_weight deprecated
+                        ?: 0.0,
                     // Calculate stoneWeight and stoneAmount from stones array
                     stoneWeight = if (data?.get("stones") != null) {
                         parseProductStones(data?.get("stones")).sumOf { it.weight }
@@ -289,8 +304,8 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["description"] = product.description?.takeIf { it.isNotBlank() }
             // price field is not stored in Firestore (material rate is used instead)
             productMap["category_id"] = product.categoryId.takeIf { it.isNotBlank() }
-            productMap["material_id"] = product.materialId?.takeIf { it.isNotBlank() }
-            productMap["material_type"] = product.materialType?.takeIf { it.isNotBlank() }
+            productMap["material_id"] = product.materialId.takeIf { it.isNotBlank() }
+            productMap["material_type"] = product.materialType.takeIf { it.isNotBlank() }
             productMap["quantity"] = if (product.quantity > 0) product.quantity.toString() else null
             productMap["total_weight"] = if (product.totalWeight > 0) product.totalWeight.toString() else null
             productMap["has_stones"] = product.hasStones
@@ -357,69 +372,115 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
         println("📝 Key values - Name: '${productMap["name"]}'")
         println("📝 Note: total_product_cost is not stored in Firestore")
 
-        docRef.set(productMap).get()
-        println("✅ Product document created in Firestore with ID: $newProductId")
-
-        // Add to category_products as well
-        product.categoryId.takeIf { it.isNotBlank() }?.let { catId ->
-            println("📂 Adding product to category: $catId")
-            val categoryProductsRef = firestore.collection("category_products").document(catId)
-            val categoryDoc = categoryProductsRef.get().get()
-
-            if (categoryDoc.exists()) {
-                val data = categoryDoc.data
-                val currentProductIds = (data?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                val updatedProductIds = currentProductIds + newProductId
-                categoryProductsRef.update("product_ids", updatedProductIds).get()
-                println("✅ Updated category with new product ID")
-            } else {
-                categoryProductsRef.set(mapOf("product_ids" to listOf(newProductId))).get()
-                println("✅ Created new category document with product ID")
-            }
+        // Use Firebase transaction to atomically create product and update category/featured/collection lists
+        val categoryProductsRef = product.categoryId.takeIf { it.isNotBlank() }?.let { 
+            firestore.collection("category_products").document(it) 
         }
+        val featuredProductsRef = if (product.featured) {
+            firestore.collection("featured_products").document("featured_list")
+        } else null
+        val collectionRef = if (product.isCollectionProduct && product.collectionId.isNotBlank()) {
+            firestore.collection("themed_collections").document(product.collectionId)
+        } else null
 
-        // Add to featured_products if product is featured
-        if (product.featured) {
-            println("⭐ Adding product to featured_products collection")
-            val featuredProductsRef = firestore.collection("featured_products").document("featured_list")
-            val featuredDoc = featuredProductsRef.get().get()
-
-            if (featuredDoc.exists()) {
-                val data = featuredDoc.data
-                val currentFeaturedIds = (data?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                if (!currentFeaturedIds.contains(newProductId)) {
-                    val updatedFeaturedIds = currentFeaturedIds + newProductId
-                    featuredProductsRef.update("product_ids", updatedFeaturedIds).get()
-                    println("✅ Added product to featured_products list")
-                } else {
-                    println("ℹ️ Product already in featured_products list")
+        firestore.runTransaction { transaction: Transaction ->
+            // STEP 1: ALL READS FIRST (Firebase requirement)
+            // Wrap reads in try-catch to prevent transaction failure if documents don't exist
+            var categoryDoc: DocumentSnapshot? = null
+            var featuredDoc: DocumentSnapshot? = null
+            var collectionDoc: DocumentSnapshot? = null
+            
+            // Read category document if needed
+            categoryProductsRef?.let { catRef ->
+                try {
+                    println("📂 Reading category: ${product.categoryId}")
+                    categoryDoc = transaction.getDocument(catRef)
+                } catch (e: Exception) {
+                    println("⚠️ Failed to read category document (non-critical): ${e.message}")
+                    // Continue - product creation will still succeed
                 }
-            } else {
-                featuredProductsRef.set(mapOf("product_ids" to listOf(newProductId))).get()
-                println("✅ Created featured_products document with product ID")
             }
-        }
+            
+            // Read featured_products document if needed
+            featuredProductsRef?.let { featuredRef ->
+                try {
+                    println("⭐ Reading featured_products collection")
+                    featuredDoc = transaction.getDocument(featuredRef)
+                } catch (e: Exception) {
+                    println("⚠️ Failed to read featured_products document (non-critical): ${e.message}")
+                    // Continue - product creation will still succeed
+                }
+            }
+            
+            // Read themed collection document if needed
+            collectionRef?.let { collRef ->
+                try {
+                    println("🎨 Reading themed collection: ${product.collectionId}")
+                    collectionDoc = transaction.getDocument(collRef)
+                } catch (e: Exception) {
+                    println("⚠️ Failed to read themed collection document (non-critical): ${e.message}")
+                    // Continue - product creation will still succeed
+                }
+            }
+            
+            // STEP 2: ALL WRITES AFTER READS
+            // Create product document
+            transaction.set(docRef, productMap)
+            println("✅ Product document created in Firestore with ID: $newProductId")
 
-        // Add to themed collection if product is a collection product
-        if (product.isCollectionProduct && product.collectionId.isNotBlank()) {
-            println("🎨 Adding product to themed collection: ${product.collectionId}")
-            val collectionRef = firestore.collection("themed_collections").document(product.collectionId)
-            val collectionDoc = collectionRef.get().get()
-
-            if (collectionDoc.exists()) {
-                val data = collectionDoc.data
-                val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                if (!currentProductIds.contains(newProductId)) {
+            // Add to category_products
+            categoryProductsRef?.let { catRef ->
+                println("📂 Adding product to category: ${product.categoryId}")
+                if (categoryDoc?.exists() == true) {
+                    val data = categoryDoc?.data
+                    val currentProductIds = (data?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
                     val updatedProductIds = currentProductIds + newProductId
-                    collectionRef.update("productIds", updatedProductIds).get()
-                    println("✅ Added product to themed collection")
+                    transaction.update(catRef, "product_ids", updatedProductIds)
+                    println("✅ Updated category with new product ID")
                 } else {
-                    println("ℹ️ Product already in themed collection")
+                    transaction.set(catRef, mapOf("product_ids" to listOf(newProductId)))
+                    println("✅ Created new category document with product ID")
                 }
-            } else {
-                println("⚠️ Themed collection not found: ${product.collectionId}")
             }
-        }
+
+            // Add to featured_products if product is featured
+            featuredProductsRef?.let { featuredRef ->
+                println("⭐ Adding product to featured_products collection")
+                if (featuredDoc?.exists() == true) {
+                    val data = featuredDoc?.data
+                    val currentFeaturedIds = (data?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                    if (!currentFeaturedIds.contains(newProductId)) {
+                        val updatedFeaturedIds = currentFeaturedIds + newProductId
+                        transaction.update(featuredRef, "product_ids", updatedFeaturedIds)
+                        println("✅ Added product to featured_products list")
+                    } else {
+                        println("ℹ️ Product already in featured_products list")
+                    }
+                } else {
+                    transaction.set(featuredRef, mapOf("product_ids" to listOf(newProductId)))
+                    println("✅ Created featured_products document with product ID")
+                }
+            }
+
+            // Add to themed collection if product is a collection product
+            collectionRef?.let { collRef ->
+                println("🎨 Adding product to themed collection: ${product.collectionId}")
+                if (collectionDoc?.exists() == true) {
+                    val data = collectionDoc?.data
+                    val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                    if (!currentProductIds.contains(newProductId)) {
+                        val updatedProductIds = currentProductIds + newProductId
+                        transaction.update(collRef, "productIds", updatedProductIds)
+                        println("✅ Added product to themed collection")
+                    } else {
+                        println("ℹ️ Product already in themed collection")
+                    }
+                } else {
+                    println("⚠️ Themed collection not found: ${product.collectionId}")
+                }
+            }
+            Unit // Return Unit for transaction function
+        }.get()
 
         println("🏁 ProductRepository.addProduct completed successfully")
         newProductId
@@ -440,9 +501,9 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["description"] = product.description?.takeIf { it.isNotBlank() }
             // price field is not stored in Firestore (material rate is used instead)
             productMap["category_id"] = product.categoryId.takeIf { it.isNotBlank() }
-            productMap["material_id"] = product.materialId?.takeIf { it.isNotBlank() }
-            productMap["material_type"] = product.materialType?.takeIf { it.isNotBlank() }
-            productMap["material_name"] = product.materialName?.takeIf { it.isNotBlank() }
+            productMap["material_id"] = product.materialId.takeIf { it.isNotBlank() }
+            productMap["material_type"] = product.materialType.takeIf { it.isNotBlank() }
+            productMap["material_name"] = product.materialName.takeIf { it.isNotBlank() }
             productMap["quantity"] = if (product.quantity > 0) product.quantity.toString() else null
             productMap["total_weight"] = if (product.totalWeight > 0) product.totalWeight.toString() else null
             productMap["has_stones"] = product.hasStones
@@ -505,78 +566,143 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             )
             productMap["show"] = showMap
 
-            docRef.update(productMap).get()
-
-            // Handle featured_products collection
+            // Use Firebase transaction to atomically update product and category/featured/collection lists
             val featuredProductsRef = firestore.collection("featured_products").document("featured_list")
-            val featuredDoc = featuredProductsRef.get().get()
+            val collectionRef = if (product.isCollectionProduct && product.collectionId.isNotBlank()) {
+                firestore.collection("themed_collections").document(product.collectionId)
+            } else null
 
-            if (product.featured) {
-                // Add to featured_products if not already there
-                println("⭐ Updating featured_products: adding product ${product.id}")
-                if (featuredDoc.exists()) {
-                    val data = featuredDoc.data
-                    val currentFeaturedIds = (data?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                    if (!currentFeaturedIds.contains(product.id)) {
-                        val updatedFeaturedIds = currentFeaturedIds + product.id
-                        featuredProductsRef.update("product_ids", updatedFeaturedIds).get()
-                        println("✅ Added product to featured_products list")
-                    } else {
-                        println("ℹ️ Product already in featured_products list")
-                    }
-                } else {
-                    featuredProductsRef.set(mapOf("product_ids" to listOf(product.id))).get()
-                    println("✅ Created featured_products document with product ID")
+            // WORKAROUND FOR TRANSACTION QUERY LIMITATION:
+            // Query collections containing this product BEFORE the transaction
+            // Then use transaction.get() for each reference inside the transaction
+            // Note: This creates a potential race condition - collections queried here may change before transaction executes
+            // However, this is acceptable as the transaction will validate the product is still in the collection before removing
+            val collectionsToRemoveFrom = if (!product.isCollectionProduct || product.collectionId.isBlank()) {
+                try {
+                    val collectionsQuery = firestore.collection("themed_collections")
+                        .whereArrayContains("productIds", product.id)
+                        .get()
+                        .get()
+                    val refs = collectionsQuery.documents.map { it.reference }
+                    println("📋 Found ${refs.size} themed collection(s) containing product ${product.id}")
+                    refs
+                } catch (e: Exception) {
+                    println("⚠️ Error querying collections for product removal: ${e.message}")
+                    emptyList()
                 }
             } else {
-                // Remove from featured_products if it exists
-                if (featuredDoc.exists()) {
-                    println("⭐ Updating featured_products: removing product ${product.id}")
-                    val data = featuredDoc.data
-                    val currentFeaturedIds = (data?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                    if (currentFeaturedIds.contains(product.id)) {
-                        val updatedFeaturedIds = currentFeaturedIds.filter { it != product.id }
-                        featuredProductsRef.update("product_ids", updatedFeaturedIds).get()
-                        println("✅ Removed product from featured_products list")
-                    } else {
-                        println("ℹ️ Product not in featured_products list")
-                    }
-                }
+                emptyList()
             }
 
-            // Handle themed collection
-            if (product.isCollectionProduct && product.collectionId.isNotBlank()) {
-                println("🎨 Updating themed collection: adding product ${product.id} to ${product.collectionId}")
-                val collectionRef = firestore.collection("themed_collections").document(product.collectionId)
-                val collectionDoc = collectionRef.get().get()
+            firestore.runTransaction { transaction: Transaction ->
+                // STEP 1: ALL READS FIRST (Firebase requirement)
+                val featuredDoc = transaction.getDocument(featuredProductsRef)
+                var collectionDoc: DocumentSnapshot? = null
+                if (product.isCollectionProduct && product.collectionId.isNotBlank()) {
+                    collectionRef?.let { collRef ->
+                        println("🎨 Reading themed collection: ${product.collectionId}")
+                        collectionDoc = transaction.getDocument(collRef)
+                    }
+                }
+                
+                // Read all collections that need to be updated (for removal)
+                // Validate that product is still in each collection (may have been removed by another transaction)
+                val collectionDocsToUpdate = mutableMapOf<com.google.cloud.firestore.DocumentReference, DocumentSnapshot>()
+                if (!product.isCollectionProduct || product.collectionId.isBlank()) {
+                    collectionsToRemoveFrom.forEach { collRef ->
+                        try {
+                            val docSnapshot = transaction.getDocument(collRef)
+                            // Verify product is still in the collection before adding to update list
+                            if (docSnapshot.exists()) {
+                                val data = docSnapshot.data
+                                val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                                if (currentProductIds.contains(product.id)) {
+                                    collectionDocsToUpdate[collRef] = docSnapshot
+                                } else {
+                                    println("ℹ️ Product ${product.id} no longer in collection ${collRef.id} (may have been removed by another transaction)")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            println("⚠️ Failed to read collection ${collRef.id} in transaction (non-critical): ${e.message}")
+                            // Continue - don't fail entire transaction
+                        }
+                    }
+                }
+                
+                // STEP 2: ALL WRITES AFTER READS
+                // Update product document
+                transaction.update(docRef, productMap)
 
-                if (collectionDoc.exists()) {
-                    val data = collectionDoc.data
-                    val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                    if (!currentProductIds.contains(product.id)) {
-                        val updatedProductIds = currentProductIds + product.id
-                        collectionRef.update("productIds", updatedProductIds).get()
-                        println("✅ Added product to themed collection")
+                // Handle featured_products collection
+                if (product.featured) {
+                    // Add to featured_products if not already there
+                    println("⭐ Updating featured_products: adding product ${product.id}")
+                    if (featuredDoc.exists()) {
+                        val data = featuredDoc.data
+                        val currentFeaturedIds = (data?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                        if (!currentFeaturedIds.contains(product.id)) {
+                            val updatedFeaturedIds = currentFeaturedIds + product.id
+                            transaction.update(featuredProductsRef, "product_ids", updatedFeaturedIds)
+                            println("✅ Added product to featured_products list")
+                        } else {
+                            println("ℹ️ Product already in featured_products list")
+                        }
                     } else {
-                        println("ℹ️ Product already in themed collection")
+                        transaction.set(featuredProductsRef, mapOf("product_ids" to listOf(product.id)))
+                        println("✅ Created featured_products document with product ID")
                     }
                 } else {
-                    println("⚠️ Themed collection not found: ${product.collectionId}")
-                }
-            } else {
-                // Remove from all themed collections if not a collection product
-                println("🎨 Updating themed collection: removing product ${product.id} from all collections")
-                val collectionsSnapshot = firestore.collection("themed_collections").get().get()
-                collectionsSnapshot.documents.forEach { doc ->
-                    val data = doc.data
-                    val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                    if (currentProductIds.contains(product.id)) {
-                        val updatedProductIds = currentProductIds.filter { it != product.id }
-                        doc.reference.update("productIds", updatedProductIds).get()
-                        println("✅ Removed product from themed collection: ${doc.id}")
+                    // Remove from featured_products if it exists
+                    if (featuredDoc.exists()) {
+                        println("⭐ Updating featured_products: removing product ${product.id}")
+                        val data = featuredDoc.data
+                        val currentFeaturedIds = (data?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                        if (currentFeaturedIds.contains(product.id)) {
+                            val updatedFeaturedIds = currentFeaturedIds.filter { it != product.id }
+                            transaction.update(featuredProductsRef, "product_ids", updatedFeaturedIds)
+                            println("✅ Removed product from featured_products list")
+                        } else {
+                            println("ℹ️ Product not in featured_products list")
+                        }
                     }
                 }
-            }
+
+                // Handle themed collection
+                if (product.isCollectionProduct && product.collectionId.isNotBlank()) {
+                    println("🎨 Updating themed collection: adding product ${product.id} to ${product.collectionId}")
+                    collectionRef?.let { collRef ->
+                        if (collectionDoc?.exists() == true) {
+                            val data = collectionDoc?.data
+                            val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                            if (!currentProductIds.contains(product.id)) {
+                                val updatedProductIds = currentProductIds + product.id
+                                transaction.update(collRef, "productIds", updatedProductIds)
+                                println("✅ Added product to themed collection")
+                            } else {
+                                println("ℹ️ Product already in themed collection")
+                            }
+                        } else {
+                            println("⚠️ Themed collection not found: ${product.collectionId}")
+                        }
+                    }
+                } else {
+                    // Remove from all themed collections that contain this product
+                    // We queried these collections BEFORE the transaction, now we update them atomically
+                    println("🎨 Updating themed collection: removing product ${product.id} from ${collectionsToRemoveFrom.size} collection(s)")
+                    collectionDocsToUpdate.forEach { (collRef, docSnapshot) ->
+                        if (docSnapshot.exists()) {
+                            val data = docSnapshot.data
+                            val currentProductIds = (data?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                            if (currentProductIds.contains(product.id)) {
+                                val updatedProductIds = currentProductIds.filter { it != product.id }
+                                transaction.update(collRef, "productIds", updatedProductIds)
+                                transaction.update(collRef, "updatedAt", System.currentTimeMillis())
+                                println("✅ Removed product from themed collection: ${collRef.id}")
+                            }
+                        }
+                    }
+                }
+            }.get()
 
             true
         } catch (e: Exception) {
@@ -588,46 +714,176 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
 
     override suspend fun deleteProduct(id: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            val productDoc = firestore.collection("products").document(id).get().get()
-
-            if (productDoc.exists()) {
-                val data = productDoc.data
-                val categoryId = data?.get("category_id") as? String
-
-                if (!categoryId.isNullOrBlank()) {
-                    // Remove from category_products
-                    val categoryProductsRef = firestore.collection("category_products").document(categoryId)
-                    val categoryDoc = categoryProductsRef.get().get()
-
-                    if (categoryDoc.exists()) {
-                        val categoryData = categoryDoc.data
-                        val currentProductIds = (categoryData?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                        val updatedProductIds = currentProductIds.filter { it != id }
-                        categoryProductsRef.update("product_ids", updatedProductIds).get()
-                    }
-                }
-
-                // Remove from featured_products if it exists
-                val featuredProductsRef = firestore.collection("featured_products").document("featured_list")
-                val featuredDoc = featuredProductsRef.get().get()
-                
-                if (featuredDoc.exists()) {
-                    val featuredData = featuredDoc.data
-                    val currentFeaturedIds = (featuredData?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-                    if (currentFeaturedIds.contains(id)) {
-                        val updatedFeaturedIds = currentFeaturedIds.filter { it != id }
-                        featuredProductsRef.update("product_ids", updatedFeaturedIds).get()
-                        println("✅ Removed product from featured_products list")
-                    }
-                }
-
-                // Delete the product
-                firestore.collection("products").document(id).delete().get()
-                true
-            } else {
-                false
+            println("🗑️ PRODUCT REPOSITORY: Starting product deletion")
+            println("   - Product ID: $id")
+            
+            val productRef = firestore.collection("products").document(id)
+            val featuredProductsRef = firestore.collection("featured_products").document("featured_list")
+            
+            // First, read product to get categoryId and collectionId (outside transaction since we need it to determine refs)
+            // This is safe because we only use it to determine which documents to read in the transaction
+            // The transaction will re-read the product to ensure it still exists
+            val productDoc = try {
+                productRef.get().get()
+            } catch (e: Exception) {
+                println("❌ PRODUCT REPOSITORY: Error reading product document: ${e.message}")
+                return@withContext false
             }
+            
+            if (!productDoc.exists()) {
+                println("⚠️ PRODUCT REPOSITORY: Product document does not exist: $id")
+                return@withContext false
+            }
+            
+            val data = productDoc.data
+            val categoryId = data?.get("category_id") as? String
+            val collectionId = data?.get("collection_id") as? String
+            val categoryProductsRef = categoryId?.takeIf { it.isNotBlank() }?.let {
+                firestore.collection("category_products").document(it)
+            }
+            
+            // Query themed collections containing this product BEFORE the transaction
+            // (Firebase transactions cannot perform queries)
+            val collectionsToRemoveFrom = try {
+                val collectionsQuery = firestore.collection("themed_collections")
+                    .whereArrayContains("productIds", id)
+                    .get()
+                    .get()
+                collectionsQuery.documents.map { it.reference }
+            } catch (e: Exception) {
+                println("⚠️ PRODUCT REPOSITORY: Error querying themed collections (non-critical): ${e.message}")
+                emptyList()
+            }
+            
+            println("   - Found ${collectionsToRemoveFrom.size} themed collection(s) containing this product")
+            
+            // Use Firebase transaction to atomically delete product and update all related lists
+            // Retry up to 3 times for transaction conflicts
+            var retries = 3
+            var success = false
+            var lastError: Exception? = null
+            
+            while (retries > 0 && !success) {
+                try {
+                    firestore.runTransaction { transaction: Transaction ->
+                        // STEP 1: ALL READS FIRST (Firebase requirement)
+                        
+                        // Read product document in transaction
+                        val productDocSnapshot = transaction.getDocument(productRef)
+                        if (!productDocSnapshot.exists()) {
+                            throw Exception("Product not found: $id")
+                        }
+                        
+                        // Read category_products if category exists
+                        categoryProductsRef?.let { catRef ->
+                            try {
+                                val categoryDocSnapshot = transaction.getDocument(catRef)
+                                if (categoryDocSnapshot.exists()) {
+                                    val categoryData = categoryDocSnapshot.data
+                                    val currentProductIds = (categoryData?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                                    if (currentProductIds.contains(id)) {
+                                        val updatedProductIds = currentProductIds.filter { it != id }
+                                        transaction.update(catRef, "product_ids", updatedProductIds)
+                                        println("✅ PRODUCT REPOSITORY: Removed product from category_products list")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                // Non-critical: category_products might not exist, continue with deletion
+                                println("⚠️ PRODUCT REPOSITORY: Could not update category_products (non-critical): ${e.message}")
+                            }
+                        }
+                        
+                        // Read featured_products
+                        try {
+                            val featuredDocSnapshot = transaction.getDocument(featuredProductsRef)
+                            if (featuredDocSnapshot.exists()) {
+                                val featuredData = featuredDocSnapshot.data
+                                val currentFeaturedIds = (featuredData?.get("product_ids") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                                if (currentFeaturedIds.contains(id)) {
+                                    val updatedFeaturedIds = currentFeaturedIds.filter { it != id }
+                                    transaction.update(featuredProductsRef, "product_ids", updatedFeaturedIds)
+                                    println("✅ PRODUCT REPOSITORY: Removed product from featured_products list")
+                                }
+                            }
+                        } catch (e: Exception) {
+                            // Non-critical: featured_products might not exist, continue with deletion
+                            println("⚠️ PRODUCT REPOSITORY: Could not update featured_products (non-critical): ${e.message}")
+                        }
+                        
+                        // Read themed collections that need to be updated
+                        val collectionDocsToUpdate = mutableMapOf<com.google.cloud.firestore.DocumentReference, DocumentSnapshot>()
+                        collectionsToRemoveFrom.forEach { collRef ->
+                            try {
+                                collectionDocsToUpdate[collRef] = transaction.getDocument(collRef)
+                            } catch (e: Exception) {
+                                println("⚠️ PRODUCT REPOSITORY: Could not read themed collection ${collRef.id} (non-critical): ${e.message}")
+                            }
+                        }
+                        
+                        // STEP 2: ALL WRITES AFTER READS
+                        
+                        // Update themed collections
+                        collectionDocsToUpdate.forEach { (collRef, docSnapshot) ->
+                            try {
+                                if (docSnapshot.exists()) {
+                                    val collData = docSnapshot.data
+                                    val currentProductIds = (collData?.get("productIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                                    if (currentProductIds.contains(id)) {
+                                        val updatedProductIds = currentProductIds.filter { it != id }
+                                        transaction.update(collRef, "productIds", updatedProductIds)
+                                        transaction.update(collRef, "updatedAt", System.currentTimeMillis())
+                                        println("✅ PRODUCT REPOSITORY: Removed product from themed collection: ${collRef.id}")
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                // Non-critical: continue with deletion even if collection update fails
+                                println("⚠️ PRODUCT REPOSITORY: Could not update themed collection ${collRef.id} (non-critical): ${e.message}")
+                            }
+                        }
+                        
+                        // Delete the product document (this is the critical operation)
+                        transaction.delete(productRef)
+                        
+                        println("✅ PRODUCT REPOSITORY: Product deleted atomically with all related updates")
+                        Unit
+                    }.get()
+                    success = true
+                } catch (e: Exception) {
+                    lastError = e
+                    retries--
+                    
+                    // Check if error is retryable (transaction conflict)
+                    val isRetryable = e.message?.contains("ABORTED", ignoreCase = true) == true ||
+                            (e is com.google.cloud.firestore.FirestoreException && 
+                             e.message?.contains("ABORTED", ignoreCase = true) == true)
+                    
+                    if (retries == 0 || !isRetryable) {
+                        // Not retryable or out of retries - log and throw
+                        println("❌ PRODUCT REPOSITORY: Product deletion failed: ${e.message}")
+                        e.printStackTrace()
+                        throw e
+                    }
+                    
+                    // Wait before retry (exponential backoff)
+                    val delayMs = 100L * (3 - retries)
+                    println("⚠️ PRODUCT REPOSITORY: Transaction conflict, retrying in ${delayMs}ms (${retries} retries left)")
+                    kotlinx.coroutines.delay(delayMs)
+                }
+            }
+            
+            if (!success) {
+                throw lastError ?: Exception("Failed to delete product after retries")
+            }
+            
+            println("✅ PRODUCT REPOSITORY: Product deletion completed successfully")
+            true
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ PRODUCT REPOSITORY: Firestore error deleting product: ${e.message}")
+            e.printStackTrace()
+            false
         } catch (e: Exception) {
+            println("❌ PRODUCT REPOSITORY: Error deleting product: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -787,14 +1043,31 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
     override suspend fun addMaterialType(materialId: String, type: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val materialRef = firestore.collection("materials").document(materialId)
-            val snapshot = materialRef.get().get()
-            if (!snapshot.exists()) return@withContext false
-            val currentTypes = (snapshot.get("types") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
-            if (currentTypes.any { it.equals(type, ignoreCase = true) }) return@withContext true
-            val updated = currentTypes + type
-            materialRef.update("types", updated).get()
+            
+            // Use transaction to atomically read and update types array
+            firestore.runTransaction { transaction: Transaction ->
+                val materialDocSnapshot = transaction.getDocument(materialRef)
+                if (!materialDocSnapshot.exists()) {
+                    throw Exception("Material document not found: $materialId")
+                }
+                
+                val data = materialDocSnapshot.data ?: throw Exception("Material document has no data")
+                val currentTypes = (data["types"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+                
+                // Check if type already exists (case-insensitive)
+                if (currentTypes.any { it.equals(type, ignoreCase = true) }) {
+                    // Type already exists, no update needed
+                    return@runTransaction Unit
+                }
+                
+                val updated = currentTypes + type
+                transaction.update(materialRef, "types", updated)
+                Unit
+            }.get()
+            
             true
         } catch (e: Exception) {
+            println("❌ Error adding material type: ${e.message}")
             false
         }
     }
@@ -865,31 +1138,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             e.printStackTrace()
             emptyList()
         }
-    }
-}
-// Helper function to parse product materials from Firestore
-private fun parseProductMaterials(data: Any?): List<ProductMaterial> {
-    return when (data) {
-        is List<*> -> {
-            data.mapNotNull { item ->
-                when (item) {
-                    is Map<*, *> -> {
-                        ProductMaterial(
-                            id = (item["id"] as? String) ?: "",
-                            materialId = (item["material_id"] as? String) ?: "",
-                            materialName = (item["material_name"] as? String) ?: "",
-                            materialType = (item["material_type"] as? String) ?: "",
-                            weight = (item["weight"] as? Number)?.toDouble() ?: 0.0,
-                            rate = (item["rate"] as? Number)?.toDouble() ?: 0.0,
-                            isMetal = (item["is_metal"] as? Boolean) ?: true,
-                            createdAt = (item["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-                        )
-                    }
-                    else -> null
-                }
-            }
-        }
-        else -> emptyList()
     }
 }
 

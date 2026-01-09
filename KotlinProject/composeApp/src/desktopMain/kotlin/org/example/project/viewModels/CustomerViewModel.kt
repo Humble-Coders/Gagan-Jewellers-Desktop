@@ -49,17 +49,46 @@ class CustomerViewModel(private val repository: CustomerRepository) {
     }
 
     fun selectCustomer(customer: User?) {
+        // Validate customer data before selection
+        if (customer != null) {
+            // Basic validation: ensure customer has required fields
+            if (customer.name.isBlank()) {
+                println("⚠️ CUSTOMER VIEWMODEL: Attempted to select customer with blank name")
+                _error.value = "Cannot select customer: name is required"
+                return
+            }
+        }
         _selectedCustomer.value = customer
+        _error.value = null
     }
 
     fun addCustomer(customer: User) {
+        // Validate customer data before adding
+        val validationErrors = mutableListOf<String>()
+        
+        if (customer.name.isBlank()) {
+            validationErrors.add("Customer name is required")
+        }
+        
+        if (customer.phone.isBlank() && customer.email.isBlank()) {
+            validationErrors.add("At least one contact method (phone or email) is required")
+        }
+        
+        if (validationErrors.isNotEmpty()) {
+            _error.value = "Validation failed: ${validationErrors.joinToString(", ")}"
+            return
+        }
+        
         viewModelScope.launch {
             _loading.value = true
             try {
                 val id = repository.addCustomer(customer)
+                println("✅ CUSTOMER VIEWMODEL: Customer added successfully with ID: $id")
                 loadCustomers()
                 _error.value = null
             } catch (e: Exception) {
+                println("❌ CUSTOMER VIEWMODEL: Failed to add customer: ${e.message}")
+                e.printStackTrace()
                 _error.value = "Failed to add customer: ${e.message}"
             } finally {
                 _loading.value = false

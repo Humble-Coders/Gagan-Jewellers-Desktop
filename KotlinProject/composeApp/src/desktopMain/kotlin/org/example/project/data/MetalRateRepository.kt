@@ -1,6 +1,8 @@
 package org.example.project.data
 
+import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.Transaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.example.project.data.normalizeMaterialType
@@ -112,8 +114,18 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
             
             println("✅ Loaded ${metalRates.size} rates from materials and stones collections")
             metalRates
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            // Network or Firestore-specific errors
+            println("❌ Firestore error loading metal rates: ${e.message}")
+            e.printStackTrace()
+            emptyList()
+        } catch (e: IllegalStateException) {
+            // Recoverable: Data structure issues
+            println("⚠️ Data structure error loading metal rates: ${e.message}")
+            emptyList()
         } catch (e: Exception) {
-            println("❌ Error loading metal rates: ${e.message}")
+            // Critical: Unexpected errors
+            println("❌ Critical error loading metal rates: ${e.message}")
             e.printStackTrace()
             emptyList()
         }
@@ -137,8 +149,12 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                 return@withContext getMetalRateByMaterialAndType(materialIdOrName, materialType)
             }
             null
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error loading metal rate by ID: ${e.message}")
+            null
         } catch (e: Exception) {
             println("❌ Error loading metal rate by ID: ${e.message}")
+            e.printStackTrace()
             null
         }
     }
@@ -218,7 +234,7 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                                                     karat = extractKaratFromPurity(normalizedPurity),
                                                     pricePerGram = rateValue,
                                                     isActive = true,
-                                                    createdAt = (materialData["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                                                    createdAt = (materialData?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
                                                     updatedAt = System.currentTimeMillis()
                                                 )
                                             }
@@ -231,6 +247,10 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                 }
             }
             
+            null
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error loading metal rate by material and type: ${e.message}")
+            e.printStackTrace()
             null
         } catch (e: Exception) {
             println("❌ Error loading metal rate by material and type: ${e.message}")
@@ -252,8 +272,13 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                 updateStoneTypesArray(metalRate.materialName, metalRate.materialType, metalRate.pricePerGram.toString())
                 "${metalRate.materialName}_${metalRate.materialType}"
             }
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error adding metal rate: ${e.message}")
+            e.printStackTrace()
+            throw e
         } catch (e: Exception) {
             println("❌ Error adding metal rate: ${e.message}")
+            e.printStackTrace()
             throw e
         }
     }
@@ -271,8 +296,13 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
             }
             println("✅ Metal rate updated: ${metalRate.materialName} ${metalRate.materialType}")
             true
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error updating metal rate: ${e.message}")
+            e.printStackTrace()
+            false
         } catch (e: Exception) {
             println("❌ Error updating metal rate: ${e.message}")
+            e.printStackTrace()
             false
         }
     }
@@ -283,18 +313,29 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
             // Parse the ID to get materialId/stoneName and materialType
             // Format: "materialId_materialType" or "stoneName_purity"
             val parts = id.split("_", limit = 2)
-            if (parts.size == 2) {
+            if (parts.size != 2) {
+                return@withContext false
+            }
+            
                 val materialIdOrName = parts[0]
                 val materialType = parts[1]
                 
-                // Try materials collection first
+            // Try materials collection first using transaction
                 val materialDocRef = firestore.collection("materials").document(materialIdOrName)
-                val materialDoc = materialDocRef.get().get()
-                
-                if (materialDoc.exists()) {
-                    val data = materialDoc.data ?: return@withContext false
+            
+            try {
+                // Use transaction to atomically check existence and update types array
+                // This prevents race condition where document could be deleted between check and transaction
+                firestore.runTransaction { transaction: Transaction ->
+                    val materialDocSnapshot = transaction.getDocument(materialDocRef)
+                    if (!materialDocSnapshot.exists()) {
+                        throw Exception("Material document not found: $materialIdOrName")
+                    }
+                    
+                    val data = materialDocSnapshot.data ?: throw Exception("Material document has no data")
                     val existingTypes = mutableListOf<Map<String, String>>()
                     val typesData = data["types"]
+                    val normalizedMaterialType = normalizeMaterialType(materialType)
                     
                     when (typesData) {
                         is List<*> -> {
@@ -303,7 +344,6 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                                     is Map<*, *> -> {
                                         val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
                                         val normalizedPurity = normalizeMaterialType(purity)
-                                        val normalizedMaterialType = normalizeMaterialType(materialType)
                                         // Only add if it's not the one we're deleting
                                         if (normalizedPurity != normalizedMaterialType) {
                                             val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
@@ -314,18 +354,34 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                             }
                         }
                     }
-                    materialDocRef.update("types", existingTypes).get()
+                    
+                    transaction.update(materialDocRef, "types", existingTypes)
                     println("✅ Metal rate deleted from materials collection: $id")
+                    Unit
+                }.get()
                     return@withContext true
-                } else {
-                    // Try stones collection
+            } catch (e: Exception) {
+                // Material not found in materials collection, try stones collection
+                // Continue to stones collection logic below
+            }
+            
+            // Try stones collection - need to query first (outside transaction)
                     val stonesCollection = firestore.collection("stones")
                     val query = stonesCollection.whereEqualTo("name", materialIdOrName).limit(1)
                     val snapshot = query.get().get()
                     
                     if (!snapshot.isEmpty) {
                         val stoneDoc = snapshot.documents.first()
-                        val stoneData = stoneDoc.data ?: return@withContext false
+                val stoneDocRef = stoneDoc.reference
+                
+                // Use transaction to atomically read and update types array
+                firestore.runTransaction { transaction: Transaction ->
+                    val stoneDocSnapshot = transaction.getDocument(stoneDocRef)
+                    if (!stoneDocSnapshot.exists()) {
+                        throw Exception("Stone document not found: $materialIdOrName")
+                    }
+                    
+                    val stoneData = stoneDocSnapshot.data ?: throw Exception("Stone document has no data")
                         val existingTypes = mutableListOf<Map<String, String>>()
                         val typesData = stoneData["types"]
                         val normalizedMaterialType = materialType.trim().uppercase()
@@ -347,12 +403,18 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                                 }
                             }
                         }
-                        stoneDoc.reference.update("types", existingTypes).get()
+                    
+                    transaction.update(stoneDocRef, "types", existingTypes)
                         println("✅ Stone rate deleted from stones collection: $id")
+                    Unit
+                }.get()
                         return@withContext true
-                    }
-                }
             }
+            
+            false
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error deleting metal rate: ${e.message}")
+            e.printStackTrace()
             false
         } catch (e: Exception) {
             println("❌ Error deleting metal rate: ${e.message}")
@@ -373,8 +435,13 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                 println("⚠️ No metal rate found for material: $materialId, type: $materialType")
                 0.0
             }
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error calculating rate: ${e.message}")
+            e.printStackTrace()
+            0.0
         } catch (e: Exception) {
             println("❌ Error calculating rate: ${e.message}")
+            e.printStackTrace()
             0.0
         }
     }
@@ -395,8 +462,13 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                 println("✅ Updated/created stone rate in stones collection: ${materialName} ${normalizedPurity}")
                 "${materialName}_${normalizedPurity}"
             }
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error updating or creating metal rate: ${e.message}")
+            e.printStackTrace()
+            throw e
         } catch (e: Exception) {
             println("❌ Error updating or creating metal rate: ${e.message}")
+            e.printStackTrace()
             throw e
         }
     }
@@ -419,6 +491,10 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                 println("✅ Updated stone rate in stones collection: ${materialName} ${normalizedPurity} -> $newPricePerGram per gram")
                 true
             }
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error updating metal rate with history: ${e.message}")
+            e.printStackTrace()
+            false
         } catch (e: Exception) {
             println("❌ Error updating metal rate with history: ${e.message}")
             e.printStackTrace()
@@ -438,14 +514,15 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
             }
             
             val materialDocRef = firestore.collection("materials").document(materialId)
-            val materialDoc = materialDocRef.get().get()
             
-            if (!materialDoc.exists()) {
-                println("⚠️ Material document not found: $materialId")
-                return@withContext
+            // Use transaction to atomically read and update types array
+            firestore.runTransaction { transaction: Transaction ->
+                val materialDocSnapshot = transaction.getDocument(materialDocRef)
+                if (!materialDocSnapshot.exists()) {
+                    throw Exception("Material document not found: $materialId")
             }
             
-            val data = materialDoc.data ?: return@withContext
+                val data = materialDocSnapshot.data ?: throw Exception("Material document has no data")
             val existingTypes = mutableListOf<Map<String, String>>()
             
             // Parse existing types array
@@ -479,11 +556,18 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
             existingTypes.add(mapOf("purity" to purity, "rate" to rate))
             
             // Update the material document with the new types array
-            materialDocRef.update("types", existingTypes).get()
+                transaction.update(materialDocRef, "types", existingTypes)
             println("✅ Updated materials collection: $materialId with purity $purity and rate $rate")
+                Unit
+            }.get()
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error updating materials collection: ${e.message}")
+            e.printStackTrace()
+            throw e
         } catch (e: Exception) {
             println("❌ Error updating materials collection: ${e.message}")
             e.printStackTrace()
+            throw e
         }
     }
     
@@ -493,7 +577,7 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
      */
     suspend fun updateStoneTypesArray(stoneName: String, purity: String, rate: String) = withContext(Dispatchers.IO) {
         try {
-            // Find stone document by name
+            // Find stone document by name (query outside transaction since transactions can't query)
             val stonesCollection = firestore.collection("stones")
             val query = stonesCollection.whereEqualTo("name", stoneName).limit(1)
             val snapshot = query.get().get()
@@ -504,11 +588,22 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
             }
             
             val stoneDoc = snapshot.documents.first()
-            val data = stoneDoc.data ?: return@withContext
+            val stoneDocRef = stoneDoc.reference
+            
+            // Use transaction to atomically read and update types array
+            firestore.runTransaction { transaction: Transaction ->
+                val stoneDocSnapshot = transaction.getDocument(stoneDocRef)
+                if (!stoneDocSnapshot.exists()) {
+                    throw Exception("Stone document not found: $stoneName")
+                }
+                
+                val data = stoneDocSnapshot.data ?: throw Exception("Stone document has no data")
             val existingTypes = mutableListOf<Map<String, String>>()
             
             // Parse existing types array
             val typesData = data["types"]
+                val normalizedPurity = purity.trim().uppercase()
+                
             when (typesData) {
                 is List<*> -> {
                     typesData.forEach { typeItem ->
@@ -517,7 +612,6 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                                 val existingPurity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
                                 // For stones, normalize purity (case-insensitive comparison)
                                 val normalizedExistingPurity = existingPurity.trim().uppercase()
-                                val normalizedPurity = purity.trim().uppercase()
                                 // Only add if it's not the purity we're updating
                                 if (normalizedExistingPurity != normalizedPurity) {
                                     val existingRate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
@@ -527,7 +621,6 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
                             is String -> {
                                 // Old format: just string types
                                 val normalizedExistingPurity = typeItem.trim().uppercase()
-                                val normalizedPurity = purity.trim().uppercase()
                                 if (normalizedExistingPurity != normalizedPurity) {
                                     existingTypes.add(mapOf("purity" to normalizedExistingPurity, "rate" to ""))
                                 }
@@ -538,15 +631,21 @@ class FirestoreMetalRateRepository(private val firestore: Firestore) : MetalRate
             }
             
             // Add or update the current purity/rate (normalized)
-            val normalizedPurity = purity.trim().uppercase()
             existingTypes.add(mapOf("purity" to normalizedPurity, "rate" to rate))
             
             // Update the stone document with the new types array
-            stoneDoc.reference.update("types", existingTypes).get()
+                transaction.update(stoneDocRef, "types", existingTypes)
             println("✅ Updated stones collection: $stoneName with purity $normalizedPurity and rate $rate")
+                Unit
+            }.get()
+        } catch (e: com.google.cloud.firestore.FirestoreException) {
+            println("❌ Firestore error updating stones collection: ${e.message}")
+            e.printStackTrace()
+            throw e
         } catch (e: Exception) {
             println("❌ Error updating stones collection: ${e.message}")
             e.printStackTrace()
+            throw e
         }
     }
 }

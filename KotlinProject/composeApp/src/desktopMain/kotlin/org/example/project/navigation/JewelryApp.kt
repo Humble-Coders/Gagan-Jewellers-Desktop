@@ -93,9 +93,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.example.project.JewelryAppInitializer
 import org.example.project.viewModels.ProductsViewModel
-import org.example.project.viewModels.CustomizationViewModel
 import org.example.project.viewModels.ProfileViewModel
-import org.example.project.data.FirestoreCustomizationRepository
 import org.example.project.data.OrderRepository
 import org.example.project.data.FirestoreOrderRepository
 import org.example.project.data.CashAmountRepository
@@ -110,7 +108,6 @@ import org.example.project.ui.ProductDetailScreen
 import org.example.project.ui.SettingsScreen
 import org.example.project.ui.GoldRateScreen
 import org.example.project.ui.CategoryManagementScreen
-import org.example.project.ui.CustomizationScreen
 import org.example.project.ui.AppointmentScreen
 import org.jetbrains.compose.resources.painterResource
 import kotlinproject.composeapp.generated.resources.Res
@@ -143,9 +140,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     val paymentViewModel = JewelryAppInitializer.getPaymentViewModel()
     val appointmentViewModel = JewelryAppInitializer.getAppointmentViewModel()
     val availabilityRepository = JewelryAppInitializer.getAvailabilityRepository()
-    val customizationViewModel = CustomizationViewModel(
-        FirestoreCustomizationRepository(JewelryAppInitializer.getFirestore())
-    )
     val profileViewModel = ProfileViewModel(
         JewelryAppInitializer.getCustomerRepository(),
         FirestoreOrderRepository(JewelryAppInitializer.getFirestore()),
@@ -380,13 +374,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 }
                             )
 
-                            Screen.CUSTOMIZATION -> CustomizationScreen(
-                                viewModel = customizationViewModel,
-                                onBack = { 
-                                    dashboardStartInProductsView = false
-                                    currentScreen = Screen.DASHBOARD 
-                                }
-                            )
 
                             Screen.APPOINTMENTS -> AppointmentScreen(
                                 viewModel = appointmentViewModel,
@@ -536,7 +523,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                             println("   - Timestamp: ${System.currentTimeMillis()}")
                             
                             if (newBarcodeId.isNotBlank() && newBarcodeId != barcodeToEdit) {
-                                // TODO: Implement barcode update logic
                                 coroutineScope.launch {
                                     try {
                                         // Find the inventory item with the old barcode
@@ -546,8 +532,15 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                             val updatedInventoryItem = inventoryItem.copy(barcodeId = newBarcodeId)
                                             val inventoryId = viewModel.updateInventoryItem(updatedInventoryItem)
                                             if (inventoryId != null) {
-                                                showSnackbar("Barcode updated successfully")
                                                 println("✅ Barcode updated successfully")
+                                                println("   - Old barcode: $barcodeToEdit")
+                                                println("   - New barcode: $newBarcodeId")
+                                                println("   - Inventory ID: $inventoryId")
+                                                
+                                                // Refresh inventory data to update UI immediately
+                                                viewModel.triggerInventoryRefresh()
+                                                
+                                                showSnackbar("Barcode updated successfully")
                                             } else {
                                                 showSnackbar("Failed to update barcode")
                                                 println("❌ Failed to update barcode")
@@ -559,6 +552,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                     } catch (e: Exception) {
                                         showSnackbar("Failed to update barcode: ${e.message}")
                                         println("❌ Failed to update barcode: ${e.message}")
+                                        e.printStackTrace()
                                     }
                                 }
                             } else {
@@ -685,7 +679,6 @@ enum class Screen {
     GOLD_RATES,
     CATEGORIES,
     BILLING,
-    CUSTOMIZATION,
     APPOINTMENTS,
     PROFILE,
     CUSTOMER_TRANSACTIONS

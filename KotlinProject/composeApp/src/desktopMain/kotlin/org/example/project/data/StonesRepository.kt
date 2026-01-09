@@ -35,10 +35,13 @@ class FirestoreStonesRepository(private val firestore: Firestore) : StonesReposi
     }
 
     override suspend fun getAllStonePurities(): List<String> = withContext(Dispatchers.IO) {
-        // Note: Purity is no longer stored in stones collection
-        // Purity values are stored in the rates collection as material_type
-        // This method returns empty list as purity has been removed from stones collection
-        emptyList()
+        // Extract purities from stones collection's types array
+        // Each stone document has a types array: [{purity: "VVS", rate: "5000"}, {purity: "VS", rate: "4500"}]
+        getAllStones()
+            .flatMap { it.types.map { stoneType -> stoneType.purity } }
+            .distinct()
+            .filter { it.isNotEmpty() }
+            .sorted()
     }
 
     override suspend fun getAllStones(): List<Stone> = withContext(Dispatchers.IO) {

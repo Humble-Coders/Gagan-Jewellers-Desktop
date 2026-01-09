@@ -59,6 +59,9 @@ fun GoldRateScreen(
 
     // Scroll state for right side form
     val scrollState = rememberScrollState()
+    
+    // Debounce state for scroll animations
+    var lastScrollTime by remember { mutableStateOf(0L) }
 
     // Local state for update form
     var selectedMaterialId by remember { mutableStateOf("") }
@@ -66,6 +69,7 @@ fun GoldRateScreen(
     var rateInput by remember { mutableStateOf("") }
     var materialDisplayValue by remember { mutableStateOf("") }
     var materialTypeDisplayValue by remember { mutableStateOf("") }
+    var validationError by remember { mutableStateOf<String?>(null) }
 
     // Material suggestions from Firestore
     val materialSuggestions = materials.map { it.name }
@@ -98,6 +102,14 @@ fun GoldRateScreen(
             ErrorBanner(
                 error = error ?: "",
                 onDismiss = { metalRateViewModel.clearError() }
+            )
+        }
+        
+        // Validation Error
+        if (validationError != null) {
+            ErrorBanner(
+                error = validationError ?: "",
+                onDismiss = { validationError = null }
             )
         }
 
@@ -138,9 +150,13 @@ fun GoldRateScreen(
                             stoneName = ""
                             stonePurity = ""
                             
-                            // Scroll to top (metal form is first)
+                            // Scroll to top (metal form is first) - with debouncing
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastScrollTime > 300) { // 300ms debounce
+                                lastScrollTime = currentTime
                             scope.launch {
                                 scrollState.animateScrollTo(0)
+                                }
                             }
                         } else if (isStone) {
                             // Populate stone rate form
@@ -154,12 +170,16 @@ fun GoldRateScreen(
                             materialDisplayValue = ""
                             materialTypeDisplayValue = ""
                             
-                            // Scroll to stone form (below metal form)
+                            // Scroll to stone form (below metal form) - with debouncing
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastScrollTime > 300) { // 300ms debounce
+                                lastScrollTime = currentTime
                             scope.launch {
                                 // Estimate scroll position for stone form (approximately after metal form)
                                 // Metal form is typically around 400-500px, so scroll to show stone form
                                 val maxScroll = scrollState.maxValue
                                 scrollState.animateScrollTo(maxScroll.coerceAtMost(500))
+                                }
                             }
                         } else {
                             // Fallback: treat as metal if materialId is not empty, otherwise as stone
@@ -186,9 +206,13 @@ fun GoldRateScreen(
                                 materialDisplayValue = ""
                                 materialTypeDisplayValue = ""
                                 
+                                val currentTime = System.currentTimeMillis()
+                                if (currentTime - lastScrollTime > 300) { // 300ms debounce
+                                    lastScrollTime = currentTime
                                 scope.launch {
                                     val maxScroll = scrollState.maxValue
                                     scrollState.animateScrollTo(maxScroll.coerceAtMost(500))
+                                    }
                                 }
                             }
                         }
@@ -228,10 +252,16 @@ fun GoldRateScreen(
                         }
                     },
                     onUpdateRate = {
+                        // Clear previous validation error
+                        validationError = null
+                        
                         if (selectedMaterialId.isNotEmpty() && selectedMaterialType.isNotEmpty() && rateInput.isNotEmpty()) {
                             val rate = rateInput.toDoubleOrNull()
-                            if (rate != null) {
+                            // Validate rate: must be positive and finite
+                            if (rate != null && rate > 0 && rate.isFinite()) {
                                 val materialName = materials.find { it.id == selectedMaterialId }?.name ?: ""
+                                scope.launch {
+                                    try {
                                 metalRateViewModel.updateMetalRateWithHistory(
                                     selectedMaterialId,
                                     materialName,
@@ -239,12 +269,20 @@ fun GoldRateScreen(
                                     rate
                                 )
 
-                                // Clear form
+                                        // Clear form only on success
                                 selectedMaterialId = ""
                                 selectedMaterialType = ""
                                 rateInput = ""
                                 materialDisplayValue = ""
                                 materialTypeDisplayValue = ""
+                                    } catch (e: Exception) {
+                                        // Error is handled by ViewModel and displayed via error state
+                                        println("❌ Error updating metal rate: ${e.message}")
+                                    }
+                                }
+                            } else {
+                                // Show validation error
+                                validationError = "Please enter a valid positive rate (greater than 0)"
                             }
                         }
                     },

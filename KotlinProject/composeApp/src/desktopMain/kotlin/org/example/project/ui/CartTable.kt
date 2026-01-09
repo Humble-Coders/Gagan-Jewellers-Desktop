@@ -82,7 +82,8 @@ fun CartTable(
     }
     
     val metalRates by MetalRatesManager.metalRates
-    var selectedItemIndex by remember { mutableStateOf<Int?>(null) }
+    // Use productId instead of index for safer selection tracking
+    var selectedItemId by remember { mutableStateOf<String?>(null) }
     var editingField by remember { mutableStateOf<String?>(null) }
     var fieldValues by remember { mutableStateOf<Map<String, TextFieldValue>>(emptyMap()) }
     var fetchedProduct by remember { mutableStateOf<Product?>(null) }
@@ -99,6 +100,29 @@ fun CartTable(
     
     // Track save changes function from DetailPanel
     var saveChangesFunction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    
+    // Safe item access helper - find selected item by productId
+    val selectedItem = selectedItemId?.let { productId ->
+        cartItems.find { it.productId == productId }
+    }
+    
+    // Safe index access helper (for callbacks that need index)
+    val selectedItemIndex = selectedItemId?.let { productId ->
+        cartItems.indexOfFirst { it.productId == productId }
+            .takeIf { it >= 0 && it < cartItems.size }
+    }
+    
+    // Reset selection if selected item is removed from cart
+    LaunchedEffect(cartItems.size, selectedItemId) {
+        selectedItemId?.let { productId ->
+            val itemExists = cartItems.any { it.productId == productId }
+            if (!itemExists) {
+                selectedItemId = null
+                fetchedProduct = null
+                isLoadingProduct = false
+            }
+        }
+    }
 
     fun onEditingFieldChange(newField: String?) {
         println("🔄 EDITING FIELD CHANGE: $editingField -> $newField")
@@ -123,8 +147,8 @@ fun CartTable(
     }
 
     fun onItemSelected(index: Int) {
-        selectedItemIndex = index
-        val cartItem = cartItems[index]
+        val cartItem = cartItems.getOrNull(index) ?: return
+        selectedItemId = cartItem.productId
         isLoadingProduct = true
         fetchedProduct = null
 
@@ -180,10 +204,10 @@ fun CartTable(
                 // Left Side: Compact List
                 CartItemsList(
                     cartItems = cartItems,
-                    selectedIndex = selectedItemIndex,
+                    selectedItemId = selectedItemId,
                     onItemSelected = ::onItemSelected,
                     onItemRemove = { index ->
-                        val item = cartItems[index]
+                        val item = cartItems.getOrNull(index) ?: return@CartItemsList
                         // Check if item has multiple selected barcodes
                         if (item.selectedBarcodeIds.size > 1) {
                             // Show barcode selection dialog for removal
@@ -193,8 +217,9 @@ fun CartTable(
                             // Single barcode or empty - remove directly
                             saveAndCloseEditing()
                             onItemRemove(index)
-                            if (selectedItemIndex == index) {
-                                selectedItemIndex = null
+                            // Clear selection if removing the selected item
+                            if (selectedItemId == item.productId) {
+                                selectedItemId = null
                             }
                         }
                     },
@@ -216,10 +241,17 @@ fun CartTable(
                 )
 
                 // Right Side: Detail Panel
-                if (selectedItemIndex != null && selectedItemIndex!! < cartItems.size) {
+                // Use safe item access instead of multiple !! calls
+                selectedItem?.let { item ->
+                    val itemIndex = cartItems.indexOfFirst { it.productId == item.productId }
+                        .takeIf { it >= 0 && it < cartItems.size } ?: return@let
+                    
+                    // Safe image access with fallback (can be null, DetailPanel handles it)
+                    val image = cartImages[item.productId]
+                    
                     DetailPanel(
-                        item = cartItems[selectedItemIndex!!],
-                        index = selectedItemIndex!!,
+                        item = item,
+                        index = itemIndex,
                         metalRates = metalRates,
                         productsViewModel = productsViewModel,
                         fetchedProduct = fetchedProduct,
@@ -233,15 +265,15 @@ fun CartTable(
                         onSaveAndCloseEditing = ::saveAndCloseEditing,
                         onItemUpdate = onItemUpdate,
                         onClose = {
-                            selectedItemIndex = null
+                            selectedItemId = null
                             fetchedProduct = null
                             isLoadingProduct = false
                         },
-                        cartImage = cartImages[cartItems[selectedItemIndex!!].productId],
+                        cartImage = image, // Safe - can be null, DetailPanel should handle it
                         onUnsavedChangesStateChange = { hasChanges, previewMakingPercent, previewLabourRate ->
                             // Store unsaved changes state for preview in shopping cart
                             unsavedChangesState = if (hasChanges) {
-                                Triple(selectedItemIndex!!, previewMakingPercent, previewLabourRate)
+                                Triple(itemIndex, previewMakingPercent, previewLabourRate)
                             } else {
                                 null
                             }
@@ -253,7 +285,7 @@ fun CartTable(
                             .weight(0.4f)
                             .fillMaxHeight()
                     )
-                } else {
+                } ?: run {
                     NoSelectionPlaceholder(
                         modifier = Modifier
                             .weight(0.4f)
@@ -279,13 +311,17 @@ fun CartTable(
                         selectedCartItem = null
                     },
                     onConfirm = { remainingBarcodes ->
-                        val index = cartItems.indexOf(cartItem)
+                        val index = cartItems.indexOfFirst { it.productId == cartItem.productId }
+                            .takeIf { it >= 0 && it < cartItems.size }
+                        
+                        if (index != null) {
                         if (remainingBarcodes.isEmpty()) {
                             // Remove entire item if no barcodes selected
                             saveAndCloseEditing()
                             onItemRemove(index)
-                            if (selectedItemIndex == index) {
-                                selectedItemIndex = null
+                                // Clear selection if removing the selected item
+                                if (selectedItemId == cartItem.productId) {
+                                    selectedItemId = null
                             }
                         } else {
                             // Update item with remaining barcodes
@@ -295,6 +331,8 @@ fun CartTable(
                             )
                             onItemUpdate(index, updatedItem)
                         }
+                        }
+                        // Always close dialog regardless of index validity
                         showBarcodeDialog = false
                         selectedCartItem = null
                     }
@@ -452,7 +490,7 @@ private fun BarcodeRemovalDialog(
 @Composable
 private fun CartItemsList(
     cartItems: List<CartItem>,
-    selectedIndex: Int?,
+    selectedItemId: String?,
     onItemSelected: (Int) -> Unit,
     onItemRemove: (Int) -> Unit,
     cartImages: Map<String, androidx.compose.ui.graphics.ImageBitmap>,
@@ -507,8 +545,13 @@ private fun CartItemsList(
         ) {
             itemsIndexed(cartItems) { index, item ->
                 // Check if this item has unsaved changes for preview
-                val previewValues = if (unsavedChangesState != null && unsavedChangesState.first == index) {
-                    Triple(unsavedChangesState.second, unsavedChangesState.third, true)
+                val previewValues = if (unsavedChangesState != null) {
+                    val unsavedItemId = cartItems.getOrNull(unsavedChangesState.first)?.productId
+                    if (unsavedItemId == item.productId) {
+                        Triple(unsavedChangesState.second, unsavedChangesState.third, true)
+                    } else {
+                        Triple(null, null, false)
+                    }
                 } else {
                     Triple(null, null, false)
                 }
@@ -516,12 +559,12 @@ private fun CartItemsList(
                 CompactCartItem(
                     item = item,
                     index = index,
-                    isSelected = selectedIndex == index,
+                    isSelected = selectedItemId == item.productId,
                     onClick = { onItemSelected(index) },
                     onRemove = { onItemRemove(index) },
-                    cartImage = cartImages[item.productId],
+                    cartImage = cartImages[item.productId], // Safe - can be null, CompactCartItem handles it
                     metalRates = metalRates,
-                    fetchedProduct = if (selectedIndex == index) fetchedProduct else null,
+                    fetchedProduct = if (selectedItemId == item.productId) fetchedProduct else null,
                     previewMakingPercent = previewValues.first,
                     previewLabourRate = previewValues.second,
                     hasUnsavedChanges = previewValues.third
@@ -1862,9 +1905,9 @@ private fun getCurrentFieldValue(fieldKey: String, cartItems: List<CartItem>, cu
     val parts = fieldKey.split("_")
     if (parts.size < 2) return ""
     val index = parts[1].toIntOrNull() ?: return ""
-    if (index >= cartItems.size) return ""
 
-    val item = cartItems[index]
+    // Use getOrNull for safer array access
+    val item = cartItems.getOrNull(index) ?: return ""
     val fieldName = parts[0]
     val product = currentProduct ?: item.product
 
@@ -1910,9 +1953,9 @@ private fun saveFieldValue(
     if (parts.size < 2) return
 
     val index = parts[1].toIntOrNull() ?: return
-    if (index >= cartItems.size) return
 
-    val item = cartItems[index]
+    // Use getOrNull for safer array access
+    val item = cartItems.getOrNull(index) ?: return
     val fieldName = parts[0]
 
     try {

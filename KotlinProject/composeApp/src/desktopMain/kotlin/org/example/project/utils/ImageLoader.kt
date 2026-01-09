@@ -21,8 +21,4 @@ class ImageLoader(private val repository: ProductRepository) {
         }
         return imageData
     }
-
-    fun clearCache() {
-        cache.clear()
-    }
 }

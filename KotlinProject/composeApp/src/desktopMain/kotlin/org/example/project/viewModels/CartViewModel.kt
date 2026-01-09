@@ -13,7 +13,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.example.project.data.Cart
 import org.example.project.data.CartItem
-import org.example.project.data.CartRepository
 import org.example.project.data.MetalRatesManager
 import org.example.project.data.Product
 import org.example.project.data.ProductRepository
@@ -25,7 +24,6 @@ import java.util.concurrent.ConcurrentHashMap
 
 class CartViewModel(
     private val productRepository: ProductRepository,
-    private val cartRepository: CartRepository,
     private val imageLoader: ImageLoader
 ) {
     private val viewModelScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -207,12 +205,6 @@ class CartViewModel(
     }
 
 
-    // Weight is now fixed from Firestore, remove this method or make it no-op
-    fun updateWeight(productId: String, newWeight: Double) {
-        // Weight is fixed from Firestore, no update needed
-        // This method is kept for compatibility but does nothing
-        println("Weight update ignored - using fixed Firestore weight")
-    }
 
 
 
@@ -500,54 +492,6 @@ class CartViewModel(
         return gstOnBase + gstOnMaking
     }
 
-    // Calculate individual item subtotal using jewelry calculation logic
-    private fun calculateItemSubtotal(cartItem: CartItem, metalRates: org.example.project.data.MetalRates): Double {
-        val netWeight = if (cartItem.netWeight > 0) cartItem.netWeight else cartItem.selectedWeight
-        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else cartItem.selectedWeight
-        val lessWeight = cartItem.lessWeight
-        val actualNetWeight = if (netWeight > 0) netWeight else (grossWeight - lessWeight)
-
-        // Step 1: Base Gold/Silver Value
-        val goldRate = metalRates.getGoldRateForKarat(extractKaratFromMaterialType(cartItem.product.materialType))
-        val silverRate = metalRates.getSilverRateForPurity(999)
-        val baseAmount = when {
-            cartItem.product.materialType.contains("gold", ignoreCase = true) -> actualNetWeight * goldRate
-            cartItem.product.materialType.contains("silver", ignoreCase = true) -> actualNetWeight * silverRate
-            else -> actualNetWeight * goldRate
-        }
-
-        // Step 2: Making Charges (fallback to product default making rate)
-        val makingChargesPerGram = if (cartItem.makingCharges > 0) cartItem.makingCharges else 0.0 // defaultMakingRate removed from Product
-        val makingCharges = makingChargesPerGram * actualNetWeight
-
-        // Step 3: Value Addition
-        val valueAddition = if (cartItem.va > 0) cartItem.va else 0.0
-
-        // Step 4: Total Charges (Before Discount & Tax)
-        val totalCharges = baseAmount + makingCharges + valueAddition
-
-        // Step 5: Discount Application
-        val discountAmount = totalCharges * (cartItem.discountPercent / 100)
-        val amountAfterDiscount = totalCharges - discountAmount
-
-        // Step 6: GST Calculation (3% total: 1.5% CGST + 1.5% SGST)
-        val gst = amountAfterDiscount * 0.03
-
-        // Final Amount (After Discount + GST)
-        return amountAfterDiscount + gst
-    }
-
-    // Legacy method with custom GST rate (deprecated)
-    @Deprecated("Use getGST() instead - GST is now fixed at 3% for jewelry")
-    fun getGST(gstRate: Double): Double {
-        return getSubtotal() * (gstRate / 100)
-    }
-
-    // Legacy method with custom GST rate (deprecated)
-    @Deprecated("Use getFinalTotal() instead - GST is now fixed at 3% for jewelry")
-    fun getFinalTotal(gstRate: Double): Double {
-        return getSubtotal() + getGST(gstRate)
-    }
 
     private fun loadProductImage(product: Product) {
         if (product.images.isEmpty() || imageCache.containsKey(product.id)) return

@@ -5,7 +5,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 interface InventoryRepository {
-    suspend fun getAllInventoryItems(): List<InventoryItem>
     suspend fun getInventoryItemById(id: String): InventoryItem?
     suspend fun getInventoryItemByBarcodeId(barcodeId: String): InventoryItem?
     suspend fun getInventoryItemsByProductId(productId: String): List<InventoryItem>
@@ -13,35 +12,11 @@ interface InventoryRepository {
     suspend fun addInventoryItem(inventoryItem: InventoryItem): String
     suspend fun updateInventoryItem(inventoryItem: InventoryItem): Boolean
     suspend fun deleteInventoryItem(id: String): Boolean
-    suspend fun markAsSold(inventoryItemId: String, customerId: String): Boolean
-    suspend fun markAsAvailable(inventoryItemId: String): Boolean
     suspend fun generateUniqueBarcodes(quantity: Int, digits: Int): List<String>
     fun generateBarcode(digits: Int): String
 }
 
 class FirestoreInventoryRepository(private val firestore: Firestore) : InventoryRepository {
-
-    override suspend fun getAllInventoryItems(): List<InventoryItem> = withContext(Dispatchers.IO) {
-        try {
-            val inventoryCollection = firestore.collection("inventory")
-            val future = inventoryCollection.get()
-            val snapshot = future.get()
-            
-            snapshot.documents.map { doc ->
-                val data = doc.data
-                InventoryItem(
-                    id = doc.id,
-                    productId = data["product_id"] as? String ?: "",
-                    barcodeId = data["barcode_id"] as? String ?: "",
-                    createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-                )
-            }
-        } catch (e: Exception) {
-            println("Error fetching inventory items: ${e.message}")
-            emptyList()
-        }
-    }
 
     override suspend fun getInventoryItemById(id: String): InventoryItem? = withContext(Dispatchers.IO) {
         try {
@@ -71,6 +46,7 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
             println("   - Barcode ID: $barcodeId")
             
             val inventoryCollection = firestore.collection("inventory")
+            // Note: Ensure Firestore index exists for barcode_id field for optimal query performance
             val query = inventoryCollection.whereEqualTo("barcode_id", barcodeId)
             val future = query.get()
             val snapshot = future.get()
@@ -213,36 +189,6 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
         }
     }
 
-    override suspend fun markAsSold(inventoryItemId: String, customerId: String): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Since status field is removed, just update the timestamp
-            val docRef = firestore.collection("inventory").document(inventoryItemId)
-            val updateMap = mapOf(
-                "updated_at" to System.currentTimeMillis()
-            )
-            docRef.update(updateMap).get()
-            true
-        } catch (e: Exception) {
-            println("Error marking inventory item as sold: ${e.message}")
-            false
-        }
-    }
-
-    override suspend fun markAsAvailable(inventoryItemId: String): Boolean = withContext(Dispatchers.IO) {
-        try {
-            // Since status field is removed, just update the timestamp
-            val docRef = firestore.collection("inventory").document(inventoryItemId)
-            val updateMap = mapOf(
-                "updated_at" to System.currentTimeMillis()
-            )
-            docRef.update(updateMap).get()
-            true
-        } catch (e: Exception) {
-            println("Error marking inventory item as available: ${e.message}")
-            false
-        }
-    }
-
     private fun generateRandomBarcode(digits: Int): String {
         val sb = StringBuilder(digits)
         repeat(digits) {
@@ -256,21 +202,33 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
         return generateRandomBarcode(digits)
     }
 
-    private fun isBarcodeUnique(barcode: String): Boolean {
+    private suspend fun isBarcodeUnique(barcode: String): Boolean = withContext(Dispatchers.IO) {
         val inventoryCollection = firestore.collection("inventory")
         val query = inventoryCollection.whereEqualTo("barcode_id", barcode)
+        // Note: Ensure Firestore index exists for barcode_id field for optimal performance
         val snapshot = query.get().get()
-        return snapshot.isEmpty
+        snapshot.isEmpty
     }
 
     override suspend fun generateUniqueBarcodes(quantity: Int, digits: Int): List<String> = withContext(Dispatchers.IO) {
         val result = mutableSetOf<String>()
-        while (result.size < quantity) {
+        val maxIterations = quantity * 100 // Prevent infinite loop: try up to 100x the quantity
+        var iterations = 0
+        
+        while (result.size < quantity && iterations < maxIterations) {
+            iterations++
             val code = generateRandomBarcode(digits)
             if (isBarcodeUnique(code)) {
                 result.add(code)
             }
         }
+        
+        if (result.size < quantity) {
+            println("⚠️ WARNING: Could not generate $quantity unique barcodes after $iterations attempts")
+            println("   - Generated: ${result.size} unique barcodes")
+            println("   - This may indicate that most barcodes with $digits digits are already taken")
+        }
+        
         result.toList()
     }
 }

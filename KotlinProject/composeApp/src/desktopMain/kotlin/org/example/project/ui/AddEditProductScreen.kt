@@ -707,46 +707,56 @@ fun AddEditProductScreen(
                     )
 
                     // Category field
-                    AutoCompleteTextField(
-                        value = categoryDisplayValue,
-                        onValueChange = { query ->
-                            categoryDisplayValue = query
-                            // Find matching category
-                            val matchedCategory = categories.find { 
-                                it.name.equals(query, ignoreCase = true) 
-                            }
-                            if (matchedCategory != null) {
-                                categoryId = matchedCategory.id
-                                categoryError = false
-                            } else {
-                                // If no match, keep the display value but don't update categoryId
-                                // This allows users to type new category names
-                            }
-                        },
-                        onItemSelected = { selectedCategoryName ->
-                            categoryDisplayValue = selectedCategoryName
-                            val selectedCategory = categories.find { 
-                                it.name.equals(selectedCategoryName, ignoreCase = true) 
-                            }
-                            selectedCategory?.let {
-                                categoryId = it.id
-                                categoryError = false
-                            }
-                        },
-                        onAddNew = { newCategoryName ->
-                            categoryDisplayValue = newCategoryName
-                            // You could add logic here to create a new category
-                            println("New category name entered: $newCategoryName")
-                        },
-                        suggestions = categorySuggestions,
-                        label = "Category",
-                        placeholder = "Select or enter category...",
-                        singleLine = true,
-                        maxSuggestions = 10,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(enterMovesFocusModifier)
-                    )
+                    Column {
+                        AutoCompleteTextField(
+                            value = categoryDisplayValue,
+                            onValueChange = { query ->
+                                categoryDisplayValue = query
+                                // Find matching category
+                                val matchedCategory = categories.find { 
+                                    it.name.equals(query, ignoreCase = true) 
+                                }
+                                if (matchedCategory != null) {
+                                    categoryId = matchedCategory.id
+                                    categoryError = false
+                                } else {
+                                    // If no match, keep the display value but don't update categoryId
+                                    // This allows users to type new category names
+                                }
+                            },
+                            onItemSelected = { selectedCategoryName ->
+                                categoryDisplayValue = selectedCategoryName
+                                val selectedCategory = categories.find { 
+                                    it.name.equals(selectedCategoryName, ignoreCase = true) 
+                                }
+                                selectedCategory?.let {
+                                    categoryId = it.id
+                                    categoryError = false
+                                }
+                            },
+                            onAddNew = { newCategoryName ->
+                                categoryDisplayValue = newCategoryName
+                                // You could add logic here to create a new category
+                                println("New category name entered: $newCategoryName")
+                            },
+                            suggestions = categorySuggestions,
+                            label = "Category",
+                            placeholder = "Select or enter category...",
+                            singleLine = true,
+                            maxSuggestions = 10,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(enterMovesFocusModifier)
+                        )
+                        if (categoryError) {
+                            Text(
+                                "Category is required",
+                                color = MaterialTheme.colors.error,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(start = 16.dp, top = 4.dp)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1190,8 +1200,8 @@ fun AddEditProductScreen(
 
                         // Validate required fields
                         nameError = name.trim().isEmpty()
-                        // Category is no longer required (removed from UI)
-                        categoryError = false
+                        // Category is required - validate that categoryId is not empty
+                        categoryError = categoryId.isEmpty()
                         // Material validation: check if materialId is not empty
                         materialError = materialId.isEmpty()
 

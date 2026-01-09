@@ -7,9 +7,7 @@ import com.google.cloud.storage.StorageOptions
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.cloud.FirestoreClient
-import org.example.project.data.CartRepository
 import org.example.project.data.CustomerRepository
-import org.example.project.data.FirestoreCartRepository
 import org.example.project.data.FirestoreCustomerRepository
 import org.example.project.data.FirestorePaymentRepository
 import org.example.project.data.FirestoreProductRepository
@@ -63,7 +61,6 @@ object JewelryAppInitializer {
     private var imageLoader: ImageLoader? = null
     private var customerRepository: CustomerRepository? = null
     private var customerViewModel: CustomerViewModel? = null
-    private var cartRepository: CartRepository? = null
     private var cartViewModel: CartViewModel? = null
     private var paymentRepository: PaymentRepository? = null
     private var paymentViewModel: PaymentViewModel? = null
@@ -132,8 +129,7 @@ object JewelryAppInitializer {
             imageLoader = ImageLoader(repository!!)
             customerRepository = FirestoreCustomerRepository(firestore)
             customerViewModel = CustomerViewModel(customerRepository!!)
-            cartRepository = FirestoreCartRepository(firestore)
-            cartViewModel = CartViewModel(repository!!, cartRepository!!, imageLoader!!)
+            cartViewModel = CartViewModel(repository!!, imageLoader!!)
             paymentRepository = FirestorePaymentRepository(firestore)
             orderRepository = FirestoreOrderRepository(firestore)
             paymentViewModel = PaymentViewModel(paymentRepository!!, orderRepository!!)

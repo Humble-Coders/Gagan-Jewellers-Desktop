@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -170,13 +171,14 @@ fun DashboardScreen(
     startInProductsView: Boolean = false,
     initialSelectedCategoryId: String? = null
 ) {
-    val products by remember { viewModel.products }
-    val categories by remember { viewModel.categories }
-    val materials by remember { viewModel.materials }
-    val loading by remember { viewModel.loading }
-    val inventoryLoading by remember { viewModel.inventoryLoading }
-    val inventoryRefreshTrigger by remember { viewModel.inventoryRefreshTrigger }
-    val inventoryData by remember { viewModel.inventoryData }
+    val products by viewModel.products
+    val categories by viewModel.categories
+    val materials by viewModel.materials
+    val loading by viewModel.loading
+    val inventoryLoading by viewModel.inventoryLoading
+    val inventoryRefreshTrigger by viewModel.inventoryRefreshTrigger
+    val inventoryData by viewModel.inventoryData
+    val error by viewModel.error
 
     // State for view mode: true = category view, false = products view
     var showCategoryView by remember(startInProductsView) { mutableStateOf(!startInProductsView) }
@@ -188,30 +190,37 @@ fun DashboardScreen(
     // Search state for products
     var productSearchQuery by remember { mutableStateOf("") }
 
-    // Use LaunchedEffect to load products and inventory asynchronously
-    LaunchedEffect(Unit) {
-        if (products.isEmpty()) {
-            viewModel.loadProducts()
-        } else if (!inventoryLoading && inventoryData.isEmpty()) {
-            // If products are loaded but inventory data is not, trigger inventory loading
-            viewModel.loadInventoryData()
-        }
-    }
-    
-    // Also trigger inventory loading when products change (in case products were loaded elsewhere)
-    LaunchedEffect(products) {
-        if (products.isNotEmpty() && !inventoryLoading && inventoryData.isEmpty()) {
-            viewModel.loadInventoryData()
-        }
-    }
-
     // Ensure rates are loaded when dashboard loads and observe rate changes
     val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
     val metalRatesList by ratesVM.metalRates.collectAsState()
     val metalRates by MetalRatesManager.metalRates
 
+    // Consolidated LaunchedEffect for initial data loading
     LaunchedEffect(Unit) {
+        // Load products if empty
+        if (products.isEmpty()) {
+            viewModel.loadProducts()
+        }
+        
+        // Load rates (independent operation)
         ratesVM.loadMetalRates()
+    }
+
+    // Single LaunchedEffect for inventory loading (depends on products)
+    LaunchedEffect(products.size, inventoryRefreshTrigger) {
+        // Only load inventory if:
+        // 1. Products are loaded
+        // 2. Not already loading
+        // 3. Inventory data is empty OR products have changed (stale check)
+        if (products.isNotEmpty() && !inventoryLoading) {
+            val productIds = products.map { it.id }.toSet()
+            val inventoryProductIds = inventoryData.keys.toSet()
+            
+            // Reload if products changed or inventory is empty
+            if (inventoryData.isEmpty() || productIds != inventoryProductIds) {
+            viewModel.loadInventoryData()
+        }
+    }
     }
 
     // Load all product images upfront in bulk (like CartBuildingStep)
@@ -341,6 +350,39 @@ fun DashboardScreen(
     val groupedProductToDelete = remember { mutableStateOf<GroupedProduct?>(null) }
     val showDuplicateDialog = remember { mutableStateOf(false) }
     val productToDuplicate = remember { mutableStateOf<String?>(null) }
+
+    // Error display UI
+    error?.let { errorMessage ->
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            backgroundColor = MaterialTheme.colors.error.copy(alpha = 0.1f),
+            elevation = 2.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = errorMessage,
+                    color = MaterialTheme.colors.error,
+                    fontSize = 14.sp,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { viewModel.clearError() }) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = MaterialTheme.colors.error
+                    )
+                }
+            }
+        }
+    }
 
     // Loading state - only show loading while products are loading (not inventory)
     // Inventory loading happens in background and products can still be displayed

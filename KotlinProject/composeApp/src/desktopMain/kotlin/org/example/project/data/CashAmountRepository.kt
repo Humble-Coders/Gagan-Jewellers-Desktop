@@ -1,6 +1,8 @@
 package org.example.project.data
 
+import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.Transaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -65,11 +67,33 @@ class FirestoreCashAmountRepository(private val firestore: Firestore) : CashAmou
                 "createdBy" to cashAmount.createdBy
             )
 
-            // Use the generated ID as the document ID
-            firestore.collection("cashAmount").document(cashAmountId).set(cashAmountData).get()
-
-            // Update customer balance
-            updateCustomerBalance(cashAmount.customerId, cashAmount.amount, cashAmount.transactionType)
+            // Use Firebase transaction to atomically create cash transaction and update customer balance
+            val cashAmountRef = firestore.collection("cashAmount").document(cashAmountId)
+            val customerRef = firestore.collection("users").document(cashAmount.customerId)
+            
+            firestore.runTransaction { transaction: Transaction ->
+                // Read customer balance
+                val customerDoc = transaction.getDocument(customerRef)
+                if (!customerDoc.exists()) {
+                    throw Exception("Customer not found: ${cashAmount.customerId}")
+                }
+                
+                val currentBalance = (customerDoc.getDouble("balance") ?: 0.0)
+                val balanceChange = when (cashAmount.transactionType) {
+                    CashTransactionType.GIVE -> cashAmount.amount      // Give cash = increase balance
+                    CashTransactionType.RECEIVE -> -cashAmount.amount  // Receive cash = decrease balance
+                }
+                val newBalance = currentBalance + balanceChange
+                
+                // Create cash transaction document
+                transaction.set(cashAmountRef, cashAmountData)
+                
+                // Update customer balance
+                transaction.update(customerRef, "balance", newBalance, "updatedAt", currentTime)
+                
+                println("Updated customer ${cashAmount.customerId} balance: $currentBalance -> $newBalance (${cashAmount.transactionType.name} ${cashAmount.amount})")
+                Unit // Return Unit for transaction function
+            }.get()
 
             cashAmountId
         } catch (e: Exception) {
@@ -205,24 +229,27 @@ class FirestoreCashAmountRepository(private val firestore: Firestore) : CashAmou
 
     override suspend fun updateCustomerBalance(customerId: String, amount: Double, transactionType: CashTransactionType): Boolean = withContext(Dispatchers.IO) {
         try {
-            val userDoc = firestore.collection("users").document(customerId).get().get()
-            if (!userDoc.exists()) {
-                println("Customer not found: $customerId")
-                return@withContext false
-            }
+            val customerRef = firestore.collection("users").document(customerId)
+            
+            firestore.runTransaction { transaction: Transaction ->
+                val customerDoc = transaction.getDocument(customerRef)
+                if (!customerDoc.exists()) {
+                    throw Exception("Customer not found: $customerId")
+                }
 
-            val currentBalance = (userDoc.getDouble("balance") ?: 0.0)
-            val balanceChange = when (transactionType) {
-                CashTransactionType.GIVE -> amount      // Give cash = increase balance
-                CashTransactionType.RECEIVE -> -amount  // Receive cash = decrease balance
-            }
-            val newBalance = currentBalance + balanceChange
+                val currentBalance = (customerDoc.getDouble("balance") ?: 0.0)
+                val balanceChange = when (transactionType) {
+                    CashTransactionType.GIVE -> amount      // Give cash = increase balance
+                    CashTransactionType.RECEIVE -> -amount  // Receive cash = decrease balance
+                }
+                val newBalance = currentBalance + balanceChange
 
-            firestore.collection("users").document(customerId)
-                .update("balance", newBalance, "updatedAt", System.currentTimeMillis())
-                .get()
+                transaction.update(customerRef, "balance", newBalance, "updatedAt", System.currentTimeMillis())
+                
+                println("Updated customer $customerId balance: $currentBalance -> $newBalance (${transactionType.name} $amount)")
+                Unit // Return Unit for transaction function
+            }.get()
 
-            println("Updated customer $customerId balance: $currentBalance -> $newBalance (${transactionType.name} $amount)")
             true
         } catch (e: Exception) {
             println("Error updating customer balance: ${e.message}")

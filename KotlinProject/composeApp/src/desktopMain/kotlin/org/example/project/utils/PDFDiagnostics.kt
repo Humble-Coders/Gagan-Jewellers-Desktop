@@ -6,6 +6,8 @@ import org.example.project.data.User
 import org.example.project.data.CartItem
 import org.example.project.data.Product
 import org.example.project.data.PaymentMethod
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -68,7 +70,7 @@ object PDFDiagnostics {
     }
     
     /**
-     * Tests all PDF generation methods with a test order
+     * Tests PDF generation using PdfGeneratorService (the production PDF generator)
      */
     fun testAllPDFGenerationMethods(): Boolean {
         println("🧪 ========== PDF GENERATION TESTING ==========")
@@ -85,53 +87,40 @@ object PDFDiagnostics {
         
         var allTestsPassed = true
         
-        // Test 1: HTML/CSS Generation
-        println("🧪 Testing HTML/CSS generation...")
+        // Test: PdfGeneratorService (production PDF generator)
+        println("🧪 Testing PdfGeneratorService (production PDF generator)...")
         try {
-            val htmlPath = Paths.get(testDir.absolutePath, "test_invoice.html")
-            val htmlGenerator = HtmlCssBillGenerator()
-            val htmlSuccess = htmlGenerator.generateHtmlBill(testOrder, testCustomer, htmlPath)
+            val pdfPath = File(testDir, "test_invoice_pdfgenerator.pdf")
+            val pdfGenerator = PdfGeneratorService()
             
-            if (htmlSuccess) {
-                println("✅ HTML/CSS generation test passed")
+            // Run in blocking context since this is a diagnostic function
+            val result = runBlocking(Dispatchers.IO) {
+                pdfGenerator.generateInvoicePDF(
+                    order = testOrder,
+                    customer = testCustomer,
+                    outputFile = pdfPath
+                )
+            }
+            
+            result.fold(
+                onSuccess = { file ->
+                    if (file.exists() && file.length() > 0) {
+                        println("✅ PdfGeneratorService test passed")
+                        println("   Generated PDF: ${file.absolutePath} (${file.length()} bytes)")
             } else {
-                println("❌ HTML/CSS generation test failed")
+                        println("❌ PdfGeneratorService test failed: PDF file is empty or doesn't exist")
                 allTestsPassed = false
             }
-        } catch (e: Exception) {
-            println("❌ HTML/CSS generation test exception: ${e.message}")
+                },
+                onFailure = { error ->
+                    println("❌ PdfGeneratorService test failed: ${error.message}")
+                    error.printStackTrace()
             allTestsPassed = false
         }
-        
-        // Test 2: HTML to PDF Conversion
-        println("🧪 Testing HTML to PDF conversion...")
-        try {
-            val pdfPath = Paths.get(testDir.absolutePath, "test_invoice.pdf")
-            val htmlToPdfGenerator = HtmlToPdfBillGenerator()
-            val pdfSuccess = htmlToPdfGenerator.generatePdfBill(testOrder, testCustomer, pdfPath)
-            
-            if (pdfSuccess) {
-                println("✅ HTML to PDF conversion test passed")
-            } else {
-                println("❌ HTML to PDF conversion test failed")
-                allTestsPassed = false
-            }
+            )
         } catch (e: Exception) {
-            println("❌ HTML to PDF conversion test exception: ${e.message}")
-            allTestsPassed = false
-        }
-        
-        // Test 3: Direct PDFBox Generation
-        println("🧪 Testing direct PDFBox generation...")
-        try {
-            val pdfBoxPath = Paths.get(testDir.absolutePath, "test_invoice_pdfbox.pdf")
-            val pdfBoxGenerator = BillPDFGenerator()
-            
-            // Note: This would need to be run in a coroutine context
-            // For now, just test if the class can be instantiated
-            println("✅ PDFBox generator can be instantiated")
-        } catch (e: Exception) {
-            println("❌ PDFBox generation test exception: ${e.message}")
+            println("❌ PdfGeneratorService test exception: ${e.message}")
+            e.printStackTrace()
             allTestsPassed = false
         }
         
@@ -149,30 +138,30 @@ object PDFDiagnostics {
         
         var allDependenciesOk = true
         
-        // Check PDFBox
+        // Check OpenHTMLToPDF (primary PDF engine)
+        try {
+            Class.forName("com.openhtmltopdf.pdfboxout.PdfRendererBuilder")
+            println("✅ OpenHTMLToPDF available")
+        } catch (e: ClassNotFoundException) {
+            println("❌ OpenHTMLToPDF not available")
+            allDependenciesOk = false
+        }
+        
+        // Check Flying Saucer (fallback PDF engine)
+        try {
+            Class.forName("org.xhtmlrenderer.pdf.ITextRenderer")
+            println("✅ Flying Saucer available (fallback)")
+        } catch (e: ClassNotFoundException) {
+            println("⚠️ Flying Saucer not available (fallback engine)")
+            // Not critical since OpenHTMLToPDF is primary
+        }
+        
+        // Check PDFBox (used by OpenHTMLToPDF)
         try {
             Class.forName("org.apache.pdfbox.pdmodel.PDDocument")
             println("✅ PDFBox available")
         } catch (e: ClassNotFoundException) {
-            println("❌ PDFBox not available")
-            allDependenciesOk = false
-        }
-        
-        // Check Flying Saucer
-        try {
-            Class.forName("org.xhtmlrenderer.pdf.ITextRenderer")
-            println("✅ Flying Saucer available")
-        } catch (e: ClassNotFoundException) {
-            println("❌ Flying Saucer not available")
-            allDependenciesOk = false
-        }
-        
-        // Check iText (if used)
-        try {
-            Class.forName("com.itextpdf.kernel.pdf.PdfDocument")
-            println("✅ iText available")
-        } catch (e: ClassNotFoundException) {
-            println("⚠️ iText not available (optional)")
+            println("⚠️ PDFBox not available (may be required by OpenHTMLToPDF)")
         }
         
         println("🔍 ========== DEPENDENCY CHECK COMPLETED ==========")

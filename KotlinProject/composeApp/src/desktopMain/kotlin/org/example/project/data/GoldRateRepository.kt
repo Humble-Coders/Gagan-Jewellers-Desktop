@@ -7,7 +7,6 @@ import kotlinx.coroutines.withContext
 interface GoldRateRepository {
     suspend fun getCurrentGoldRates(): GoldRates
     suspend fun updateGoldRates(goldRates: GoldRates): Boolean
-    suspend fun getGoldRateForKarat(karat: Int): Double
 }
 
 class FirestoreGoldRateRepository(private val firestore: Firestore) : GoldRateRepository {
@@ -58,16 +57,4 @@ class FirestoreGoldRateRepository(private val firestore: Firestore) : GoldRateRe
         }
     }
 
-    override suspend fun getGoldRateForKarat(karat: Int): Double = withContext(Dispatchers.IO) {
-        val currentRates = getCurrentGoldRates()
-        when (karat) {
-            24 -> currentRates.rate24k
-            22 -> currentRates.rate22k
-            20 -> currentRates.rate20k
-            18 -> currentRates.rate18k
-            14 -> currentRates.rate14k
-            10 -> currentRates.rate10k
-            else -> currentRates.rate22k // Default to 22k
-        }
-    }
 }

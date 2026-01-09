@@ -68,6 +68,19 @@ class PaymentViewModel(
 
     private val _pdfPath = mutableStateOf<String?>(null)
     val pdfPath: State<String?> = _pdfPath
+    
+    // Receipt UI State - centralized state management
+    data class ReceiptUiState(
+        val isLoading: Boolean = false,
+        val pdfPath: String? = null,
+        val error: String? = null
+    )
+    
+    private val _receiptUiState = mutableStateOf(ReceiptUiState())
+    val receiptUiState: State<ReceiptUiState> = _receiptUiState
+    
+    // Track which order ID is currently being processed to prevent duplicates
+    private var currentGeneratingOrderId: String? = null
 
     fun setPaymentMethod(paymentMethod: PaymentMethod) {
         // Toggle selection: if already selected, deselect it
@@ -132,46 +145,6 @@ class PaymentViewModel(
         }
     }
 
-    private suspend fun reduceStockAfterOrder(order: Order, productRepository: ProductRepository) {
-        val inventoryRepository = JewelryAppInitializer.getInventoryRepository()
-        
-        order.items.forEach { orderItem ->
-            try {
-                println("🛒 Processing order item")
-                println("   - Product ID: ${orderItem.productId}")
-                println("   - Barcode ID: ${orderItem.barcodeId}")
-                println("   - Quantity: ${orderItem.quantity}")
-                
-                // Delete the barcode document from inventory collection
-                try {
-                    println("   - Deleting barcode: ${orderItem.barcodeId}")
-                    val inventoryItem = inventoryRepository?.getInventoryItemByBarcodeId(orderItem.barcodeId)
-                    if (inventoryItem != null) {
-                        val success = inventoryRepository.deleteInventoryItem(inventoryItem.id)
-                        if (success) {
-                            println("   - ✅ Barcode ${orderItem.barcodeId} deleted successfully")
-                        } else {
-                            println("   - ❌ Failed to delete barcode ${orderItem.barcodeId}")
-                        }
-                    } else {
-                        println("   - ⚠️ Inventory item not found for barcode: ${orderItem.barcodeId}")
-                    }
-                } catch (e: Exception) {
-                    println("   - ❌ Error deleting barcode ${orderItem.barcodeId}: ${e.message}")
-                }
-                
-                println("🛒 Order Processing: Completed processing order item")
-                println("   - Deleted barcode document: ${orderItem.barcodeId}")
-                println("   - Product document remains unchanged")
-                
-            } catch (e: Exception) {
-                println("❌ Error processing order item ${orderItem.productId}: ${e.message}")
-            }
-        }
-        
-        // Trigger inventory refresh to update dashboard quantities
-        JewelryAppInitializer.getViewModel().triggerInventoryRefresh()
-    }
 
     fun setDiscountValue(value: String) {
         if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d*\$"))) {
@@ -233,6 +206,7 @@ class PaymentViewModel(
         finalTotal: Double,
         paymentSplit: PaymentSplit? = null,
         notes: String = "",
+        customer: User, // Require customer to be passed, not fetched
         onSuccess: () -> Unit
     ) {
         // Allow order processing if either a payment method is selected OR a split payment is configured
@@ -241,9 +215,24 @@ class PaymentViewModel(
             return
         }
 
+        // Validate payment split if provided
+        if (paymentSplit != null) {
+            if (paymentSplit.exceedsTotal(finalTotal)) {
+                val difference = paymentSplit.getDifference(finalTotal)
+                _errorMessage.value = "Payment breakdown exceeds total amount by ₹${String.format("%.2f", difference)}"
+                return
+            }
+            if (!paymentSplit.isValid(finalTotal)) {
+                val difference = paymentSplit.getDifference(finalTotal)
+                _errorMessage.value = "Payment amounts don't match total. Difference: ₹${String.format("%.2f", kotlin.math.abs(difference))}"
+                return
+            }
+        }
+
         viewModelScope.launch {
             _isProcessing.value = true
             _errorMessage.value = null
+            _successMessage.value = null
 
             try {
                 // Determine payment method: use selected method or default to CASH if split payment is configured
@@ -333,9 +322,7 @@ class PaymentViewModel(
                     println("   - OrderItem: productId=${orderItem.productId}, barcodeId=${orderItem.barcodeId}")
                 }
                 
-                // Get customer information
-                val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
-
+                // Customer is now passed as parameter, no need to fetch
                 // Calculate totalProductValue (sum of all product prices before discount and GST)
                 // This is the subtotal from PaymentScreen
                 val totalProductValue = subtotal
@@ -396,16 +383,39 @@ class PaymentViewModel(
                     createdAt = System.currentTimeMillis()
                 )
 
-                // Save order to database
-                val success = paymentRepository.saveOrder(order)
+                // Get inventory item IDs before transaction (needed for atomic deletion)
+                // Note: There's a potential race condition here - items may be deleted between lookup and transaction
+                // However, the transaction in PaymentRepository will validate items still exist before deletion
+                val inventoryRepository = JewelryAppInitializer.getInventoryRepository()
+                val inventoryItemIds = order.items.mapNotNull { orderItem ->
+                    try {
+                        val inventoryItem = inventoryRepository?.getInventoryItemByBarcodeId(orderItem.barcodeId)
+                        if (inventoryItem == null) {
+                            println("⚠️ Inventory item not found for barcode: ${orderItem.barcodeId}")
+                            println("   - This may indicate the item was already sold or deleted")
+                        }
+                        inventoryItem?.id
+                    } catch (e: Exception) {
+                        println("⚠️ Error finding inventory item for barcode ${orderItem.barcodeId}: ${e.message}")
+                        null
+                    }
+                }
+                
+                // Validate all inventory items were found
+                if (inventoryItemIds.size < order.items.size) {
+                    val missingCount = order.items.size - inventoryItemIds.size
+                    println("⚠️ WARNING: $missingCount inventory item(s) not found")
+                    println("   - Transaction will validate items exist before deletion")
+                    println("   - Order may fail if items were deleted by another process")
+                }
+
+                // Save order to database (includes customer balance update AND inventory deletion in transaction)
+                val success = paymentRepository.saveOrder(order, inventoryItemIds)
 
                 if (success) {
-                    // Reduce stock quantities
-                    val productRepository = JewelryAppInitializer.getViewModel().repository
-                    reduceStockAfterOrder(order, productRepository)
-
-                    // Update customer balance with due amount
-                    updateCustomerBalance(order.customerId, order.paymentSplit?.dueAmount ?: 0.0)
+                    // Note: Customer balance and inventory are now updated atomically within saveOrder transaction
+                    // Trigger inventory refresh to update dashboard quantities
+                    JewelryAppInitializer.getViewModel().triggerInventoryRefresh()
 
                     // Refresh product list to update UI
                     JewelryAppInitializer.getViewModel().loadProducts()
@@ -425,28 +435,45 @@ class PaymentViewModel(
                         status = PaymentStatus.COMPLETED
                     )
 
-                    // ✅ FIX: Generate PDF after successful order creation
-                    val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
-                    if (customer != null) {
-                        generateOrderPDF(order, customer)
-                    } else {
-                        // Create a default customer if none selected
-                        val defaultCustomer = User(
-                            id = "default",
-                            name = "Walk-in Customer",
-                            email = "",
-                            phone = "",
-                            address = ""
-                        )
-                        generateOrderPDF(order, defaultCustomer)
-                    }
+                    // PDF will be generated automatically by ReceiptScreen when it's displayed
+                    // Removed duplicate PDF generation here to prevent double generation
 
+                    _successMessage.value = "Order saved successfully"
                     onSuccess()
                 } else {
                     _errorMessage.value = "Failed to save order. Please try again."
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "Error saving order: ${e.message}"
+                // Better error handling with specific error messages
+                val errorMsg = when {
+                    e.message?.contains("Customer not found", ignoreCase = true) == true -> {
+                        "Customer not found. Please select a valid customer."
+                    }
+                    e.message?.contains("not found", ignoreCase = true) == true ||
+                    e.message?.contains("no longer available", ignoreCase = true) == true ||
+                    e.message?.contains("may have been sold", ignoreCase = true) == true -> {
+                        "One or more items are no longer available. They may have been sold to another customer. Please refresh and try again."
+                    }
+                    e.message?.contains("inventory", ignoreCase = true) == true -> {
+                        "Inventory error: ${e.message ?: "Item no longer available"}"
+                    }
+                    e.message?.contains("balance", ignoreCase = true) == true -> {
+                        "Failed to update customer balance: ${e.message ?: "Unknown error"}"
+                    }
+                    e.message?.contains("Transaction conflict", ignoreCase = true) == true ||
+                    e.message?.contains("ABORTED", ignoreCase = true) == true -> {
+                        "Transaction conflict detected. The inventory may have been modified. Please try again."
+                    }
+                    e.message?.contains("timeout", ignoreCase = true) == true ||
+                    e.message?.contains("deadline", ignoreCase = true) == true -> {
+                        "Request timeout. Please check your connection and try again."
+                    }
+                    else -> {
+                        "Error saving order: ${e.localizedMessage ?: e.message ?: "Something went wrong. Please try again."}"
+                    }
+                }
+                _errorMessage.value = errorMsg
+                println("❌ Error in saveOrderWithPaymentMethod: ${e.message}")
                 e.printStackTrace()
             } finally {
                 _isProcessing.value = false
@@ -466,6 +493,14 @@ class PaymentViewModel(
         viewModelScope.launch {
             _isGeneratingPDF.value = true
             _errorMessage.value = null
+            
+            // Also update receipt UI state if this is for receipt screen
+            if (_receiptUiState.value.isLoading) {
+                _receiptUiState.value = _receiptUiState.value.copy(
+                    isLoading = true,
+                    error = null
+                )
+            }
             
             try {
                 // 🔧 FIX: Retrieve order from Firestore to ensure we have the latest stored data
@@ -518,7 +553,17 @@ class PaymentViewModel(
                 if (pdfResult.isSuccess) {
                     val pdfFile = pdfResult.getOrThrow()
                     if (pdfFile.exists() && pdfFile.length() > 0) {
-                        _pdfPath.value = pdfFile.absolutePath
+                        val pdfFilePath = pdfFile.absolutePath
+                        _pdfPath.value = pdfFilePath
+                        
+                        // Update receipt UI state if loading
+                        if (_receiptUiState.value.isLoading) {
+                            _receiptUiState.value = _receiptUiState.value.copy(
+                                isLoading = false,
+                                pdfPath = pdfFilePath,
+                                error = null
+                            )
+                        }
                         
                         // Small delay to ensure file is fully written
                         kotlinx.coroutines.delay(500)
@@ -569,13 +614,34 @@ class PaymentViewModel(
                             _successMessage.value = "PDF invoice generated successfully! File saved at: ${pdfFile.absolutePath}"
                         }
                     } else {
-                        _errorMessage.value = "PDF file was not created properly"
+                        val errorMsg = "PDF file was not created properly"
+                        _errorMessage.value = errorMsg
+                        if (_receiptUiState.value.isLoading) {
+                            _receiptUiState.value = _receiptUiState.value.copy(
+                                isLoading = false,
+                                error = errorMsg
+                            )
+                        }
                     }
                 } else {
-                    _errorMessage.value = "Failed to generate PDF invoice: ${pdfResult.exceptionOrNull()?.message}"
+                    val errorMsg = "Failed to generate PDF invoice: ${pdfResult.exceptionOrNull()?.message}"
+                    _errorMessage.value = errorMsg
+                    if (_receiptUiState.value.isLoading) {
+                        _receiptUiState.value = _receiptUiState.value.copy(
+                            isLoading = false,
+                            error = errorMsg
+                        )
+                    }
                 }
             } catch (e: Exception) {
-                _errorMessage.value = "PDF generation failed: ${e.message}"
+                val errorMsg = "PDF generation failed: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+                _errorMessage.value = errorMsg
+                if (_receiptUiState.value.isLoading) {
+                    _receiptUiState.value = _receiptUiState.value.copy(
+                        isLoading = false,
+                        error = errorMsg
+                    )
+                }
             } finally {
                 _isGeneratingPDF.value = false
             }
@@ -583,7 +649,91 @@ class PaymentViewModel(
     }
 
     // Public helper: generate PDF for the last successful transaction
+    /**
+     * Generate receipt PDF for a specific order ID.
+     * Prevents duplicate generation and handles errors properly.
+     * Owns generation logic and error handling.
+     */
+    fun generateReceiptPdf(orderId: String) {
+        viewModelScope.launch {
+            // Prevent duplicate generation
+            if (currentGeneratingOrderId == orderId || _receiptUiState.value.isLoading) {
+                println("⚠️ PDF generation already in progress for order: $orderId")
+                return@launch
+            }
+            
+            val transaction = _lastTransaction.value
+            if (transaction == null || transaction.id != orderId) {
+                _receiptUiState.value = ReceiptUiState(
+                    isLoading = false,
+                    pdfPath = null,
+                    error = "Transaction not found for order: $orderId"
+                )
+                return@launch
+            }
+            
+            val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
+            if (customer == null) {
+                _receiptUiState.value = ReceiptUiState(
+                    isLoading = false,
+                    pdfPath = null,
+                    error = "Customer not selected"
+                )
+                return@launch
+            }
+            
+            // Update state to loading
+            currentGeneratingOrderId = orderId
+            _receiptUiState.value = ReceiptUiState(
+                isLoading = true,
+                pdfPath = _receiptUiState.value.pdfPath, // Keep existing path while loading
+                error = null
+            )
+            
+            try {
+                // Use existing generatePdfForLastTransaction logic
+                // generateOrderPDF (called internally) will update _receiptUiState when complete
+                generatePdfForLastTransactionInternal(customer)
+                
+                // Note: State is updated in generateOrderPDF when _receiptUiState.value.isLoading is true
+                // No need to update here as it will be handled asynchronously
+            } catch (e: Exception) {
+                // Handle errors properly
+                val errorMsg = when {
+                    e.message?.contains("not found", ignoreCase = true) == true -> {
+                        "Order not found: ${e.message}"
+                    }
+                    e.message?.contains("customer", ignoreCase = true) == true -> {
+                        "Customer information missing: ${e.message}"
+                    }
+                    e.message?.contains("PDF", ignoreCase = true) == true -> {
+                        "PDF generation failed: ${e.message}"
+                    }
+                    else -> {
+                        "Failed to generate receipt: ${e.localizedMessage ?: e.message ?: "Unknown error"}"
+                    }
+                }
+                
+                _receiptUiState.value = ReceiptUiState(
+                    isLoading = false,
+                    pdfPath = null,
+                    error = errorMsg
+                )
+                
+                println("❌ Error generating receipt PDF: ${e.message}")
+                e.printStackTrace()
+            } finally {
+                currentGeneratingOrderId = null
+            }
+        }
+    }
+    
     fun generatePdfForLastTransaction(customer: User) {
+        val transaction = _lastTransaction.value ?: return
+        generatePdfForLastTransactionInternal(customer)
+    }
+    
+    private fun generatePdfForLastTransactionInternal(customer: User) {
         val transaction = _lastTransaction.value ?: return
         // Calculate taxable amount (subtotal - discount amount)
         val taxableAmount = transaction.subtotal - transaction.discountAmount
@@ -773,210 +923,6 @@ class PaymentViewModel(
         viewModelScope.cancel()
     }
 
-    // Add these functions to your existing PaymentViewModel class
-
-    // Helper function to calculate dynamic prices based on metal prices
-    private fun calculateDynamicPrices(
-        cart: Cart,
-        goldPrice: Double,
-        silverPrice: Double
-    ): Triple<Double, Double, Double> {
-        val subtotal = cart.items.sumOf { cartItem ->
-            val pricePerGram = when {
-                cartItem.product.materialType.contains("gold", ignoreCase = true) -> goldPrice
-                cartItem.product.materialType.contains("silver", ignoreCase = true) -> silverPrice
-                else -> goldPrice
-            }
-            val productWeight = parseWeight(cartItem.product.weight)
-            val actualWeight = if (cartItem.selectedWeight > 0) cartItem.selectedWeight else productWeight
-            actualWeight * cartItem.quantity * pricePerGram
-        }
-
-        // Replace legacy 18% GST with split model where possible.
-        // Here we only have subtotal by metal rate and lack making/base split, so we fallback to 3% on subtotal as conservative placeholder.
-        // Note: Main payment and receipt flows already use split GST by item; this function is secondary.
-        val gst = subtotal * 0.03
-        val subtotalWithGst = subtotal + gst
-        val discountAmount = calculateDiscountAmount(subtotalWithGst, gst)
-        val total = subtotalWithGst - discountAmount
-
-        return Triple(subtotal, gst, total)
-    }
-
-    // Utility function to parse weight from string
-    private fun parseWeight(weightStr: String): Double {
-        return try {
-            weightStr.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0
-        } catch (e: Exception) {
-            0.0
-        }
-    }
-
-    // New overloaded function that accepts metal prices and calculates dynamic pricing
-    fun saveOrderWithPaymentMethod(
-        cart: Cart,
-        goldPrice: Double,
-        silverPrice: Double,
-        onSuccess: () -> Unit
-    ) {
-        if (_selectedPaymentMethod.value == null) {
-            _errorMessage.value = "Please select a payment method"
-            return
-        }
-
-        viewModelScope.launch {
-            _isProcessing.value = true
-            _errorMessage.value = null
-
-            try {
-                // Calculate dynamic prices based on current metal prices
-                val (dynamicSubtotal, dynamicGst, dynamicTotal) = calculateDynamicPrices(cart, goldPrice, silverPrice)
-                val discountAmount = calculateDiscountAmount(dynamicSubtotal, dynamicGst)
-
-                // Convert CartItem objects to OrderItem objects with additional fields
-                val orderItems = cart.items.flatMap { cartItem ->
-                    cartItem.selectedBarcodeIds.map { barcodeId ->
-                        // Calculate making percentage, labour charges, and labour rate for OrderItem
-                        val product = cartItem.product
-                        val grossWeight = if (cartItem.grossWeight > 0) cartItem.grossWeight else product.totalWeight
-                        val makingPercentage = product.makingPercent
-                        val labourRate = product.labourRate
-                        
-                        // Calculate labour charges using ProductPriceCalculator
-                        val metalKarat = if (cartItem.metal.isNotEmpty()) {
-                            cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(product.materialType)
-                        } else {
-                            extractKaratFromMaterialType(product.materialType)
-                        }
-                        
-                        val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
-                        val collectionRate = try {
-                            ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
-                        } catch (e: Exception) { 0.0 }
-                        
-                        val metalRates = MetalRatesManager.metalRates.value
-                        val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
-                        val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
-                        
-                        val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-                        val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-                        val kundanPrice = kundanStones.sumOf { it.amount }
-                        val jarkanPrice = jarkanStones.sumOf { it.amount }
-                        
-                        val materialTypeLower = product.materialType.lowercase()
-                        val silverPurity = when {
-                            materialTypeLower.contains("999") -> 999
-                            materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
-                            materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
-                            else -> 999
-                        }
-                        val silverRate = metalRates.getSilverRateForPurity(silverPurity)
-                        val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
-                            product.materialType.contains("gold", ignoreCase = true) -> goldRate
-                            product.materialType.contains("silver", ignoreCase = true) -> silverRate
-                            else -> goldRate
-                        }
-                        
-                        val priceInputs = ProductPriceInputs(
-                            grossWeight = grossWeight,
-                            goldPurity = product.materialType,
-                            goldWeight = product.materialWeight.takeIf { it > 0 } ?: grossWeight,
-                            makingPercentage = makingPercentage,
-                            labourRatePerGram = labourRate,
-                            kundanPrice = kundanPrice,
-                            kundanWeight = kundanStones.sumOf { it.weight },
-                            jarkanPrice = jarkanPrice,
-                            jarkanWeight = jarkanStones.sumOf { it.weight },
-                            goldRatePerGram = goldRatePerGram
-                        )
-                        
-                        val priceResult = calculateProductPrice(priceInputs)
-                        val labourCharges = priceResult.labourCharges
-                        
-                        OrderItem(
-                            barcodeId = barcodeId,
-                            productId = cartItem.productId,
-                            quantity = 1, // Each barcode represents 1 item
-                            makingPercentage = makingPercentage,
-                            labourCharges = labourCharges,
-                            labourRate = labourRate
-                        )
-                    }
-                }
-                
-                // Get customer information
-                val customer = JewelryAppInitializer.getCustomerViewModel().selectedCustomer.value
-
-                // Calculate taxable amount (subtotal - discount amount)
-                val taxableAmount = dynamicSubtotal - discountAmount
-
-                // Format transaction date
-                val dateFormat = SimpleDateFormat("dd MMMM yyyy 'at' HH:mm:ss z", Locale.getDefault())
-                val transactionDate = dateFormat.format(Date())
-
-                // Calculate discount percentage
-                val discountPercent = if (discountAmount > 0 && dynamicSubtotal > 0) {
-                    (discountAmount / dynamicSubtotal) * 100.0
-                } else null
-                
-                // Calculate GST percentage
-                val gstPercentage = if (taxableAmount > 0 && dynamicGst > 0) {
-                    (dynamicGst / taxableAmount) * 100.0
-                } else 0.0
-                
-                val order = Order(
-                    orderId = generateOrderId(),
-                    customerId = cart.customerId, // Reference to users collection
-                    totalProductValue = dynamicSubtotal,
-                    discountAmount = discountAmount,
-                    discountPercent = discountPercent,
-                    gstAmount = dynamicGst,
-                    gstPercentage = gstPercentage,
-                    totalAmount = dynamicTotal, // Total payable amount after GST and discount applied
-                    isGstIncluded = _isGstIncluded.value,
-                    items = orderItems,
-                    transactionDate = transactionDate, // Set transaction date
-                    createdAt = System.currentTimeMillis()
-                )
-
-                // Save order to database
-                val success = paymentRepository.saveOrder(order)
-
-                if (success) {
-                    // Reduce stock quantities
-                    val productRepository = JewelryAppInitializer.getViewModel().repository
-                    reduceStockAfterOrder(order, productRepository)
-
-                    // Update customer balance with due amount
-                    updateCustomerBalance(order.customerId, order.paymentSplit?.dueAmount ?: 0.0)
-
-                    // Refresh product list to update UI
-                    JewelryAppInitializer.getViewModel().loadProducts()
-
-                    _lastTransaction.value = PaymentTransaction(
-                        id = order.orderId,
-                        cartId = order.customerId,
-                        paymentMethod = PaymentMethod.CASH, // Default payment method
-                        subtotal = order.totalProductValue,
-                        discountAmount = order.discountAmount,
-                        gstAmount = order.gstAmount,
-                        totalAmount = order.totalAmount,
-                        items = cart.items, // Use CartItem objects for receipt display
-                        timestamp = order.createdAt,
-                        status = PaymentStatus.COMPLETED
-                    )
-                    onSuccess()
-                } else {
-                    _errorMessage.value = "Failed to save order. Please try again."
-                }
-            } catch (e: Exception) {
-                _errorMessage.value = "Error saving order: ${e.message}"
-            } finally {
-                _isProcessing.value = false
-            }
-        }
-    }
-    
     /**
      * Updates customer balance with due amount after bill processing
      * This adds the final amount to the customer's outstanding balance in the users collection

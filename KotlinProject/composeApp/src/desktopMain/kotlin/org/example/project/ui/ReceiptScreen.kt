@@ -45,17 +45,23 @@ fun ReceiptScreen(
     productsViewModel: org.example.project.viewModels.ProductsViewModel = JewelryAppInitializer.getViewModel()
 ) {
     val lastTransaction by paymentViewModel.lastTransaction
-    val isGeneratingPDF by paymentViewModel.isGeneratingPDF
-    val pdfPath by paymentViewModel.pdfPath
+    val receiptUiState by paymentViewModel.receiptUiState
     val selectedCustomer by customerViewModel.selectedCustomer
     val errorMessage by paymentViewModel.errorMessage
     val successMessage by paymentViewModel.successMessage
     val isGstIncluded by paymentViewModel.isGstIncluded
 
-    // Auto-generate PDF if we have a transaction and no file yet
-    LaunchedEffect(lastTransaction, selectedCustomer, pdfPath) {
-        if (lastTransaction != null && pdfPath == null && !isGeneratingPDF) {
-            selectedCustomer?.let { paymentViewModel.generatePdfForLastTransaction(it) }
+    // Extract orderId from transaction
+    val orderId = lastTransaction?.id
+
+    // Auto-generate PDF using orderId - prevents duplicate generation
+    // LaunchedEffect only triggers when orderId changes, not on other state changes
+    LaunchedEffect(orderId, selectedCustomer) {
+        if (orderId != null && 
+            selectedCustomer != null &&  // Check customer exists before generating PDF
+            receiptUiState.pdfPath == null && 
+            !receiptUiState.isLoading) {
+            paymentViewModel.generateReceiptPdf(orderId)
         }
     }
 
@@ -244,11 +250,13 @@ fun ReceiptScreen(
                 modifier = Modifier.padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Use centralized UI state for better error handling
+                when {
+                    receiptUiState.isLoading -> {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    if (isGeneratingPDF) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(24.dp),
                             strokeWidth = 2.dp,
@@ -259,8 +267,35 @@ fun ReceiptScreen(
                             fontSize = 16.sp,
                             color = Color(0xFF666666)
                         )
-                    } else if (pdfPath != null) {
-                        val isHtmlFile = pdfPath!!.endsWith(".html", ignoreCase = true)
+                        }
+                    }
+                    receiptUiState.error != null -> {
+                        val errorText = receiptUiState.error
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Error,
+                                contentDescription = "Error",
+                                tint = Color(0xFFD32F2F),
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Text(
+                                errorText ?: "Unknown error",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color(0xFFD32F2F)
+                            )
+                        }
+                    }
+                    receiptUiState.pdfPath != null -> {
+                        receiptUiState.pdfPath?.let { pdfPathValue ->
+                            val isHtmlFile = pdfPathValue.endsWith(".html", ignoreCase = true)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
                         Icon(
                             Icons.Default.CheckCircle,
                             contentDescription = "Invoice Ready",
@@ -273,7 +308,14 @@ fun ReceiptScreen(
                             fontWeight = FontWeight.Medium,
                             color = Color(0xFF4CAF50)
                         )
-                    } else {
+                            }
+                        }
+                    }
+                    else -> {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
                         Icon(
                             Icons.Default.Info,
                             contentDescription = "Info",
@@ -285,6 +327,7 @@ fun ReceiptScreen(
                             fontSize = 16.sp,
                             color = Color(0xFF666666)
                         )
+                        }
                     }
                 }
 
@@ -292,8 +335,12 @@ fun ReceiptScreen(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
-                    onClick = { if (pdfPath != null) paymentViewModel.downloadBill() },
-                    enabled = pdfPath != null && !isGeneratingPDF,
+                    onClick = { 
+                        receiptUiState.pdfPath?.let { 
+                            paymentViewModel.downloadBill() 
+                        }
+                    },
+                    enabled = receiptUiState.pdfPath != null && !receiptUiState.isLoading,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
                         backgroundColor = Color(0xFF2196F3),
@@ -675,7 +722,7 @@ private fun PaymentSummaryBreakdown(
             // Sum all Jarkan prices and weights
             val jarkanPrice = jarkanStones.sumOf { it.amount }
             val jarkanWeight = jarkanStones.sumOf { it.weight }
-            
+    
             // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
         val metalKarat = if (cartItem.metal.isNotEmpty()) {
                 cartItem.metal.replace("K", "").toIntOrNull() ?: extractKaratFromMaterialType(currentProduct.materialType)

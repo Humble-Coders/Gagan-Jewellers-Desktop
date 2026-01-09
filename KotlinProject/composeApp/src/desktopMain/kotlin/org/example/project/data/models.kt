@@ -239,12 +239,6 @@ data class Cart(
     }
 }
 
-data class MetalPrices(
-    val goldPricePerGram: Double = 6080.0, // Current gold price per gram in Rs
-    val silverPricePerGram: Double = 75.0,  // Current silver price per gram in Rs
-    val lastUpdated: Long = System.currentTimeMillis()
-)
-
 // Enhanced gold rate system with different karats
 data class GoldRates(
     val rate24k: Double = 6080.0, // 24k gold rate (base rate)
@@ -356,13 +350,45 @@ data class PaymentSplit(
     val cash: Double = 0.0,
     val dueAmount: Double = 0.0
 ) {
-    fun isValid(): Boolean {
-        return true // Validation can be done at order level if needed
+    /**
+     * Validates if the payment split matches the total amount
+     * @param totalAmount The total amount that should match
+     * @return true if payment breakdown matches total (within 0.01 tolerance), false otherwise
+     */
+    fun isValid(totalAmount: Double): Boolean {
+        val totalPaymentBreakdown = bank + cash + dueAmount
+        val exceedsTotal = totalPaymentBreakdown > totalAmount
+        return !exceedsTotal && kotlin.math.abs(totalPaymentBreakdown - totalAmount) < 0.01
+    }
+    
+    /**
+     * Checks if payment breakdown exceeds total amount
+     * @param totalAmount The total amount to compare against
+     * @return true if breakdown exceeds total, false otherwise
+     */
+    fun exceedsTotal(totalAmount: Double): Boolean {
+        val totalPaymentBreakdown = bank + cash + dueAmount
+        return totalPaymentBreakdown > totalAmount
+    }
+    
+    /**
+     * Gets the difference between payment breakdown and total amount
+     * @param totalAmount The total amount to compare against
+     * @return Positive value if breakdown exceeds total, negative if less, 0 if equal
+     */
+    fun getDifference(totalAmount: Double): Double {
+        val totalPaymentBreakdown = bank + cash + dueAmount
+        return totalPaymentBreakdown - totalAmount
     }
     
     // Helper function to get total paid
     fun getTotalPaid(): Double {
         return bank + cash
+    }
+    
+    // Helper function to get total breakdown
+    fun getTotalBreakdown(): Double {
+        return bank + cash + dueAmount
     }
 }
 

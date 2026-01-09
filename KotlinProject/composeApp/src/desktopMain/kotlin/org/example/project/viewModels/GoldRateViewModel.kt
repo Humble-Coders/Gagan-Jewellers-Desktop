@@ -40,11 +40,25 @@ class GoldRateViewModel(
             _loading.value = true
             try {
                 val rates = goldRateRepository.getCurrentGoldRates()
-                _goldRates.value = rates
-                _rate24kInput.value = rates.rate24k.toString()
-                _error.value = null
+                // Null safety check
+                if (rates != null) {
+                    _goldRates.value = rates
+                    _rate24kInput.value = rates.rate24k.toString()
+                    _error.value = null
+                } else {
+                    _error.value = "Failed to load gold rates: Repository returned null"
+                    println("❌ GoldRateRepository returned null")
+                }
+            } catch (e: IllegalStateException) {
+                // Recoverable: Data structure issue
+                _error.value = "Invalid gold rates data: ${e.message}"
+                println("⚠️ Invalid gold rates data: ${e.message}")
+                e.printStackTrace()
             } catch (e: Exception) {
-                _error.value = "Failed to load gold rates: ${e.message}"
+                // Critical: Network or unexpected errors
+                _error.value = "Failed to load gold rates: ${e.message ?: "Unknown error"}"
+                println("❌ Critical error loading gold rates: ${e.message}")
+                e.printStackTrace()
             } finally {
                 _loading.value = false
             }
@@ -60,8 +74,15 @@ class GoldRateViewModel(
 
     fun updateGoldRates() {
         val rate24k = _rate24kInput.value.toDoubleOrNull()
-        if (rate24k == null || rate24k <= 0) {
-            _error.value = "Please enter a valid 24k gold rate"
+        // Enhanced validation: check for null, <= 0, NaN, and Infinity
+        if (rate24k == null || rate24k <= 0 || !rate24k.isFinite()) {
+            _error.value = when {
+                rate24k == null -> "Please enter a valid 24k gold rate"
+                rate24k <= 0 -> "Gold rate must be greater than 0"
+                rate24k.isNaN() -> "Invalid rate: Not a number"
+                rate24k.isInfinite() -> "Invalid rate: Infinity"
+                else -> "Please enter a valid 24k gold rate"
+            }
             return
         }
 
@@ -75,10 +96,20 @@ class GoldRateViewModel(
                     _goldRates.value = newRates
                     _error.value = null
                 } else {
-                    _error.value = "Failed to update gold rates"
+                    _error.value = "Failed to update gold rates: Repository returned false"
+                    println("❌ GoldRateRepository.updateGoldRates returned false")
                 }
+            } catch (e: IllegalStateException) {
+                // Recoverable: Data structure issue
+                _error.value = "Invalid gold rates data: ${e.message}"
+                println("⚠️ Invalid gold rates data: ${e.message}")
+                e.printStackTrace()
             } catch (e: Exception) {
-                _error.value = "Error updating gold rates: ${e.message}"
+                // Critical: Network or unexpected errors
+                val errorMessage = e.message ?: "Unknown error"
+                _error.value = "Error updating gold rates: $errorMessage"
+                println("❌ Critical error updating gold rates: $errorMessage")
+                e.printStackTrace()
             } finally {
                 _loading.value = false
             }

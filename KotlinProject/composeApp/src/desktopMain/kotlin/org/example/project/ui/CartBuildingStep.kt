@@ -268,8 +268,15 @@ fun CartBuildingScreen(
         } else {
             try {
                 productsViewModel.getGroupedProducts()
-            } catch (e: Exception) {
+            } catch (e: IllegalStateException) {
+                // Recoverable: Data structure issue
+                println("⚠️ Grouped products calculation error: ${e.message}")
                 emptyList()
+            } catch (e: Exception) {
+                // Critical: Log and potentially show error
+                println("❌ Critical error in getGroupedProducts: ${e.message}")
+                e.printStackTrace()
+                emptyList()  // Still return empty to prevent crash
             }
         }
     }
@@ -290,8 +297,16 @@ fun CartBuildingScreen(
                                 Image.makeFromEncoded(imageBytes).toComposeImageBitmap()
                             }
                             productImages = productImages + (product.id to bitmap)
+                        } catch (e: IllegalArgumentException) {
+                            // Recoverable: Invalid image format
+                            println("⚠️ Invalid image format for ${product.name}: ${e.message}")
+                            // Keep null to show placeholder
                         } catch (e: Exception) {
-                            println("Failed to decode image: $imageUrl - ${e.message}")
+                            // Critical: Log with context
+                            println("❌ Failed to decode image for product ${product.name} (${product.id}):")
+                            println("   - Image URL: $imageUrl")
+                            println("   - Error: ${e.message}")
+                            e.printStackTrace()
                             // Keep null to show placeholder
                         }
                     } else {
@@ -1093,6 +1108,8 @@ private fun parseWeight(weightStr: String): Double {
     return try {
         weightStr.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: 0.0
     } catch (e: Exception) {
+        // Log parsing errors for debugging (weight parsing is usually safe)
+        println("⚠️ Error parsing weight string '$weightStr': ${e.message}")
         0.0
     }
 }
@@ -1394,8 +1411,26 @@ fun CartScreen(
                                     extractKaratFromMaterialType(currentProduct.materialType)
                                 }
                                 val collectionRate = try {
-                                    ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
-                                } catch (e: Exception) { 0.0 }
+                                    val rate = ratesVM.calculateRateForMaterial(currentProduct.materialId, currentProduct.materialType, metalKarat)
+                                    if (rate <= 0) {
+                                        println("⚠️ Collection rate returned 0 or negative for ${currentProduct.materialType} (${currentProduct.name})")
+                                    }
+                                    rate
+                                } catch (e: IllegalStateException) {
+                                    // Recoverable: Missing material configuration
+                                    println("⚠️ Collection rate not found for material: ${currentProduct.materialId}, type: ${currentProduct.materialType}, karat: $metalKarat")
+                                    println("   - Product: ${currentProduct.name}")
+                                    0.0
+                                } catch (e: Exception) {
+                                    // Critical: Log error with context
+                                    println("❌ Critical error calculating collection rate for product ${currentProduct.name}:")
+                                    println("   - Material ID: ${currentProduct.materialId}")
+                                    println("   - Material Type: ${currentProduct.materialType}")
+                                    println("   - Karat: $metalKarat")
+                                    println("   - Error: ${e.message}")
+                                    e.printStackTrace()
+                                    0.0
+                                }
                                 val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
                                 val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
                                 val silverPurity = extractSilverPurityFromMaterialType(currentProduct.materialType)
@@ -1616,8 +1651,24 @@ private fun getMaterialRateForProduct(product: Product, metalRates: List<org.exa
     // Prefer collection rate from rate view model (same as cart detail)
     val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
     val collectionRate = try {
-        ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
+        val rate = ratesVM.calculateRateForMaterial(product.materialId, product.materialType, karat)
+        if (rate <= 0) {
+            println("⚠️ Collection rate returned 0 or negative for ${product.materialType} (${product.name})")
+        }
+        rate
+    } catch (e: IllegalStateException) {
+        // Recoverable: Missing configuration
+        println("⚠️ Collection rate not configured for material: ${product.materialId}, type: ${product.materialType}, karat: $karat")
+        println("   - Product: ${product.name}")
+        0.0
     } catch (e: Exception) { 
+        // Critical: Log with context
+        println("❌ Critical error calculating rate for product ${product.name}:")
+        println("   - Material ID: ${product.materialId}")
+        println("   - Material Type: ${product.materialType}")
+        println("   - Karat: $karat")
+        println("   - Error: ${e.message}")
+        e.printStackTrace()
         0.0 
     }
 
@@ -1633,9 +1684,10 @@ private fun getMaterialRateForProduct(product: Product, metalRates: List<org.exa
         else -> metalRatesManager.getGoldRateForKarat(22)
     }
     
-    println("🔄 Fallback rate for ${product.materialType} $karat K = $fallbackRate")
-    println("   - Collection Rate: $fallbackRate")
-    println("   - Using Collection Rate: $fallbackRate")
+    // Log when using fallback
+    println("🔄 Using fallback rate for ${product.materialType} $karat K = $fallbackRate")
+    println("   - Collection rate was: $collectionRate (using fallback)")
+    println("   - Product: ${product.name}")
     
     return fallbackRate
 }

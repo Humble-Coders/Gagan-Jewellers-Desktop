@@ -1,7 +1,9 @@
 // CustomerRepository.kt
 package org.example.project.data
 
+import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.Transaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -149,6 +151,7 @@ class FirestoreCustomerRepository(private val firestore: Firestore) : CustomerRe
     /**
      * Adds due amount to customer's balance
      * This is called after a bill is processed to update the customer's outstanding balance
+     * Uses Firebase transaction to ensure atomicity
      */
     override suspend fun addToCustomerBalance(customerId: String, dueAmount: Double): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -156,26 +159,29 @@ class FirestoreCustomerRepository(private val firestore: Firestore) : CustomerRe
             println("   - Customer ID: $customerId")
             println("   - Due Amount: $dueAmount")
             
-            // Get current customer data
-            val docRef = firestore.collection("users").document(customerId)
-            val doc = docRef.get().get()
+            val customerRef = firestore.collection("users").document(customerId)
             
-            if (doc.exists()) {
-                val currentBalance = (doc.data?.get("balance") as? Number)?.toDouble() ?: 0.0
+            firestore.runTransaction { transaction: Transaction ->
+                val customerDoc = transaction.getDocument(customerRef)
+            
+                if (!customerDoc.exists()) {
+                    throw Exception("Customer not found with ID: $customerId")
+                }
+                
+                val currentBalance = (customerDoc.getDouble("balance") ?: 0.0)
                 val newBalance = currentBalance + dueAmount
                 
                 println("   - Current Balance: $currentBalance")
                 println("   - New Balance: $newBalance")
                 
-                // Update the balance
-                docRef.update("balance", newBalance).get()
+                // Update the balance atomically
+                transaction.update(customerRef, "balance", newBalance, "updatedAt", System.currentTimeMillis())
                 
                 println("✅ Customer balance updated successfully")
+                Unit // Return Unit for transaction function
+            }.get()
+            
                 true
-            } else {
-                println("❌ Customer not found with ID: $customerId")
-                false
-            }
         } catch (e: Exception) {
             println("❌ Error updating customer balance: ${e.message}")
             e.printStackTrace()

@@ -1,9 +1,29 @@
 package org.example.project.data
 
+import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.Transaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.*
+
+/**
+ * Image data for a collection
+ */
+data class CollectionImage(
+    val url: String = "",
+    val isActive: Boolean = true,
+    val order: Int = 0
+)
+
+/**
+ * Metadata for a collection
+ */
+data class CollectionMetadata(
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val createdBy: String = "admin"
+)
 
 /**
  * Represents a themed collection in the jewelry store
@@ -161,24 +181,31 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
     override suspend fun addProductToCollection(collectionId: String, productId: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val collectionRef = firestore.collection("themed_collections").document(collectionId)
-            val doc = collectionRef.get().get()
             
-            if (doc.exists()) {
-                val data = doc.data ?: return@withContext false
+            // Use transaction to atomically read and update productIds array
+            firestore.runTransaction { transaction: Transaction ->
+                val docSnapshot = transaction.getDocument(collectionRef)
+            
+                if (!docSnapshot.exists()) {
+                    throw Exception("Collection not found: $collectionId")
+                }
+                
+                val data = docSnapshot.data ?: throw Exception("Collection document has no data")
                 val currentProductIds = (data["productIds"] as? List<*>)?.mapNotNull { it as? String }?.toMutableList() ?: mutableListOf()
                 
                 if (!currentProductIds.contains(productId)) {
                     currentProductIds.add(productId)
                     
-                    collectionRef.update(
+                    transaction.update(
+                        collectionRef,
                         "productIds", currentProductIds,
                         "updatedAt", System.currentTimeMillis()
-                    ).get()
+                    )
                 }
+                Unit
+            }.get()
+            
                 true
-            } else {
-                false
-            }
         } catch (e: Exception) {
             println("Error adding product to collection: ${e.message}")
             false
@@ -188,22 +215,29 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
     override suspend fun removeProductFromCollection(collectionId: String, productId: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val collectionRef = firestore.collection("themed_collections").document(collectionId)
-            val doc = collectionRef.get().get()
             
-            if (doc.exists()) {
-                val data = doc.data ?: return@withContext false
+            // Use transaction to atomically read and update productIds array
+            firestore.runTransaction { transaction: Transaction ->
+                val docSnapshot = transaction.getDocument(collectionRef)
+            
+                if (!docSnapshot.exists()) {
+                    throw Exception("Collection not found: $collectionId")
+                }
+                
+                val data = docSnapshot.data ?: throw Exception("Collection document has no data")
                 val currentProductIds = (data["productIds"] as? List<*>)?.mapNotNull { it as? String }?.toMutableList() ?: mutableListOf()
                 
                 currentProductIds.remove(productId)
                 
-                collectionRef.update(
+                transaction.update(
+                    collectionRef,
                     "productIds", currentProductIds,
                     "updatedAt", System.currentTimeMillis()
-                ).get()
+                )
+                Unit
+            }.get()
+            
                 true
-            } else {
-                false
-            }
         } catch (e: Exception) {
             println("Error removing product from collection: ${e.message}")
             false

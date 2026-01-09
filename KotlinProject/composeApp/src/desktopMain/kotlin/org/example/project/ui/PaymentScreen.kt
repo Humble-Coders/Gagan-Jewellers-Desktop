@@ -73,6 +73,11 @@ fun PaymentScreen(
     onPaymentComplete: () -> Unit,
     productsViewModel: ProductsViewModel
 ) {
+    // REQUIRE: Customer must be selected before opening PaymentScreen
+    val selectedCustomer = requireNotNull(customerViewModel.selectedCustomer.value) {
+        "PaymentScreen opened without selecting customer. Please select a customer first."
+    }
+    
     var showExchangeGold by remember { mutableStateOf(false) }
     var exchangeGold by remember { mutableStateOf<ExchangeGold?>(null) }
     val cart by cartViewModel.cart
@@ -83,7 +88,7 @@ fun PaymentScreen(
     val exchangeGoldValue = exchangeGold?.value ?: 0.0
     val isProcessing by paymentViewModel.isProcessing
     val errorMessage by paymentViewModel.errorMessage
-    val selectedCustomer by customerViewModel.selectedCustomer
+    val successMessage by paymentViewModel.successMessage
 
     // Payment split state - always visible by default
     var cashAmount by remember { mutableStateOf("") }
@@ -253,29 +258,69 @@ fun PaymentScreen(
     } ?: false
 
     // Define confirm order function
-    val onConfirmOrder = {
-        paymentViewModel.validateStockBeforeOrder(
-            cart = cart,
-            products = productsViewModel.products.value,
-            onValidationResult = { isValid, errors ->
-                if (isValid) {
-                    paymentViewModel.saveOrderWithPaymentMethod(
-                        cart = cart,
-                        subtotal = subtotal,
-                        discountAmount = calculatedDiscountAmount,
-                        gst = gstAmount,
-                        finalTotal = subtotal + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
-                        paymentSplit = paymentSplit,
-                        notes = notes,
-                        onSuccess = onPaymentComplete
-                    )
-                } else {
+    // IMPORTANT: Use snapshot state before submission to prevent desync during processing
+    val onConfirmOrder: () -> Unit = run {
+        // Take snapshot of current payment split state (captured once when composable is created)
+        val snapshotPaymentSplit = paymentSplit?.copy()
+        val snapshotSubtotal = subtotal
+        val snapshotDiscountAmount = calculatedDiscountAmount
+        val snapshotGstAmount = gstAmount
+        val snapshotFinalTotal = snapshotSubtotal + snapshotGstAmount - snapshotDiscountAmount - exchangeGoldValue
+        val snapshotNotes = notes
+        
+        // Return the lambda function
+        {
+            // Re-capture snapshot values at call time to prevent desync
+            val currentSnapshotPaymentSplit = paymentSplit?.copy()
+            val currentSnapshotSubtotal = subtotal
+            val currentSnapshotDiscountAmount = calculatedDiscountAmount
+            val currentSnapshotGstAmount = gstAmount
+            val currentSnapshotFinalTotal = currentSnapshotSubtotal + currentSnapshotGstAmount - currentSnapshotDiscountAmount - exchangeGoldValue
+            val currentSnapshotNotes = notes
+            
+            // Validate payment split if provided (using current snapshot)
+            if (currentSnapshotPaymentSplit != null) {
+                if (currentSnapshotPaymentSplit.exceedsTotal(currentSnapshotFinalTotal)) {
+                    val difference = currentSnapshotPaymentSplit.getDifference(currentSnapshotFinalTotal)
                     paymentViewModel.setErrorMessage(
-                        "Stock validation failed:\n${errors.joinToString("\n")}"
+                        "Payment breakdown exceeds total amount by ₹${String.format("%.2f", difference)}"
                     )
+                    return@run
+                }
+                if (!currentSnapshotPaymentSplit.isValid(currentSnapshotFinalTotal)) {
+                    val difference = currentSnapshotPaymentSplit.getDifference(currentSnapshotFinalTotal)
+                    paymentViewModel.setErrorMessage(
+                        "Payment amounts don't match total. Difference: ₹${String.format("%.2f", kotlin.math.abs(difference))}"
+                    )
+                    return@run
                 }
             }
-        )
+            
+            paymentViewModel.validateStockBeforeOrder(
+                cart = cart,
+                products = productsViewModel.products.value,
+                onValidationResult = { isValid, errors ->
+                    if (isValid) {
+                        // Use current snapshot values for order creation
+                        paymentViewModel.saveOrderWithPaymentMethod(
+                            cart = cart,
+                            subtotal = currentSnapshotSubtotal,
+                            discountAmount = currentSnapshotDiscountAmount,
+                            gst = currentSnapshotGstAmount,
+                            finalTotal = currentSnapshotFinalTotal,
+                            paymentSplit = currentSnapshotPaymentSplit,
+                            notes = currentSnapshotNotes,
+                            customer = selectedCustomer, // Pass customer as parameter
+                            onSuccess = onPaymentComplete
+                        )
+                    } else {
+                        paymentViewModel.setErrorMessage(
+                            "Stock validation failed:\n${errors.joinToString("\n")}"
+                        )
+                    }
+                }
+            )
+        }
     }
 
     Column(
@@ -319,6 +364,7 @@ fun PaymentScreen(
                     bankAmount = bankAmount,
                     onlineAmount = onlineAmount,
                     dueAmount = dueAmount,
+                    isProcessing = isProcessing,
                     onCashAmountChange = { cashAmount = it },
                     onCardAmountChange = { cardAmount = it },
                     onBankAmountChange = { bankAmount = it },
@@ -332,7 +378,8 @@ fun PaymentScreen(
                     onDiscountTypeChange = { paymentViewModel.setDiscountType(it) },
                     onDiscountValueChange = { paymentViewModel.setDiscountValue(it) },
                     onApplyDiscount = { paymentViewModel.applyDiscount() },
-                    errorMessage = errorMessage
+                    errorMessage = errorMessage,
+                    isProcessing = isProcessing
                 )
 
                 // Notes Section
@@ -633,7 +680,8 @@ private fun DiscountSection(
     onDiscountTypeChange: (DiscountType) -> Unit,
     onDiscountValueChange: (String) -> Unit,
     onApplyDiscount: () -> Unit,
-    errorMessage: String?
+    errorMessage: String?,
+    isProcessing: Boolean = false
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -665,23 +713,26 @@ private fun DiscountSection(
                     DiscountTypeOption(
                         text = "By Amount (₹)",
                         isSelected = discountType == DiscountType.AMOUNT,
-                        onClick = { onDiscountTypeChange(DiscountType.AMOUNT) },
-                        modifier = Modifier.weight(1f)
+                        onClick = { if (!isProcessing) onDiscountTypeChange(DiscountType.AMOUNT) },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isProcessing
                     )
 
                     DiscountTypeOption(
                         text = "By Percentage (%)",
                         isSelected = discountType == DiscountType.PERCENTAGE,
-                        onClick = { onDiscountTypeChange(DiscountType.PERCENTAGE) },
-                        modifier = Modifier.weight(1f)
+                        onClick = { if (!isProcessing) onDiscountTypeChange(DiscountType.PERCENTAGE) },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isProcessing
                     )
                 }
 
                 DiscountTypeOption(
                     text = "Enter Total Payable Amount (₹)",
                     isSelected = discountType == DiscountType.TOTAL_PAYABLE,
-                    onClick = { onDiscountTypeChange(DiscountType.TOTAL_PAYABLE) },
-                    modifier = Modifier.fillMaxWidth()
+                    onClick = { if (!isProcessing) onDiscountTypeChange(DiscountType.TOTAL_PAYABLE) },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isProcessing
                 )
             }
 
@@ -694,6 +745,7 @@ private fun DiscountSection(
                 OutlinedTextField(
                     value = discountValue,
                     onValueChange = onDiscountValueChange,
+                    enabled = !isProcessing,
                     label = {
                         Text(
                             when (discountType) {
@@ -721,9 +773,11 @@ private fun DiscountSection(
                 Button(
                     onClick = onApplyDiscount,
                     modifier = Modifier.height(48.dp),
+                    enabled = !isProcessing,
                     colors = ButtonDefaults.buttonColors(
                         backgroundColor = Color(0xFFB8973D),
-                        contentColor = Color.White
+                        contentColor = Color.White,
+                        disabledBackgroundColor = Color(0xFFE0E0E0)
                     ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
@@ -767,20 +821,21 @@ private fun DiscountTypeOption(
     text: String,
     isSelected: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true
 ) {
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .clickable(enabled = enabled) { if (enabled) onClick() }
             .border(
                 width = 1.5.dp,
-                color = if (isSelected) Color(0xFFB8973D) else Color(0xFFE0E0E0),
+                color = if (isSelected && enabled) Color(0xFFB8973D) else Color(0xFFE0E0E0),
                 shape = RoundedCornerShape(10.dp)
             ),
-        elevation = if (isSelected) 2.dp else 0.dp,
+        elevation = if (isSelected && enabled) 2.dp else 0.dp,
         shape = RoundedCornerShape(10.dp),
-        backgroundColor = if (isSelected) Color(0xFFFFF8E1) else Color.White
+        backgroundColor = if (isSelected && enabled) Color(0xFFFFF8E1) else if (!enabled) Color(0xFFF5F5F5) else Color.White
     ) {
         Row(
             modifier = Modifier
@@ -930,17 +985,21 @@ private fun GstTypeOption(
 private fun GstTypeOptionSmall(
     text: String,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    enabled: Boolean = true
 ) {
     Button(
         onClick = onClick,
         modifier = Modifier.height(24.dp).width(32.dp).padding(0.dp),
+        enabled = enabled,
         colors = ButtonDefaults.buttonColors(
-            backgroundColor = if (isSelected) Color(0xFFB8973D) else Color(0xFFF5F5F5),
-            contentColor = if (isSelected) Color.White else Color(0xFF2E2E2E)
+            backgroundColor = if (isSelected && enabled) Color(0xFFB8973D) else Color(0xFFF5F5F5),
+            contentColor = if (isSelected && enabled) Color.White else Color(0xFF2E2E2E),
+            disabledBackgroundColor = Color(0xFFE0E0E0),
+            disabledContentColor = Color(0xFF9E9E9E)
         ),
         shape = RoundedCornerShape(4.dp),
-        elevation = if (isSelected) ButtonDefaults.elevation(defaultElevation = 2.dp) else ButtonDefaults.elevation(defaultElevation = 0.dp),
+        elevation = if (isSelected && enabled) ButtonDefaults.elevation(defaultElevation = 2.dp) else ButtonDefaults.elevation(defaultElevation = 0.dp),
         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
     ) {
         Text(
@@ -970,7 +1029,8 @@ private fun PaymentOptionsSection(
     onCashAmountChange: (String) -> Unit,
     onCardAmountChange: (String) -> Unit,
     onBankAmountChange: (String) -> Unit,
-    onOnlineAmountChange: (String) -> Unit
+    onOnlineAmountChange: (String) -> Unit,
+    isProcessing: Boolean = false
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1034,12 +1094,14 @@ private fun PaymentOptionsSection(
                     }
 
                     // Payment Input Fields
+                    // Disable all inputs when processing to prevent desync
                     PaymentInputField(
                         label = "Cash Amount",
                         value = cashAmount,
                         onValueChange = onCashAmountChange,
                         icon = Icons.Default.AccountBox,
-                        iconColor = Color(0xFF4CAF50)
+                        iconColor = Color(0xFF4CAF50),
+                        enabled = !isProcessing
                     )
 
                     PaymentInputField(
@@ -1047,7 +1109,8 @@ private fun PaymentOptionsSection(
                         value = cardAmount,
                         onValueChange = onCardAmountChange,
                         icon = Icons.Default.AccountBox,
-                        iconColor = Color(0xFF2196F3)
+                        iconColor = Color(0xFF2196F3),
+                        enabled = !isProcessing
                     )
 
                     PaymentInputField(
@@ -1055,7 +1118,8 @@ private fun PaymentOptionsSection(
                         value = bankAmount,
                         onValueChange = onBankAmountChange,
                         icon = Icons.Default.AccountBox,
-                        iconColor = Color(0xFF9C27B0)
+                        iconColor = Color(0xFF9C27B0),
+                        enabled = !isProcessing
                     )
 
                     PaymentInputField(
@@ -1063,7 +1127,8 @@ private fun PaymentOptionsSection(
                         value = onlineAmount,
                         onValueChange = onOnlineAmountChange,
                         icon = Icons.Default.AccountBox,
-                        iconColor = Color(0xFF00BCD4)
+                        iconColor = Color(0xFF00BCD4),
+                        enabled = !isProcessing
                     )
 
                     PaymentInputField(
@@ -1090,12 +1155,16 @@ private fun PaymentOptionsSection(
             Divider(color = Color(0xFFE0E0E0), thickness = 1.dp)
 
             // Exchange Gold Option
+            // Disable when processing
             Button(
                 onClick = onExchangeGold,
                 modifier = Modifier.fillMaxWidth(),
+                enabled = !isProcessing,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = if (exchangeGoldValue > 0) Color(0xFF4CAF50) else Color(0xFFB8973D),
-                    contentColor = Color.White
+                    contentColor = Color.White,
+                    disabledBackgroundColor = Color(0xFFE0E0E0),
+                    disabledContentColor = Color(0xFF9E9E9E)
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -1189,9 +1258,9 @@ private fun PaymentSplitSummaryCompact(
     paymentSplit: PaymentSplit,
     totalAmount: Double
 ) {
-    val totalPaymentBreakdown = paymentSplit.bank + paymentSplit.cash + paymentSplit.dueAmount
-    val exceedsTotal = totalPaymentBreakdown > totalAmount
-    val isValid = !exceedsTotal && kotlin.math.abs(totalPaymentBreakdown - totalAmount) < 0.01
+    // Use PaymentSplit validation methods
+    val exceedsTotal = paymentSplit.exceedsTotal(totalAmount)
+    val isValid = paymentSplit.isValid(totalAmount)
 
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1359,7 +1428,8 @@ private fun OrderSummarySection(
                 selectedGstType = selectedGstType,
                 customGstValue = customGstValue,
                 onGstTypeChange = onGstTypeChange,
-                onCustomGstValueChange = onCustomGstValueChange
+                onCustomGstValueChange = onCustomGstValueChange,
+                isProcessing = isProcessing
             )
 
             // Payment Split Information
@@ -1396,12 +1466,17 @@ private fun OrderSummarySection(
             Spacer(modifier = Modifier.height(16.dp))
 
             // Confirm Order Button
+            // Validate payment split against total amount
+            val isPaymentSplitValid = paymentSplit?.let { split ->
+                split.isValid(total) // Use isValid(totalAmount) method
+            } ?: true // If no payment split, consider valid (payment method selected)
+            
             Button(
                 onClick = onConfirmOrder,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp),
-                enabled = (paymentMethodSelected || paymentSplit != null) && !isProcessing && (paymentSplit?.isValid() != false),
+                enabled = (paymentMethodSelected || paymentSplit != null) && !isProcessing && isPaymentSplitValid,
                 colors = ButtonDefaults.buttonColors(
                     backgroundColor = Color(0xFFB8973D),
                     contentColor = Color.White,
@@ -1582,7 +1657,8 @@ private fun PriceBreakdown(
     selectedGstType: GstType? = null,
     customGstValue: String = "",
     onGstTypeChange: ((GstType?) -> Unit)? = null,
-    onCustomGstValueChange: ((String) -> Unit)? = null
+    onCustomGstValueChange: ((String) -> Unit)? = null,
+    isProcessing: Boolean = false
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1620,25 +1696,30 @@ private fun PriceBreakdown(
                 )
                 
                 // Small GST selection buttons
+                // Disable all GST inputs when processing
                 GstTypeOptionSmall(
                     text = "0%",
                     isSelected = selectedGstType == GstType.ZERO,
-                    onClick = { onGstTypeChange?.invoke(GstType.ZERO) }
+                    onClick = { if (!isProcessing) onGstTypeChange?.invoke(GstType.ZERO) },
+                    enabled = !isProcessing
                 )
                 GstTypeOptionSmall(
                     text = "3%",
                     isSelected = selectedGstType == GstType.THREE,
-                    onClick = { onGstTypeChange?.invoke(GstType.THREE) }
+                    onClick = { if (!isProcessing) onGstTypeChange?.invoke(GstType.THREE) },
+                    enabled = !isProcessing
                 )
                 GstTypeOptionSmall(
                     text = "5%",
                     isSelected = selectedGstType == GstType.FIVE,
-                    onClick = { onGstTypeChange?.invoke(GstType.FIVE) }
+                    onClick = { if (!isProcessing) onGstTypeChange?.invoke(GstType.FIVE) },
+                    enabled = !isProcessing
                 )
                 GstTypeOptionSmall(
                     text = "C",
                     isSelected = selectedGstType == GstType.CUSTOM,
-                    onClick = { onGstTypeChange?.invoke(GstType.CUSTOM) }
+                    onClick = { if (!isProcessing) onGstTypeChange?.invoke(GstType.CUSTOM) },
+                    enabled = !isProcessing
                 )
             }
             
@@ -1657,6 +1738,7 @@ private fun PriceBreakdown(
             OutlinedTextField(
                 value = customGstValue,
                 onValueChange = { onCustomGstValueChange?.invoke(it) },
+                enabled = !isProcessing,
                 label = { Text("Enter GST %") },
                 placeholder = { Text("0.00", color = Color.Gray.copy(alpha = 0.5f)) },
                 trailingIcon = { 
@@ -1749,10 +1831,12 @@ private fun PaymentSplitSummary(
     paymentSplit: PaymentSplit,
     totalAmount: Double
 ) {
+    // Use PaymentSplit validation methods
+    val exceedsTotal = paymentSplit.exceedsTotal(totalAmount)
+    val isValid = paymentSplit.isValid(totalAmount)
+    val isDueAmountNegative = paymentSplit.dueAmount < 0
     val dueAmount = paymentSplit.dueAmount
-    val totalPaymentBreakdown = paymentSplit.bank + paymentSplit.cash + dueAmount
-    val exceedsTotal = totalPaymentBreakdown > totalAmount
-    val isDueAmountNegative = dueAmount < 0
+    val totalPaymentBreakdown = paymentSplit.getTotalBreakdown()
 
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)

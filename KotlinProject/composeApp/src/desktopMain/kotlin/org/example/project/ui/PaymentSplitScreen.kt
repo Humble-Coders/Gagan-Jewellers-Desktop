@@ -47,9 +47,9 @@ fun PaymentSplitScreen(
     // Calculate paid amount and due amount
     val paidAmount = remember(cashAmount, cardAmount, bankAmount, onlineAmount) {
         (cashAmount.toDoubleOrNull() ?: 0.0) + 
-        (cardAmount.toDoubleOrNull() ?: 0.0) + 
-        (bankAmount.toDoubleOrNull() ?: 0.0) + 
-        (onlineAmount.toDoubleOrNull() ?: 0.0)
+                        (cardAmount.toDoubleOrNull() ?: 0.0) + 
+                        (bankAmount.toDoubleOrNull() ?: 0.0) + 
+                        (onlineAmount.toDoubleOrNull() ?: 0.0)
     }
 
     // Calculate due amount - if paid exceeds total, due is 0 (overpayment)
@@ -167,8 +167,8 @@ fun PaymentSplitScreen(
                                 } else {
                                     if (exceedsTotal) {
                                         errorMessage = "Payment breakdown exceeds total amount. Please adjust the payment amounts."
-                                    } else {
-                                        errorMessage = "Payment amounts must equal the total amount"
+                                } else {
+                                    errorMessage = "Payment amounts must equal the total amount"
                                     }
                                 }
                             },

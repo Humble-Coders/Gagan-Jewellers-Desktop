@@ -19,7 +19,12 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
             val snapshot = future.get()
             
             snapshot.documents.mapNotNull { doc ->
-                val data = doc.data ?: return@mapNotNull null
+                try {
+                    val data = doc.data
+                    if (data == null) {
+                        println("⚠️ ORDER REPOSITORY: Document ${doc.id} has null data, skipping")
+                        return@mapNotNull null
+                    }
                 
                 Order(
                     orderId = doc.id,
@@ -69,9 +74,16 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                     transactionDate = data["transactionDate"] as? String ?: "",
                     notes = data["notes"] as? String ?: ""
                 )
+                } catch (e: Exception) {
+                    println("⚠️ ORDER REPOSITORY: Error parsing order document ${doc.id}: ${e.message}")
+                    e.printStackTrace()
+                    null
+                }
             }
         } catch (e: Exception) {
-            println("Error fetching orders for customer: ${e.message}")
+            println("❌ ORDER REPOSITORY: Error fetching orders for customer $customerId: ${e.message}")
+            e.printStackTrace()
+            // Return empty list but log the error for debugging
             emptyList()
         }
     }

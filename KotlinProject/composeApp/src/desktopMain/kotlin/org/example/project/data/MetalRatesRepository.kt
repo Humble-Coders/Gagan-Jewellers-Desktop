@@ -8,7 +8,6 @@ interface MetalRatesRepository {
     suspend fun getCurrentMetalRates(): MetalRates
     suspend fun updateGoldRates(goldRates: GoldRates): Boolean
     suspend fun updateSilverRates(silverRates: SilverRates): Boolean
-    suspend fun updateMetalRates(metalRates: MetalRates): Boolean
     suspend fun getGoldRateForKarat(karat: Int): Double
     suspend fun getSilverRateForPurity(purity: Int): Double
 }
@@ -95,31 +94,6 @@ class FirestoreMetalRatesRepository(private val firestore: Firestore) : MetalRat
                 "lastUpdated" to System.currentTimeMillis()
             )
             docRef.set(ratesMap, com.google.cloud.firestore.SetOptions.merge()).get()
-            true
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    override suspend fun updateMetalRates(metalRates: MetalRates): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val docRef = firestore.collection("metal_rates").document("current")
-            val ratesMap = mapOf(
-                "gold_rate24k" to metalRates.goldRates.rate24k,
-                "gold_rate22k" to metalRates.goldRates.rate22k,
-                "gold_rate20k" to metalRates.goldRates.rate20k,
-                "gold_rate18k" to metalRates.goldRates.rate18k,
-                "gold_rate14k" to metalRates.goldRates.rate14k,
-                "gold_rate10k" to metalRates.goldRates.rate10k,
-                "gold_lastUpdated" to metalRates.goldRates.lastUpdated,
-                "silver_rate999" to metalRates.silverRates.rate999,
-                "silver_rate925" to metalRates.silverRates.rate925,
-                "silver_rate900" to metalRates.silverRates.rate900,
-                "silver_rate800" to metalRates.silverRates.rate800,
-                "silver_lastUpdated" to metalRates.silverRates.lastUpdated,
-                "lastUpdated" to System.currentTimeMillis()
-            )
-            docRef.set(ratesMap).get()
             true
         } catch (e: Exception) {
             false

@@ -9,6 +9,7 @@ import org.example.project.data.InvoiceConfig
 import org.example.project.data.MetalRatesManager
 import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.data.Material
+import org.example.project.data.StoreInfoRepository
 import org.example.project.utils.CurrencyFormatter
 import org.example.project.ui.ProductPriceInputs
 import org.example.project.ui.calculateProductPrice
@@ -18,6 +19,9 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.Base64
+import java.security.MessageDigest
+import kotlin.math.roundToInt
 
 class PdfGeneratorService {
 
@@ -89,426 +93,285 @@ class PdfGeneratorService {
     private fun generateInvoiceHtml(order: Order, customer: User, invoiceConfig: InvoiceConfig): String {
         val products = fetchProductDetails(order.items.map { it.productId })
         
-        val dateFormat = SimpleDateFormat("dd/MM/yyyy h:mm a", Locale.getDefault())
+        // Fetch store info from Firestore
+        val storeInfoRepository = StoreInfoRepository()
+        val storeInfo = kotlinx.coroutines.runBlocking {
+            storeInfoRepository.getStoreInfo()
+        }
+
+        val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
         val orderDate = dateFormat.format(Date(order.createdAt))
+        val ackDate = dateFormat.format(Date(order.createdAt))
+
+        val irn = generateIRN(order.orderId, order.createdAt)
+        val ackNo = order.orderId.take(15)
         
         val subtotal = order.totalProductValue
         val gstAmount = order.gstAmount
         val discountAmount = order.discountAmount
         val totalAmount = order.totalAmount
-        val taxableAmount = order.totalProductValue - order.discountAmount
         val gstPercentage = order.gstPercentage.toInt()
 
-        val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
-        val allMetalRates = ratesVM.metalRates.value
+        val mainStore = storeInfo.mainStore
+        val bankInfo = storeInfo.bankInfo
 
-        fun findGoldRate(karat: Int): Double {
-            val goldRates = allMetalRates.filter {
-                it.materialType.contains("gold", ignoreCase = true) && it.isActive
-            }
+        val companyName = if (mainStore.companyName.isNotEmpty()) mainStore.companyName else invoiceConfig.companyName
+        val companyAddress = if (mainStore.address.isNotEmpty()) mainStore.address else invoiceConfig.companyAddress
+        val companyPhone = if (mainStore.phone.isNotEmpty()) mainStore.phone else invoiceConfig.companyPhone
+        val companyEmail = if (mainStore.email.isNotEmpty()) mainStore.email else invoiceConfig.companyEmail
+        val companyGSTIN = if (mainStore.gstin.isNotEmpty()) mainStore.gstin else invoiceConfig.companyGST
+        val companyPAN = mainStore.pan
+        val companyCertification = mainStore.certification
+        val stateCode = if (mainStore.stateCode.isNotEmpty()) mainStore.stateCode else if (companyGSTIN.length >= 2) companyGSTIN.substring(0, 2) else ""
+        val stateName = mainStore.stateName
 
-            val exactMatch = goldRates.find { it.karat == karat }
-            if (exactMatch != null) return exactMatch.pricePerGram
+        val companyLogoBase64 = loadLogoAsBase64("gagan_jewellers_logo.png")
+        val bisLogoBase64 = loadLogoAsBase64("bis_logo.png")
 
-            val typeMatch = goldRates.find {
-                val typeLower = it.materialType.lowercase()
-                (typeLower.contains("$karat") && (typeLower.contains("k") || typeLower.contains("karat"))) ||
-                        (it.karat > 0 && it.karat != karat && it.materialType.contains("$karat", ignoreCase = true))
-            }
-            if (typeMatch != null) {
-                return if (typeMatch.karat > 0 && typeMatch.karat != karat) {
-                    typeMatch.pricePerGram * (karat.toDouble() / typeMatch.karat.toDouble())
-                } else {
-                    typeMatch.pricePerGram
-                }
-            }
-
-            return 0.0
-        }
-
-        fun findSilverRate(purity: Int): Double {
-            val silverRates = allMetalRates.filter {
-                it.materialType.contains("silver", ignoreCase = true) && it.isActive
-            }
-
-            val exactMatch = silverRates.find {
-                it.karat == purity || it.materialType.contains("$purity", ignoreCase = true)
-            }
-            if (exactMatch != null) return exactMatch.pricePerGram
-
-            val typeMatch = silverRates.find {
-                it.materialType.contains("$purity", ignoreCase = true)
-            }
-            if (typeMatch != null) {
-                val basePurity = when {
-                    typeMatch.materialType.contains("999", ignoreCase = true) -> 999
-                    typeMatch.materialType.contains("925", ignoreCase = true) -> 925
-                    typeMatch.materialType.contains("900", ignoreCase = true) -> 900
-                    typeMatch.karat in listOf(999, 925, 900) -> typeMatch.karat
-                    else -> 999
-                }
-                return if (basePurity > 0 && basePurity != purity) {
-                    typeMatch.pricePerGram * (purity.toDouble() / basePurity.toDouble())
-                } else {
-                    typeMatch.pricePerGram
-                }
-            }
-
-            return 0.0
-        }
-
-        // Fetch materials to get gold and silver rates from types array
-        val materials = try {
-            val productRepository = JewelryAppInitializer.getProductRepository()
-            kotlinx.coroutines.runBlocking {
-                productRepository.getMaterials()
-            }
-        } catch (e: Exception) {
-            emptyList()
-        }
-
-        // Extract gold and silver rates from materials collection
-        val goldRatesMap = mutableMapOf<Int, Double>()
-        val silverRatesMap = mutableMapOf<Int, Double>()
-
-        materials.forEach { material ->
-            if (material.name.contains("gold", ignoreCase = true)) {
-                material.types.forEach { type ->
-                    val purity = type.purity.replace("K", "").replace("k", "").toIntOrNull()
-                    val rate = type.rate.replace(",", "").toDoubleOrNull()
-                    if (purity != null && rate != null && rate > 0) {
-                        goldRatesMap[purity] = rate
-                    }
-                }
-            } else if (material.name.contains("silver", ignoreCase = true)) {
-                material.types.forEach { type ->
-                    val purity = type.purity.replace("%", "").toIntOrNull()
-                    val rate = type.rate.replace(",", "").toDoubleOrNull()
-                    if (purity != null && rate != null && rate > 0) {
-                        silverRatesMap[purity] = rate
-                    }
-                }
-            }
-        }
-
-        // Use materials rates if available, otherwise fallback to metal rates
-        val gold24kRate = goldRatesMap[24] ?: findGoldRate(24)
-        val gold22kRate = goldRatesMap[22] ?: findGoldRate(22)
-        val gold18kRate = goldRatesMap[18] ?: findGoldRate(18)
-        val gold14kRate = goldRatesMap[14] ?: findGoldRate(14)
-
-        val silver999Rate = silverRatesMap[999] ?: findSilverRate(999)
-        val silver925Rate = silverRatesMap[925] ?: findSilverRate(925)
-        val silver900Rate = silverRatesMap[900] ?: findSilverRate(900)
-
-        val productTableData = generateTanishqProductTableRows(order.items, products, order, subtotal, discountAmount, gstAmount)
-        val totalQty = productTableData.totalQty
-        val totalGrossWeight = productTableData.totalGrossWeight
-        val totalNetStoneWeight = productTableData.totalNetStoneWeight
-        val totalNetMetalWeight = productTableData.totalNetMetalWeight
-        val totalGrossProductPrice = productTableData.totalGrossProductPrice
-        val totalMakingCharges = productTableData.totalMakingCharges
-        val totalGst = productTableData.totalGst
-        val totalProductValue = productTableData.totalProductValue
-        val totalStoneAmount = productTableData.totalStoneAmount
-
-        val stateCode = if (invoiceConfig.companyGST.length >= 4) {
-            invoiceConfig.companyGST.substring(0, 2)
-        } else ""
-        
-        // Extract pincode from address (look for 6-digit number)
-        val pincodeRegex = Regex("\\b\\d{6}\\b")
-        val pincodeMatch = pincodeRegex.find(invoiceConfig.companyAddress)
-        val pincode = pincodeMatch?.value ?: ""
-        
-        // Try to get CIN from Firestore if available (for now, leave empty if not in model)
-        val companyCIN = "" // Will be populated if CIN field exists in InvoiceConfig
-
-        // Build dynamic content sections
-        // Seller details: shop name, address, pincode, phone, GSTIN, state code, CIN (each on new line)
-        val sellerDetails = buildString {
-            append("<p class=\"detail-line\"><strong>${invoiceConfig.companyName.uppercase()}</strong></p>")
-            append(if (invoiceConfig.companyAddress.isNotEmpty()) "<p class=\"detail-line\">${invoiceConfig.companyAddress.uppercase()}</p>" else "<p class=\"detail-line\"></p>")
-            append(if (pincode.isNotEmpty()) "<p class=\"detail-line\">$pincode</p>" else "<p class=\"detail-line\"></p>")
-            append(if (invoiceConfig.companyPhone.isNotEmpty()) "<p class=\"detail-line\">Phone Number: ${invoiceConfig.companyPhone}</p>" else "<p class=\"detail-line\"></p>")
-            append(if (invoiceConfig.companyGST.isNotEmpty()) "<p class=\"detail-line\">GSTIN: ${invoiceConfig.companyGST}</p>" else "<p class=\"detail-line\"></p>")
-            append(if (stateCode.isNotEmpty()) "<p class=\"detail-line\">State Code: $stateCode</p>" else "<p class=\"detail-line\"></p>")
-            append(if (companyCIN.isNotEmpty()) "<p class=\"detail-line\">CIN: $companyCIN</p>" else "<p class=\"detail-line\"></p>")
-        }
-
-        // Customer details: customer name, address, phone number, customer ID (each on new line)
+        // Customer details in table format
+        val customerStateName = extractStateNameFromAddress(customer.address)
+        val customerStateCode = extractStateCodeFromAddress(customer.address)
+        val city = extractCityFromAddress(customer.address)
         val customerDetails = buildString {
-            append("<p class=\"detail-line\"><strong>${customer.name.uppercase()}</strong></p>")
-            append(if (customer.address.isNotEmpty()) "<p class=\"detail-line\">${customer.address.uppercase()}</p>" else "<p class=\"detail-line\"></p>")
-            append(if (customer.phone.isNotEmpty()) "<p class=\"detail-line\">Phone Number: ${customer.phone}</p>" else "<p class=\"detail-line\"></p>")
-            append("<p class=\"detail-line\">Customer ID: ${customer.customerId.ifEmpty { customer.id }}</p>")
+            append("<tr><td class=\"label\">Name</td><td class=\"colon\">:</td><td>${escapeHtml(customer.name.uppercase())}</td></tr>")
+            append("<tr><td class=\"label\">Address</td><td class=\"colon\">:</td><td>${escapeHtml(customer.address.uppercase())}</td></tr>")
+            append("<tr><td class=\"label\">City</td><td class=\"colon\">:</td><td>${escapeHtml(city.uppercase())} State: ${escapeHtml(customerStateName.uppercase())} (${escapeHtml(customerStateCode)})</td></tr>")
+            append("<tr><td class=\"label\">Ph No.</td><td class=\"colon\">:</td><td>${escapeHtml(customer.phone)}</td></tr>")
         }
 
-        // Standard rates: One line for Gold, One line for Silver
-        val standardRates = buildString {
-            append("<p class=\"rates-line\"><strong>Gold Rates:</strong> 24K: Rs ${String.format("%.2f", gold24kRate)} | 22K: Rs ${String.format("%.2f", gold22kRate)} | 18K: Rs ${String.format("%.2f", gold18kRate)} | 14K: Rs ${String.format("%.2f", gold14kRate)}</p>")
-            append("<p class=\"rates-line\"><strong>Silver Rates:</strong> 999: Rs ${String.format("%.2f", silver999Rate)} | 925: Rs ${String.format("%.2f", silver925Rate)} | 900: Rs ${String.format("%.2f", silver900Rate)}</p>")
+        // Invoice details in table format
+        val invoiceDetails = buildString {
+            append("<tr><td class=\"label\">Memo No.</td><td class=\"colon\">:</td><td>GST/${escapeHtml(order.orderId.takeLast(8))} Date</td><td class=\"colon\">:</td><td>${escapeHtml(orderDate)}</td></tr>")
+            append("<tr><td class=\"label\">State Name</td><td class=\"colon\">:</td><td>${escapeHtml(stateName.uppercase())}</td><td class=\"label\">State Code</td><td>: ${escapeHtml(stateCode)}</td></tr>")
+            append("<tr><td class=\"label\">Place of Delivery</td><td class=\"colon\">:</td><td>${escapeHtml(customerStateName.ifEmpty { stateName }.uppercase())}</td><td></td><td></td></tr>")
         }
+
+        val productTableData = generateProductTableRows(order.items, products, order)
 
         val productTableTotals = """
-            <tr class="totals-row">
-                <td colspan="3"><strong>Total</strong></td>
-                <td><strong>${totalQty}N</strong></td>
-                <td><strong>${String.format("%.3f", totalGrossWeight)}</strong></td>
-                <td><strong>${if (totalNetStoneWeight > 0) String.format("%.3f", totalNetStoneWeight) else "-"}</strong></td>
-                <td><strong>${String.format("%.3f", totalNetMetalWeight)}</strong></td>
-                <td><strong>-</strong></td>
-                <td><strong>${CurrencyFormatter.formatRupeesNumber(totalGrossProductPrice, includeDecimals = true)}</strong></td>
-                <td><strong>${CurrencyFormatter.formatRupeesNumber(totalMakingCharges, includeDecimals = true)}</strong></td>
-                <td><strong>${if (totalStoneAmount > 0) CurrencyFormatter.formatRupeesNumber(totalStoneAmount, includeDecimals = true) else "-"}</strong></td>
-                <td><strong>${CurrencyFormatter.formatRupeesNumber(totalProductValue, includeDecimals = true)}</strong></td>
-            </tr>
+            <td colspan="6" class="text-right"><strong>Total</strong></td>
+            <td><strong>${String.format("%.3f", productTableData.totalGrossWeight)}</strong></td>
+            <td><strong>${String.format("%.3f", productTableData.totalNetWeight)}</strong></td>
+            <td><strong>${String.format("%.3f", productTableData.totalPolish)}</strong></td>
+            <td colspan="2"><strong>${CurrencyFormatter.formatRupeesNumber(productTableData.totalAmount, includeDecimals = true)}</strong></td>
+            <td></td>
         """.trimIndent()
 
-        val paymentTableRows = if (order.paymentSplit != null) {
-            generatePaymentTableRows(order.paymentSplit, customer.name)
-        } else {
-            """
-            <tr>
-                <td>CASH</td>
-                <td>-</td>
-                <td>-</td>
-                <td>${CurrencyFormatter.formatRupeesNumber(totalAmount, includeDecimals = true)}</td>
-            </tr>
-            """.trimIndent()
-        }
-
-        val paymentTableTotals = buildString {
-            append("""
-                <tr class="payment-total-row">
-                    <td colspan="3"><strong>Total Amount Paid</strong></td>
-                    <td><strong>${CurrencyFormatter.formatRupeesNumber(order.paymentSplit?.getTotalPaid() ?: totalAmount, includeDecimals = true)}</strong></td>
-                </tr>
-            """.trimIndent())
-            if (order.paymentSplit?.dueAmount ?: 0.0 > 0) {
-                append("""
-                <tr class="payment-total-row">
-                    <td colspan="3"><strong>Due Amount</strong></td>
-                    <td><strong>${CurrencyFormatter.formatRupeesNumber(order.paymentSplit?.dueAmount ?: 0.0, includeDecimals = true)}</strong></td>
-                </tr>
-                """.trimIndent())
+        val bankDetails = buildString {
+            if (bankInfo.accountHolder.isNotEmpty()) {
+                append("<p><strong>Account holder:</strong> ${escapeHtml(bankInfo.accountHolder)}</p>")
+            }
+            if (bankInfo.accountNumber.isNotEmpty()) {
+                append("<p><strong>Account no.:</strong> ${escapeHtml(bankInfo.accountNumber)}</p>")
+            }
+            if (bankInfo.ifscCode.isNotEmpty()) {
+                append("<p><strong>IFSC code:</strong> ${escapeHtml(bankInfo.ifscCode)}</p>")
+            }
+            if (bankInfo.branch.isNotEmpty()) {
+                append("<p><strong>BRANCH:</strong> ${escapeHtml(bankInfo.branch)}</p>")
+            }
+            if (bankInfo.accountType.isNotEmpty()) {
+                append("<p><strong>Account Type:</strong> ${escapeHtml(bankInfo.accountType)}</p>")
             }
         }
 
-        // Summary rows: Total Product Value, GST Applied and Amount After GST, Discount Applied and Amount After Discount, Total Amount to be Paid (bold)
+        val gstinDetails = buildString {
+            append("<p><strong>Company's GSTIN No.</strong> :${escapeHtml(companyGSTIN)}</p>")
+            if (companyPAN.isNotEmpty()) {
+                append("<p><strong>Company PAN No.</strong> :${escapeHtml(companyPAN)}</p>")
+            }
+            append("<p><strong>Buyer's GSTIN No.</strong> :</p>")
+            append("<p><strong>Buyer's PAN</strong></p>")
+        }
+
+        val taxableAmount = subtotal - discountAmount
+        val sgstAmount = gstAmount / 2
+        val cgstAmount = gstAmount / 2
+        val grossTotal = taxableAmount + gstAmount
+        val roundedTotal = grossTotal.roundToInt().toDouble()
+        val roundOff = roundedTotal - grossTotal
+
         val summaryRows = buildString {
             append("""
-                <div class="summary-item-row">
-                    <span class="summary-label">Total Product Value:</span>
-                    <span class="summary-value">${CurrencyFormatter.formatRupeesNumber(totalProductValue, includeDecimals = true)}</span>
-                </div>
-                <div class="summary-item-row">
-                    <span class="summary-label">GST Applied (${gstPercentage}%):</span>
-                    <span class="summary-value">${CurrencyFormatter.formatRupeesNumber(gstAmount, includeDecimals = true)}</span>
-                </div>
-                <div class="summary-item-row">
-                    <span class="summary-label">Amount After GST:</span>
-                    <span class="summary-value">${CurrencyFormatter.formatRupeesNumber(totalProductValue + gstAmount, includeDecimals = true)}</span>
-                </div>
-                <div class="summary-item-row">
-                    <span class="summary-label">Discount Applied:</span>
-                    <span class="summary-value">${CurrencyFormatter.formatRupeesNumber(discountAmount, includeDecimals = true)}</span>
-                </div>
-                <div class="summary-item-row">
-                    <span class="summary-label">Amount After Discount (Net Invoice Value):</span>
-                    <span class="summary-value">${CurrencyFormatter.formatRupeesNumber(totalProductValue + gstAmount - discountAmount, includeDecimals = true)}</span>
-                </div>
-                <div class="summary-item-row total-payable">
-                    <span class="summary-label"><strong>Total Amount to be Paid:</strong></span>
-                    <span class="summary-value"><strong>${CurrencyFormatter.formatRupeesNumber(totalAmount, includeDecimals = true)}</strong></span>
-                </div>
-            """.trimIndent())
+            <tr>
+                <td class="label">Amount</td>
+                <td class="value">${CurrencyFormatter.formatRupeesNumber(subtotal, includeDecimals = true)}</td>
+            </tr>
+            <tr>
+                <td class="label">Less: Discount</td>
+                <td class="value">${CurrencyFormatter.formatRupeesNumber(discountAmount, includeDecimals = true)}</td>
+            </tr>
+            <tr>
+                <td class="label">Taxable Amount</td>
+                <td class="value">${CurrencyFormatter.formatRupeesNumber(taxableAmount, includeDecimals = true)}</td>
+            </tr>
+            <tr>
+                <td class="label">SGST ${String.format("%.3f", gstPercentage / 2.0)} %</td>
+                <td class="value">${CurrencyFormatter.formatRupeesNumber(sgstAmount, includeDecimals = true)}</td>
+            </tr>
+            <tr>
+                <td class="label">CGST ${String.format("%.3f", gstPercentage / 2.0)} %</td>
+                <td class="value">${CurrencyFormatter.formatRupeesNumber(cgstAmount, includeDecimals = true)}</td>
+            </tr>
+            <tr>
+                <td class="label"><strong>Gross Total</strong></td>
+                <td class="value"><strong>${CurrencyFormatter.formatRupeesNumber(grossTotal, includeDecimals = true)}</strong></td>
+            </tr>
+            <tr>
+                <td class="label">Round Off</td>
+                <td class="value">${CurrencyFormatter.formatRupeesNumber(roundOff, includeDecimals = true)}</td>
+            </tr>
+            <tr class="net-amount">
+                <td class="label"><strong>Net Amount</strong></td>
+                <td class="value"><strong>${CurrencyFormatter.formatRupeesNumber(roundedTotal, includeDecimals = true)}</strong></td>
+            </tr>
+        """.trimIndent())
+        }
+
+        val paymentDetails = if (order.paymentSplit != null) {
+            buildString {
+                if (order.paymentSplit.cash > 0) {
+                    append("<p>Cash: ${CurrencyFormatter.formatRupeesNumber(order.paymentSplit.cash, includeDecimals = true)}</p>")
+                }
+                if (order.paymentSplit.bank > 0) {
+                    append("<p>Bank/Card/Online: ${CurrencyFormatter.formatRupeesNumber(order.paymentSplit.bank, includeDecimals = true)}</p>")
+                }
+                if (order.paymentSplit.dueAmount > 0) {
+                    append("<p>Due Amount: ${CurrencyFormatter.formatRupeesNumber(order.paymentSplit.dueAmount, includeDecimals = true)}</p>")
+                }
+            }
+        } else {
+            "<p>Cash: ${CurrencyFormatter.formatRupeesNumber(totalAmount, includeDecimals = true)}</p>"
         }
 
         val termsAndConditions = """
-            <p class="terms-line">1. Net Invoice Value includes Gold value, Product Making charge, Wastage, Vat / Sales tax, and Stone cost (as applicable).</p>
-            <p class="terms-line">2. Received above products in good condition.</p>
-        """.trimIndent()
+        <ol>
+            <li>No encashment or exchange without presentation of this Invoice.</li>
+            <li>Any exchange of gold ornaments can be made within 48 hours, only if it is not tampered, repaired or used.</li>
+            <li>The company is not liable for colours, damage, loss and breakage of ornaments.</li>
+            <li>In case of payment by cheque, delivery of goods will be made only after realization of cheque.</li>
+            <li>Terms &amp; conditions are subject to change without prior notice.</li>
+            <li>Including Hallmarking Charge</li>
+            <li>Disputes if any, are subject to SAHARSA jurisdiction</li>
+        </ol>
+    """.trimIndent()
 
-        // Load template files
         val htmlTemplate = loadTemplateFile("invoice-template.html")
         val cssContent = loadTemplateFile("invoice-styles.css")
 
-        // Replace placeholders
-        return htmlTemplate
+        // Convert HTML to XHTML-compliant format
+        val finalHtml = htmlTemplate
             .replace("{{CSS_CONTENT}}", cssContent)
-            .replace("{{ORDER_ID}}", order.orderId)
-            .replace("{{DOC_ID}}", order.orderId.takeLast(8))
-            .replace("{{ORDER_DATE}}", orderDate)
-            .replace("{{SELLER_DETAILS}}", sellerDetails)
+            .replace("{{COMPANY_LOGO_PATH}}", companyLogoBase64)
+            .replace("{{BIS_LOGO_PATH}}", bisLogoBase64)
+            .replace("{{COMPANY_NAME}}", escapeHtml(companyName))
+            .replace("{{COMPANY_ADDRESS}}", escapeHtml(companyAddress))
+            .replace("{{COMPANY_CERTIFICATION}}", escapeHtml(companyCertification))
+            .replace("{{COMPANY_PHONE}}", escapeHtml(companyPhone))
+            .replace("{{COMPANY_EMAIL}}", escapeHtml(companyEmail))
+            .replace("{{COMPANY_GSTIN}}", escapeHtml(companyGSTIN))
+            .replace("{{IRN}}", escapeHtml(irn))
+            .replace("{{ACK_NO}}", escapeHtml(ackNo))
+            .replace("{{ACK_DATE}}", escapeHtml(ackDate))
+            .replace("{{ORDER_ID}}", escapeHtml(order.orderId))
             .replace("{{CUSTOMER_DETAILS}}", customerDetails)
-            .replace("{{STANDARD_RATES}}", standardRates)
+            .replace("{{INVOICE_DETAILS}}", invoiceDetails)
             .replace("{{PRODUCT_TABLE_ROWS}}", productTableData.rows)
             .replace("{{PRODUCT_TABLE_TOTALS}}", productTableTotals)
-            .replace("{{PAYMENT_TABLE_ROWS}}", paymentTableRows)
-            .replace("{{PAYMENT_TABLE_TOTALS}}", paymentTableTotals)
+            .replace("{{BANK_DETAILS}}", bankDetails)
+            .replace("{{GSTIN_DETAILS}}", gstinDetails)
             .replace("{{SUMMARY_ROWS}}", summaryRows)
-            .replace("{{AMOUNT_IN_WORDS}}", convertAmountToWords(totalAmount))
+            .replace("{{AMOUNT_IN_WORDS}}", convertAmountToWords(roundedTotal))
+            .replace("{{PAYMENT_DETAILS}}", paymentDetails)
             .replace("{{TERMS_AND_CONDITIONS}}", termsAndConditions)
+
+        // Convert to XHTML-compliant (fix self-closing tags)
+        return convertToXhtmlCompliant(finalHtml)
+    }
+
+    /**
+     * Convert HTML to XHTML-compliant format
+     */
+    private fun convertToXhtmlCompliant(html: String): String {
+        return html
+            .replace("<br>", "<br />")
+            .replace("<hr>", "<hr />")
+            .replace("<img ", "<img ", ignoreCase = false)
+            .replace(Regex("""<img([^>]*[^/])>"""), "<img$1 />")
+            .replace(Regex("""<input([^>]*[^/])>"""), "<input$1 />")
+            .replace(Regex("""<meta([^>]*[^/])>"""), "<meta$1 />")
     }
 
     private data class ProductTableData(
         val rows: String,
         val totalQty: Int,
         val totalGrossWeight: Double,
-        val totalNetStoneWeight: Double,
-        val totalNetMetalWeight: Double,
-        val totalGrossProductPrice: Double,
-        val totalMakingCharges: Double,
-        val totalGst: Double,
-        val totalProductValue: Double,
-        val totalStoneAmount: Double = 0.0
+        val totalNetWeight: Double,
+        val totalPolish: Double,
+        val totalAmount: Double
     )
 
-    private fun generateTanishqProductTableRows(
+    private fun generateProductTableRows(
         items: List<org.example.project.data.OrderItem>,
         products: List<org.example.project.data.Product>,
-        order: Order,
-        orderSubtotal: Double,
-        orderDiscountAmount: Double,
-        orderGstAmount: Double
+        order: Order
     ): ProductTableData {
-            val metalRates = MetalRatesManager.metalRates.value
-        val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
-
         var totalQty = 0
         var totalGrossWeight = 0.0
-        var totalNetStoneWeight = 0.0
-        var totalNetMetalWeight = 0.0
-        var totalGrossProductPrice = 0.0
-        var totalMakingCharges = 0.0
-        var totalGst = 0.0
-        var totalProductValue = 0.0
-        var totalStoneAmount = 0.0
+        var totalNetWeight = 0.0
+        var totalPolish = 0.0
+        var totalAmount = 0.0
+        var slNo = 1
 
         val rows = items.joinToString("") { item ->
-            val product = products.find { it.id == item.productId }
-            if (product == null) {
-                return@joinToString ""
-            }
-            
-            // Use making % and labour charges from OrderItem (stored in orders collection)
-            val makingPercentage = item.makingPercentage
-            val labourCharges = item.labourCharges
-
-            val grossWeight = product.totalWeight
-            val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-            val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-
-            val kundanPrice = kundanStones.sumOf { it.amount }
-            val kundanWeight = kundanStones.sumOf { it.weight }
-            val jarkanPrice = jarkanStones.sumOf { it.amount }
-            val jarkanWeight = jarkanStones.sumOf { it.weight }
-
-            // OrderItem no longer has materialType, use product materialType
-            val materialType = product.materialType
-            val metalKarat = extractKaratFromMaterialType(materialType)
-            val collectionRate = try {
-                ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
-            } catch (e: Exception) { 0.0 }
-            val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
-
-            val materialTypeLower = product.materialType.lowercase()
-            val silverPurity = when {
-                materialTypeLower.contains("999") -> 999
-                materialTypeLower.contains("925") || materialTypeLower.contains("92.5") -> 925
-                materialTypeLower.contains("900") || materialTypeLower.contains("90.0") -> 900
-                else -> {
-                    val threeDigits = Regex("(\\d{3})").find(materialTypeLower)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                    if (threeDigits != null && threeDigits in listOf(900, 925, 999)) threeDigits else 999
-                }
-            }
-            val silverRate = metalRates.getSilverRateForPurity(silverPurity)
-            val goldRatePerGram = if (collectionRate > 0) collectionRate else when {
-                product.materialType.contains("gold", ignoreCase = true) -> defaultGoldRate
-                product.materialType.contains("silver", ignoreCase = true) -> silverRate
-                else -> defaultGoldRate
-            }
-
-            val priceInputs = ProductPriceInputs(
-                grossWeight = grossWeight,
-                goldPurity = materialType,
-                goldWeight = product.materialWeight.takeIf { it > 0 } ?: grossWeight,
-                makingPercentage = makingPercentage,
-                labourRatePerGram = item.labourRate, // Use from OrderItem
-                kundanPrice = kundanPrice,
-                kundanWeight = kundanWeight,
-                jarkanPrice = jarkanPrice,
-                jarkanWeight = jarkanWeight,
-                goldRatePerGram = goldRatePerGram
-            )
-
-            val result = calculateProductPrice(priceInputs)
+            val product = products.find { it.id == item.productId } ?: return@joinToString ""
 
             val quantity = item.quantity
-            val netWeight = result.newWeight
+            val grossWeight = product.totalWeight * quantity
+            val netWeight = (product.materialWeight.takeIf { it > 0 } ?: product.totalWeight) * quantity
+            val stoneWeight = product.stones.sumOf { it.weight } * quantity
+            val polish = stoneWeight
 
-            val netMetalWeight = (product.materialWeight.takeIf { it > 0 } ?: grossWeight) * quantity
-            val netStoneWeight = (kundanWeight + jarkanWeight) * quantity
+            val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
+            val metalKarat = extractKaratFromMaterialType(product.materialType)
+            val rate = try {
+                ratesVM.calculateRateForMaterial(product.materialId, product.materialType, metalKarat)
+            } catch (e: Exception) { 0.0 }
 
-            // Base amount (same as receipt screen)
-            val baseAmount = result.goldPrice * quantity
-            // Use labour charges from OrderItem (stored in orders collection)
-            val makingCharges = labourCharges * quantity
-            // Item total (same as receipt screen)
-            val itemTotal = result.totalProductPrice * quantity
-
-            val taxableAmount = orderSubtotal - orderDiscountAmount
-            val itemGst = if (order.isGstIncluded && taxableAmount > 0 && orderSubtotal > 0) {
-                (itemTotal / orderSubtotal) * orderGstAmount
-            } else {
-                0.0
-            }
-
-            // Cost value = item total (same as receipt screen)
-            val costValue = itemTotal
+            val labourPerGram = item.labourRate
+            // Calculate amount: (netWeight * rate) + labourCharges
+            val amount = (netWeight * rate) + item.labourCharges
 
             totalQty += quantity
-            totalGrossWeight += grossWeight * quantity
-            totalNetStoneWeight += netStoneWeight
-            totalNetMetalWeight += netMetalWeight
-            totalGrossProductPrice += baseAmount // Use baseAmount instead of grossProductPrice
-            totalMakingCharges += makingCharges
-            totalGst += itemGst
-            totalProductValue += costValue
+            totalGrossWeight += grossWeight
+            totalNetWeight += netWeight
+            totalPolish += polish
+            totalAmount += amount
 
             val hsnCode = "71131910"
-
             val purityDisplay = when {
-                materialType.contains("22", ignoreCase = true) -> "G-22Karat"
-                materialType.contains("18", ignoreCase = true) -> "G-18Karat"
-                materialType.contains("14", ignoreCase = true) -> "G-14Karat"
-                materialType.contains("24", ignoreCase = true) -> "G-24Karat"
-                materialType.contains("silver", ignoreCase = true) -> "S-${silverPurity}"
-                else -> materialType.uppercase()
+                product.materialType.contains("99.99", ignoreCase = true) -> "99.99"
+                product.materialType.contains("22", ignoreCase = true) -> "22K"
+                product.materialType.contains("18", ignoreCase = true) -> "18K"
+                product.materialType.contains("14", ignoreCase = true) -> "14K"
+                product.materialType.contains("24", ignoreCase = true) -> "24K"
+                else -> product.materialType.uppercase()
             }
-
-            val makingPercentDisplay = if (makingPercentage > 0) String.format("%.2f", makingPercentage) else "0.00"
-            val stoneAmount = (kundanPrice + jarkanPrice) * quantity
-            val stoneAmountDisplay = if (stoneAmount > 0) CurrencyFormatter.formatRupeesNumber(stoneAmount, includeDecimals = true) else "-"
-            val netStoneWeightDisplay = if (netStoneWeight > 0) String.format("%.3f", netStoneWeight) else "-"
-            
-            totalStoneAmount += stoneAmount
             
             """
             <tr>
-                <td>${item.barcodeId.ifEmpty { product.id.takeLast(12) }}</td>
-                <td>${product.name.uppercase()}</td>
-                <td>$purityDisplay</td>
-                <td>${quantity}N</td>
-                <td>${String.format("%.3f", grossWeight * quantity)}</td>
-                <td>$netStoneWeightDisplay</td>
-                <td>${String.format("%.3f", netMetalWeight)}</td>
-                <td>$makingPercentDisplay%</td>
-                <td>${CurrencyFormatter.formatRupeesNumber(baseAmount, includeDecimals = true)}</td>
-                <td>${CurrencyFormatter.formatRupeesNumber(makingCharges, includeDecimals = true)}</td>
-                <td>$stoneAmountDisplay</td>
-                <td>${CurrencyFormatter.formatRupeesNumber(costValue, includeDecimals = true)}</td>
+                <td>${slNo++}.</td>
+                <td>${escapeHtml(product.name.uppercase())}</td>
+                <td>${escapeHtml(product.id.takeLast(8))}</td>
+                <td>${quantity}</td>
+                <td>${hsnCode}</td>
+                <td>${escapeHtml(purityDisplay)}</td>
+                <td>${String.format("%.3f", grossWeight)}</td>
+                <td>${String.format("%.3f", netWeight)}</td>
+                <td>${String.format("%.2f", polish)}</td>
+                <td>${if (rate > 0) CurrencyFormatter.formatRupeesNumber(rate, includeDecimals = false) else ""}</td>
+                <td>${if (labourPerGram > 0) CurrencyFormatter.formatRupeesNumber(labourPerGram, includeDecimals = false) else ""}</td>
+                <td>${CurrencyFormatter.formatRupeesNumber(amount, includeDecimals = true)}</td>
             </tr>
             """.trimIndent()
         }
@@ -517,49 +380,10 @@ class PdfGeneratorService {
             rows = rows,
             totalQty = totalQty,
             totalGrossWeight = totalGrossWeight,
-            totalNetStoneWeight = totalNetStoneWeight,
-            totalNetMetalWeight = totalNetMetalWeight,
-            totalGrossProductPrice = totalGrossProductPrice,
-            totalMakingCharges = totalMakingCharges,
-            totalGst = totalGst,
-            totalProductValue = totalProductValue,
-            totalStoneAmount = totalStoneAmount
+            totalNetWeight = totalNetWeight,
+            totalPolish = totalPolish,
+            totalAmount = totalAmount
         )
-    }
-
-    private fun generatePaymentTableRows(paymentSplit: org.example.project.data.PaymentSplit, customerName: String): String {
-        return buildString {
-            if (paymentSplit.cash > 0) {
-                append("""
-                <tr>
-                    <td>CASH</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>${CurrencyFormatter.formatRupeesNumber(paymentSplit.cash, includeDecimals = true)}</td>
-                </tr>
-                """.trimIndent())
-            }
-            if (paymentSplit.bank > 0) {
-                append("""
-                <tr>
-                    <td>BANK/CARD/ONLINE</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>${CurrencyFormatter.formatRupeesNumber(paymentSplit.bank, includeDecimals = true)}</td>
-                </tr>
-                """.trimIndent())
-            }
-            if (paymentSplit.dueAmount > 0) {
-                append("""
-                <tr>
-                    <td>DUE</td>
-                    <td>-</td>
-                    <td>-</td>
-                    <td>${CurrencyFormatter.formatRupeesNumber(paymentSplit.dueAmount, includeDecimals = true)}</td>
-                </tr>
-                """.trimIndent())
-            }
-        }
     }
 
     private fun loadTemplateFile(filename: String): String {
@@ -621,7 +445,7 @@ class PdfGeneratorService {
                 println("   Checking: ${absolutePath.absolutePath} (exists: ${absolutePath.exists()})")
             }
             
-            // 6. Try to find from class location (for development/build)
+            // 5. Try to find from class location (for development/build)
             try {
                 val codeSource = javaClass.protectionDomain?.codeSource?.location
                 if (codeSource != null) {
@@ -635,7 +459,7 @@ class PdfGeneratorService {
                 }
             } catch (e: Exception) { possiblePaths.add(null) }
             
-            // 7. Try to find utils directory relative to this class file
+            // 6. Try to find utils directory relative to this class file
             try {
                 val classResource = javaClass.getResource("${javaClass.simpleName}.class")
                 if (classResource != null && classResource.protocol == "file") {
@@ -649,7 +473,7 @@ class PdfGeneratorService {
                 }
             } catch (e: Exception) { possiblePaths.add(null) }
             
-            // 8. Try to find project root using findProjectRoot helper
+            // 7. Try to find project root using findProjectRoot helper
             val foundProjectRoot = findProjectRoot()
             if (foundProjectRoot != null) {
                 val foundPath = File("$foundProjectRoot/composeApp/src/desktopMain/kotlin/org/example/project/utils/$filename")
@@ -673,6 +497,112 @@ class PdfGeneratorService {
             e.printStackTrace()
             throw IllegalStateException("Could not load template file: $filename - ${e.message}", e)
         }
+    }
+
+    /**
+     * Escape HTML entities to prevent XML parsing errors
+     */
+    private fun escapeHtml(text: String): String {
+        return text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("\"", "&quot;")
+            .replace("'", "&#39;")
+    }
+
+    /**
+     * Generate IRN (Invoice Reference Number) using SHA-256 hash
+     */
+    private fun generateIRN(orderId: String, timestamp: Long): String {
+        val input = "$orderId$timestamp"
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hashBytes = digest.digest(input.toByteArray())
+        return hashBytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Load logo from composeResources and convert to base64 data URI
+     */
+    private fun loadLogoAsBase64(filename: String): String {
+        return try {
+            // Try to load from composeResources
+            val resourceStream = javaClass.getResourceAsStream("/drawable/$filename")
+                ?: javaClass.classLoader.getResourceAsStream("drawable/$filename")
+
+            if (resourceStream != null) {
+                val imageBytes = resourceStream.readBytes()
+                val base64 = Base64.getEncoder().encodeToString(imageBytes)
+                val mimeType = when {
+                    filename.endsWith(".png", ignoreCase = true) -> "image/png"
+                    filename.endsWith(".jpg", ignoreCase = true) || filename.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
+                    else -> "image/png"
+                }
+                return "data:$mimeType;base64,$base64"
+            }
+
+            // Try to load from file system (composeResources folder)
+            val userDir = System.getProperty("user.dir")
+            val projectRoot = findProjectRoot() ?: userDir
+            val logoPath = File("$projectRoot/composeApp/src/commonMain/composeResources/drawable/$filename")
+
+            if (logoPath.exists()) {
+                val imageBytes = logoPath.readBytes()
+                val base64 = Base64.getEncoder().encodeToString(imageBytes)
+                val mimeType = when {
+                    filename.endsWith(".png", ignoreCase = true) -> "image/png"
+                    filename.endsWith(".jpg", ignoreCase = true) || filename.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
+                    else -> "image/png"
+                }
+                return "data:$mimeType;base64,$base64"
+            }
+
+            println("⚠️ Logo not found: $filename")
+            "" // Return empty string if logo not found
+        } catch (e: Exception) {
+            println("⚠️ Error loading logo $filename: ${e.message}")
+            "" // Return empty string on error
+        }
+    }
+
+    /**
+     * Extract state code from address (look for state code patterns)
+     */
+    private fun extractStateCodeFromAddress(address: String): String {
+        // Common state codes in India
+        val stateCodePattern = Regex("""\b([0-9]{2})\b""")
+        val match = stateCodePattern.find(address)
+        return match?.groupValues?.get(1) ?: ""
+    }
+
+    /**
+     * Extract state name from address
+     */
+    private fun extractStateNameFromAddress(address: String): String {
+        val states = listOf("Punjab", "Haryana", "Delhi", "Uttar Pradesh", "Rajasthan", "Himachal Pradesh", "Bihar", "West Bengal")
+        for (state in states) {
+            if (address.contains(state, ignoreCase = true)) {
+                return state
+            }
+        }
+        return ""
+    }
+
+    /**
+     * Extract city from address (usually before state or after comma)
+     */
+    private fun extractCityFromAddress(address: String): String {
+        // Try to extract city - usually the last word before state or after first comma
+        val parts = address.split(",")
+        if (parts.size > 1) {
+            return parts[0].trim()
+        }
+        // If no comma, try to get first word
+        val words = address.split(" ")
+        if (words.isNotEmpty()) {
+            return words[0]
+        }
+        return ""
     }
     
     private fun findProjectRoot(): String? {

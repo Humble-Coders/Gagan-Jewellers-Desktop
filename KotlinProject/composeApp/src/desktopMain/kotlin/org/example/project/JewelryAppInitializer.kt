@@ -15,8 +15,6 @@ import org.example.project.data.PaymentRepository
 import org.example.project.data.ProductRepository
 import org.example.project.data.GoldRateRepository
 import org.example.project.data.FirestoreGoldRateRepository
-import org.example.project.data.MetalRatesRepository
-import org.example.project.data.FirestoreMetalRatesRepository
 import org.example.project.data.MetalRatesManager
 import org.example.project.data.MetalRateRepository
 import org.example.project.data.FirestoreMetalRateRepository
@@ -56,7 +54,7 @@ object JewelryAppInitializer {
     private lateinit var bucketName: String
     private lateinit var storageService: StorageService
 
-    private var repository: ProductRepository? = null
+    private var repository: ProductRepository = FirestoreProductRepository
     private var viewModel: ProductsViewModel? = null
     private var imageLoader: ImageLoader? = null
     private var customerRepository: CustomerRepository? = null
@@ -66,8 +64,7 @@ object JewelryAppInitializer {
     private var paymentViewModel: PaymentViewModel? = null
     private var goldRateRepository: GoldRateRepository? = null
     private var goldRateViewModel: GoldRateViewModel? = null
-    private var metalRatesRepository: MetalRatesRepository? = null
-    private var metalRateRepository: MetalRateRepository? = null
+    private var metalRateRepository: MetalRateRepository = FirestoreMetalRateRepository
     private var metalRateViewModel: MetalRateViewModel? = null
     private var bookingRepository: BookingRepository? = null
     private var appointmentViewModel: AppointmentViewModel? = null
@@ -121,24 +118,56 @@ object JewelryAppInitializer {
             // Initialize StorageService
             storageService = StorageService(storage, bucketName)
 
-            // Create dependencies
-            repository = FirestoreProductRepository(firestore, storage)
-            val stonesRepository: StonesRepository = FirestoreStonesRepository(firestore)
-            inventoryRepository = FirestoreInventoryRepository(firestore)
-            viewModel = ProductsViewModel(repository!!, stonesRepository, inventoryRepository)
-            imageLoader = ImageLoader(repository!!)
-            customerRepository = FirestoreCustomerRepository(firestore)
-            customerViewModel = CustomerViewModel(customerRepository!!)
-            cartViewModel = CartViewModel(repository!!, imageLoader!!)
+            // Initialize ProductRepository as object with Firestore listeners
+            println("🔧 JEWELRY APP INITIALIZER: Initializing ProductRepository object")
+            println("   - This will create the SINGLE Firestore listeners")
+            println("   - All ViewModels will share this same repository instance")
+            FirestoreProductRepository.initialize(firestore, storage)
+            repository = FirestoreProductRepository
+            println("✅ JEWELRY APP INITIALIZER: ProductRepository initialized")
+            println("   - Repository instance: ${FirestoreProductRepository.hashCode()}")
+            println("   - Listeners should now be active")
+            
+            // Initialize StonesRepository as object with Firestore listener
+            FirestoreStonesRepository.initialize(firestore)
+            val stonesRepository: StonesRepository = FirestoreStonesRepository
+            // Initialize InventoryRepository as object
+            FirestoreInventoryRepository.initialize(firestore)
+            inventoryRepository = FirestoreInventoryRepository
+            viewModel = ProductsViewModel(repository, stonesRepository, inventoryRepository)
+            imageLoader = ImageLoader(repository)
+            
+            // Initialize CustomerRepository as object with Firestore listener
+            println("🔧 JEWELRY APP INITIALIZER: Initializing CustomerRepository object")
+            println("   - This will create the SINGLE Firestore listener")
+            println("   - All ViewModels will share this same repository instance")
+            FirestoreCustomerRepository.initialize(firestore)
+            customerRepository = FirestoreCustomerRepository
+            println("✅ JEWELRY APP INITIALIZER: CustomerRepository initialized")
+            println("   - Repository instance: ${FirestoreCustomerRepository.hashCode()}")
+            println("   - Listener should now be active")
+            
+            customerViewModel = CustomerViewModel()
+            println("✅ JEWELRY APP INITIALIZER: CustomerViewModel created")
+            println("   - ViewModel instance: ${customerViewModel.hashCode()}")
+            println("   - Using shared StateFlow from repository")
+            cartViewModel = CartViewModel(repository, imageLoader!!)
             paymentRepository = FirestorePaymentRepository(firestore)
             orderRepository = FirestoreOrderRepository(firestore)
             paymentViewModel = PaymentViewModel(paymentRepository!!, orderRepository!!)
             goldRateRepository = FirestoreGoldRateRepository(firestore)
             goldRateViewModel = GoldRateViewModel(goldRateRepository!!)
-            metalRatesRepository = FirestoreMetalRatesRepository(firestore)
-            MetalRatesManager.initialize(metalRatesRepository!!)
-            metalRateRepository = FirestoreMetalRateRepository(firestore)
-            metalRateViewModel = MetalRateViewModel(metalRateRepository!!)
+            // Initialize MetalRateRepository as object with Firestore listeners
+            println("🔧 JEWELRY APP INITIALIZER: Initializing MetalRateRepository object")
+            println("   - This will create the SINGLE Firestore listeners")
+            println("   - All ViewModels will share this same repository instance")
+            FirestoreMetalRateRepository.initialize(firestore)
+            metalRateRepository = FirestoreMetalRateRepository
+            println("✅ JEWELRY APP INITIALIZER: MetalRateRepository initialized")
+            println("   - Repository instance: ${FirestoreMetalRateRepository.hashCode()}")
+            println("   - Listeners should now be active")
+            MetalRatesManager.initialize(metalRateRepository)
+            metalRateViewModel = MetalRateViewModel(metalRateRepository)
             bookingRepository = FirestoreBookingRepository(firestore)
             appointmentViewModel = AppointmentViewModel(bookingRepository!!)
             availabilityRepository = FirestoreAvailabilityRepository(firestore)
@@ -177,7 +206,7 @@ object JewelryAppInitializer {
 
     fun getProductRepository(): ProductRepository {
         checkInitialized()
-        return repository!!
+        return repository
     }
 
     fun getInventoryRepository(): InventoryRepository {

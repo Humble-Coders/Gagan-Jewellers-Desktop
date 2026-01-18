@@ -34,6 +34,7 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                 "isGstIncluded" to order.isGstIncluded,
                 "createdAt" to order.createdAt,
                 "updatedAt" to order.updatedAt,
+                "invoiceUrl" to order.invoiceUrl,
                 "transactionDate" to order.transactionDate,
                 "notes" to order.notes,
                 "items" to order.items.map { item ->
@@ -51,6 +52,17 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                         "bank" to split.bank, // Sum of bankAmount + cardAmount + onlineAmount
                         "cash" to split.cash,
                         "dueAmount" to split.dueAmount
+                    )
+                },
+                "exchange_gold" to order.exchangeGold?.let { exchange ->
+                    mapOf(
+                        "productName" to exchange.productName,
+                        "goldWeight" to exchange.goldWeight,
+                        "goldPurity" to exchange.goldPurity,
+                        "goldRate" to exchange.goldRate,
+                        "finalGoldExchangePrice" to exchange.finalGoldExchangePrice,
+                        "totalProductWeight" to exchange.totalProductWeight,
+                        "percentage" to exchange.percentage
                     )
                 }
             )
@@ -76,7 +88,9 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                     try {
                         firestore.runTransaction { transaction: Transaction ->
                             // STEP 1: ALL READS FIRST (Firebase requirement)
-                            // Validate inventory items exist before deletion (prevents race conditions)
+                            // Validate inventory items exist before deletion and get product IDs
+                            val productQuantityMap = mutableMapOf<String, Int>() // productId -> count of items to delete
+                            
                             if (hasInventoryUpdates) {
                                 inventoryItemIds.forEach { inventoryItemId ->
                                     val inventoryRef = firestore.collection("inventory").document(inventoryItemId)
@@ -84,8 +98,30 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                                     if (!inventoryDoc.exists()) {
                                         throw Exception("Inventory item $inventoryItemId not found - may have been sold to another customer")
                                     }
+                                    
+                                    // Get product_id from inventory document
+                                    val productId = inventoryDoc.getString("product_id") ?: ""
+                                    if (productId.isNotEmpty()) {
+                                        productQuantityMap[productId] = productQuantityMap.getOrDefault(productId, 0) + 1
+                                    }
                                 }
                                 println("✅ PAYMENT REPOSITORY: All inventory items validated within transaction")
+                                println("   - Products to update: ${productQuantityMap.keys.size}")
+                            }
+                            
+                            // Read product documents to get current quantities
+                            val productQuantities = mutableMapOf<String, Int>()
+                            
+                            productQuantityMap.keys.forEach { productId ->
+                                val productRef = firestore.collection("products").document(productId)
+                                val productDoc = transaction.getDocument(productRef)
+                                if (productDoc.exists()) {
+                                    val quantityStr = productDoc.getString("quantity") ?: "0"
+                                    val currentQuantity = quantityStr.toIntOrNull() ?: 0
+                                    productQuantities[productId] = currentQuantity
+                                } else {
+                                    productQuantities[productId] = 0
+                                }
                             }
                             
                             var currentBalance = 0.0
@@ -122,7 +158,22 @@ class FirestorePaymentRepository(private val firestore: Firestore) : PaymentRepo
                                 println("✅ PAYMENT REPOSITORY: ${inventoryItemIds.size} inventory items deleted atomically")
                             }
                             
-                            println("✅ PAYMENT REPOSITORY: Order, balance, and inventory updated atomically")
+                            // 4. Update product quantities atomically (deduct deleted inventory items)
+                            productQuantityMap.forEach { (productId, deleteCount) ->
+                                val productRef = firestore.collection("products").document(productId)
+                                val currentQuantity = productQuantities[productId] ?: 0
+                                val newQuantity = (currentQuantity - deleteCount).coerceAtLeast(0)
+                                
+                                transaction.update(productRef, mapOf(
+                                    "quantity" to newQuantity.toString(),
+                                    "updated_at" to System.currentTimeMillis()
+                                ))
+                                println("✅ PAYMENT REPOSITORY: Product quantity updated atomically")
+                                println("   - Product ID: $productId")
+                                println("   - Quantity: $currentQuantity -> $newQuantity (deducted $deleteCount)")
+                            }
+                            
+                            println("✅ PAYMENT REPOSITORY: Order, balance, inventory, and product quantities updated atomically")
                             println("   - Order ID: ${order.orderId}")
                             Unit
                         }.get()

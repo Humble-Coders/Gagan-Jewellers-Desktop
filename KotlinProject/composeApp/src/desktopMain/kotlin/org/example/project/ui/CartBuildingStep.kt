@@ -55,6 +55,7 @@ import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.ui.CartTable
 import org.example.project.ui.ProductPriceInputs
 import org.example.project.ui.calculateProductPrice
+import org.example.project.ui.calculateStonePrices
 import org.example.project.utils.ImageLoader
 import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.ProductsViewModel
@@ -1392,17 +1393,20 @@ fun CartScreen(
                                 val makingPercentage = currentProduct.makingPercent
                                 val labourRatePerGram = currentProduct.labourRate
                                 
-                                // Extract kundan and jarkan from stones array
-                                val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-                                val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-                                
-                                // Sum all Kundan prices and weights
-                                val kundanPrice = kundanStones.sumOf { it.amount }
-                                val kundanWeight = kundanStones.sumOf { it.weight }
-                                
-                                // Sum all Jarkan prices and weights
-                                val jarkanPrice = jarkanStones.sumOf { it.amount }
-                                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                                // Extract all stone types from stones array using helper function
+                                val stoneBreakdown = calculateStonePrices(currentProduct.stones)
+                                val kundanPrice = stoneBreakdown.kundanPrice
+                                val kundanWeight = stoneBreakdown.kundanWeight
+                                val jarkanPrice = stoneBreakdown.jarkanPrice
+                                val jarkanWeight = stoneBreakdown.jarkanWeight
+                                val diamondPrice = stoneBreakdown.diamondPrice
+                                val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+                val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+                val solitairePrice = stoneBreakdown.solitairePrice
+                val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+                val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+                                val colorStonesPrice = stoneBreakdown.colorStonesPrice
+                                val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
                                 
                                 // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
                                 val metalKarat = if (cartItem.metal.isNotEmpty()) {
@@ -1452,6 +1456,14 @@ fun CartScreen(
                                     kundanWeight = kundanWeight,
                                     jarkanPrice = jarkanPrice,
                                     jarkanWeight = jarkanWeight,
+                                    diamondPrice = diamondPrice,
+                                    diamondWeight = diamondWeight,
+                    diamondWeightInGrams = diamondWeightInGrams,
+                    solitairePrice = solitairePrice,
+                    solitaireWeight = solitaireWeight,
+                    solitaireWeightInGrams = solitaireWeightInGrams,
+                                    colorStonesPrice = colorStonesPrice,
+                                    colorStonesWeight = colorStonesWeight,
                                     goldRatePerGram = goldRatePerGram
                                 )
                                 
@@ -1606,17 +1618,20 @@ fun CartSummary(
  * Fetches material rates from metal rates (same as ProductPriceCalculator)
  */
 private fun calculateProductTotalCost(product: Product, metalRates: List<org.example.project.data.MetalRate>): Double {
-    // Extract kundan and jarkan from stones array
-    val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-    val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-    
-    // Sum all Kundan prices and weights
-    val kundanPrice = kundanStones.sumOf { it.amount }
-    val kundanWeight = kundanStones.sumOf { it.weight }
-    
-    // Sum all Jarkan prices and weights
-    val jarkanPrice = jarkanStones.sumOf { it.amount }
-    val jarkanWeight = jarkanStones.sumOf { it.weight }
+    // Extract all stone types from stones array using helper function
+    val stoneBreakdown = calculateStonePrices(product.stones)
+    val kundanPrice = stoneBreakdown.kundanPrice
+    val kundanWeight = stoneBreakdown.kundanWeight
+    val jarkanPrice = stoneBreakdown.jarkanPrice
+    val jarkanWeight = stoneBreakdown.jarkanWeight
+    val diamondPrice = stoneBreakdown.diamondPrice
+    val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+                val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+                val solitairePrice = stoneBreakdown.solitairePrice
+                val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+                val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+    val colorStonesPrice = stoneBreakdown.colorStonesPrice
+    val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
     
     // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
     val goldRatePerGram = getMaterialRateForProduct(product, metalRates)
@@ -1632,6 +1647,14 @@ private fun calculateProductTotalCost(product: Product, metalRates: List<org.exa
         kundanWeight = kundanWeight,
         jarkanPrice = jarkanPrice,
         jarkanWeight = jarkanWeight,
+        diamondPrice = diamondPrice,
+        diamondWeight = diamondWeight,
+                    diamondWeightInGrams = diamondWeightInGrams,
+                    solitairePrice = solitairePrice,
+                    solitaireWeight = solitaireWeight,
+                    solitaireWeightInGrams = solitaireWeightInGrams,
+        colorStonesPrice = colorStonesPrice,
+        colorStonesWeight = colorStonesWeight,
         goldRatePerGram = goldRatePerGram
     )
     

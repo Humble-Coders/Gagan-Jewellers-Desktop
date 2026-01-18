@@ -47,6 +47,7 @@ import org.example.project.data.Product
 import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.ui.ProductPriceInputs
 import org.example.project.ui.calculateProductPrice
+import org.example.project.ui.calculateStonePrices
 import org.example.project.utils.CurrencyFormatter
 import org.example.project.viewModels.ProductsViewModel
 import java.text.DecimalFormat
@@ -629,17 +630,20 @@ private fun CompactCartItem(
         val makingPercentage = effectiveMakingPercent
         val labourRatePerGram = effectiveLabourRate
         
-        // Extract kundan and jarkan from stones array
-        val kundanStones = item.product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-        val jarkanStones = item.product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-        
-        // Sum all Kundan prices and weights
-        val kundanPrice = kundanStones.sumOf { it.amount }
-        val kundanWeight = kundanStones.sumOf { it.weight }
-        
-        // Sum all Jarkan prices and weights
-        val jarkanPrice = jarkanStones.sumOf { it.amount }
-        val jarkanWeight = jarkanStones.sumOf { it.weight }
+        // Extract all stone types from stones array using helper function
+        val stoneBreakdown = calculateStonePrices(item.product.stones)
+        val kundanPrice = stoneBreakdown.kundanPrice
+        val kundanWeight = stoneBreakdown.kundanWeight
+        val jarkanPrice = stoneBreakdown.jarkanPrice
+        val jarkanWeight = stoneBreakdown.jarkanWeight
+        val diamondPrice = stoneBreakdown.diamondPrice
+        val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+                val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+                val solitairePrice = stoneBreakdown.solitairePrice
+                val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+                val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+        val colorStonesPrice = stoneBreakdown.colorStonesPrice
+        val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
         
         // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
         val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
@@ -668,6 +672,14 @@ private fun CompactCartItem(
             kundanWeight = kundanWeight,
             jarkanPrice = jarkanPrice,
             jarkanWeight = jarkanWeight,
+            diamondPrice = diamondPrice,
+            diamondWeight = diamondWeight,
+                    diamondWeightInGrams = diamondWeightInGrams,
+                    solitairePrice = solitairePrice,
+                    solitaireWeight = solitaireWeight,
+                    solitaireWeightInGrams = solitaireWeightInGrams,
+            colorStonesPrice = colorStonesPrice,
+            colorStonesWeight = colorStonesWeight,
             goldRatePerGram = goldRatePerGram
         )
         
@@ -946,17 +958,20 @@ private fun DetailPanel(
         val labourRatePerGram = labourRate // Use from fieldValues or product
         val quantity = item.quantity
 
-        // Extract kundan and jarkan from stones array
-        val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-        val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-        
-        // Sum all Kundan prices and weights
-        val kundanPrice = kundanStones.sumOf { it.amount }
-        val kundanWeight = kundanStones.sumOf { it.weight }
-        
-        // Sum all Jarkan prices and weights
-        val jarkanPrice = jarkanStones.sumOf { it.amount }
-        val jarkanWeight = jarkanStones.sumOf { it.weight }
+        // Extract all stone types from stones array using helper function
+        val stoneBreakdown = calculateStonePrices(currentProduct.stones)
+        val kundanPrice = stoneBreakdown.kundanPrice
+        val kundanWeight = stoneBreakdown.kundanWeight
+        val jarkanPrice = stoneBreakdown.jarkanPrice
+        val jarkanWeight = stoneBreakdown.jarkanWeight
+        val diamondPrice = stoneBreakdown.diamondPrice
+        val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+                val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+                val solitairePrice = stoneBreakdown.solitairePrice
+                val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+                val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+        val colorStonesPrice = stoneBreakdown.colorStonesPrice
+        val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
         
         // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
         val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
@@ -985,6 +1000,14 @@ private fun DetailPanel(
             kundanWeight = kundanWeight,
             jarkanPrice = jarkanPrice,
             jarkanWeight = jarkanWeight,
+            diamondPrice = diamondPrice,
+            diamondWeight = diamondWeight,
+                    diamondWeightInGrams = diamondWeightInGrams,
+                    solitairePrice = solitairePrice,
+                    solitaireWeight = solitaireWeight,
+                    solitaireWeightInGrams = solitaireWeightInGrams,
+            colorStonesPrice = colorStonesPrice,
+            colorStonesWeight = colorStonesWeight,
             goldRatePerGram = goldRatePerGram
         )
         
@@ -996,11 +1019,15 @@ private fun DetailPanel(
         val totalCharges = perItemTotal * quantity
         val finalAmount = totalCharges
         
-        // Calculate component totals for display
+        // Calculate component totals for display (using ProductPriceCalculator result)
         val goldPriceTotal = result.goldPrice * quantity
         val labourChargesTotal = result.labourCharges * quantity
+        val totalStonesPriceTotal = result.totalStonesPrice * quantity // Total of all stone types (Kundan + Jarkan + Diamond + Solitaire + Color Stones)
         val kundanPriceTotal = result.kundanPrice * quantity
         val jarkanPriceTotal = result.jarkanPrice * quantity
+        val diamondPriceTotal = result.diamondPrice * quantity
+        val solitairePriceTotal = result.solitairePrice * quantity
+        val colorStonesPriceTotal = result.colorStonesPrice * quantity
 
         println("💵 Detail Panel Amount Breakdown (ProductPriceCalculator logic):")
         println("   Gross Weight: ${grossWeight}g")
@@ -1012,6 +1039,10 @@ private fun DetailPanel(
         println("   Gold Price (per item): ₹${result.goldPrice}")
         println("   Kundan Price (per item): ₹${result.kundanPrice} (Weight: ${kundanWeight}g)")
         println("   Jarkan Price (per item): ₹${result.jarkanPrice} (Weight: ${jarkanWeight}g)")
+        println("   Diamond Price (per item): ₹${result.diamondPrice}")
+        println("   Solitaire Price (per item): ₹${result.solitairePrice}")
+        println("   Color Stones Price (per item): ₹${result.colorStonesPrice}")
+        println("   Total Stones Price (per item): ₹${result.totalStonesPrice}")
         println("   Labour Charges (per item): ₹${result.labourCharges} (Rate: ₹${labourRatePerGram}/g × New Weight: ${result.newWeight}g)")
         println("   Per Item Total: ₹${perItemTotal}")
         println("   Quantity: $quantity")
@@ -1028,15 +1059,18 @@ private fun DetailPanel(
             "makingWeight" to result.makingWeight,
             "newWeight" to result.newWeight,
             "effectiveGoldWeight" to result.effectiveGoldWeight,
-            "cwWeight" to (kundanWeight + jarkanWeight), // Combined kundan + jarkan weight
+            "cwWeight" to result.totalStonesWeight, // Total stones weight (all types in grams)
             "stoneRate" to 0.0, // Not used in ProductPriceCalculator logic
             "vaCharges" to 0.0, // Not used in ProductPriceCalculator logic (labour charges used instead)
             "baseAmount" to goldPriceTotal, // Gold price total
             "makingCharges" to labourChargesTotal, // Labour charges total
-            "stoneAmount" to (kundanPriceTotal + jarkanPriceTotal), // Kundan + Jarkan total
+            "stoneAmount" to totalStonesPriceTotal, // Total of all stone types (Kundan + Jarkan + Diamond + Solitaire + Color Stones)
             "goldPrice" to goldPriceTotal,
             "kundanPrice" to kundanPriceTotal,
             "jarkanPrice" to jarkanPriceTotal,
+            "diamondPrice" to diamondPriceTotal,
+            "solitairePrice" to solitairePriceTotal,
+            "colorStonesPrice" to colorStonesPriceTotal,
             "labourCharges" to labourChargesTotal,
             "totalCharges" to totalCharges,
             "finalAmount" to finalAmount,
@@ -1377,20 +1411,25 @@ private fun DetailPanel(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Box(modifier = Modifier.weight(1f)) {
+                            if (stone.name.equals("Diamond", ignoreCase = true) || stone.name.equals("Solitaire", ignoreCase = true)) {
                                 CalculatedValueRow(
-                                    label = "Purity",
-                                    value = stone.purity.ifEmpty { "N/A" },
+                                    label = "Cent",
+                                    value = if (stone.quantity > 0) String.format("%.2f", stone.quantity) + " carats" else "N/A",
                                     color = GoldPrimary,
                                     icon = Icons.Default.CheckCircle
-                            )
+                                )
+                            }
                         }
-                        Box(modifier = Modifier.weight(1f)) {
+                        // Only show Quantity for non-Diamond/Solitaire stones
+                        if (!stone.name.equals("Diamond", ignoreCase = true) && !stone.name.equals("Solitaire", ignoreCase = true)) {
+                            Box(modifier = Modifier.weight(1f)) {
                                 CalculatedValueRow(
                                     label = "Quantity",
-                                    value = stone.quantity.toString(),
+                                    value = if (stone.quantity > 0) String.format("%.2f", stone.quantity) else "0",
                                     color = GoldPrimary,
-                                icon = Icons.Default.Add
-                            )
+                                    icon = Icons.Default.Add
+                                )
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))

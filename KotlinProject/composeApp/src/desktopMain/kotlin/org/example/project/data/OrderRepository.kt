@@ -12,6 +12,25 @@ interface OrderRepository {
 
 class FirestoreOrderRepository(private val firestore: Firestore) : OrderRepository {
 
+    // Helper function to parse exchange_gold from Firestore data
+    private fun parseExchangeGold(data: Map<String, Any>): ExchangeGoldInfo? {
+        val exchangeGoldData = data["exchange_gold"] as? Map<*, *> ?: return null
+        return try {
+            ExchangeGoldInfo(
+                productName = exchangeGoldData["productName"] as? String ?: "",
+                goldWeight = (exchangeGoldData["goldWeight"] as? Number)?.toDouble() ?: 0.0,
+                goldPurity = exchangeGoldData["goldPurity"] as? String ?: "",
+                goldRate = (exchangeGoldData["goldRate"] as? Number)?.toDouble() ?: 0.0,
+                finalGoldExchangePrice = (exchangeGoldData["finalGoldExchangePrice"] as? Number)?.toDouble() ?: 0.0,
+                totalProductWeight = (exchangeGoldData["totalProductWeight"] as? Number)?.toDouble() ?: 0.0,
+                percentage = (exchangeGoldData["percentage"] as? Number)?.toDouble() ?: 0.0
+            )
+        } catch (e: Exception) {
+            println("⚠️ ORDER REPOSITORY: Error parsing exchange_gold: ${e.message}")
+            null
+        }
+    }
+
     override suspend fun getOrdersByCustomerId(customerId: String): List<Order> = withContext(Dispatchers.IO) {
         try {
             val ordersCollection = firestore.collection("orders")
@@ -69,10 +88,12 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                             )
                         } else null
                     } ?: emptyList(),
+                    exchangeGold = parseExchangeGold(data),
                     createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                     updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                     transactionDate = data["transactionDate"] as? String ?: "",
-                    notes = data["notes"] as? String ?: ""
+                    notes = data["notes"] as? String ?: "",
+                    invoiceUrl = data["invoiceUrl"] as? String ?: ""
                 )
                 } catch (e: Exception) {
                     println("⚠️ ORDER REPOSITORY: Error parsing order document ${doc.id}: ${e.message}")
@@ -140,10 +161,12 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                             )
                         } else null
                     } ?: emptyList(),
+                    exchangeGold = parseExchangeGold(data),
                     createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                     updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                     transactionDate = data["transactionDate"] as? String ?: "",
-                    notes = data["notes"] as? String ?: ""
+                    notes = data["notes"] as? String ?: "",
+                    invoiceUrl = data["invoiceUrl"] as? String ?: ""
                 )
             }
         } catch (e: Exception) {
@@ -203,10 +226,12 @@ class FirestoreOrderRepository(private val firestore: Firestore) : OrderReposito
                         )
                     } else null
                 } ?: emptyList(),
+                exchangeGold = parseExchangeGold(data),
                 createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                 updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
                 transactionDate = data["transactionDate"] as? String ?: "",
-                notes = data["notes"] as? String ?: ""
+                notes = data["notes"] as? String ?: "",
+                invoiceUrl = data["invoiceUrl"] as? String ?: ""
             )
         } catch (e: Exception) {
             println("Error fetching order by ID: ${e.message}")

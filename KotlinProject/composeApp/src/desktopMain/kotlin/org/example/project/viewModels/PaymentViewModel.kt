@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.example.project.JewelryAppInitializer
 import org.example.project.data.*
 import org.example.project.utils.PdfGeneratorService
@@ -14,6 +15,7 @@ import org.example.project.data.MetalRatesManager
 import org.example.project.data.extractKaratFromMaterialType
 import org.example.project.ui.ProductPriceInputs
 import org.example.project.ui.calculateProductPrice
+import org.example.project.ui.calculateStonePrices
 import java.awt.Desktop
 import java.io.File
 import java.nio.file.Path
@@ -203,10 +205,12 @@ class PaymentViewModel(
         subtotal: Double,
         discountAmount: Double,
         gst: Double,
+        gstPercentage: Double, // GST percentage selected by user (e.g., 3.0, 5.0)
         finalTotal: Double,
         paymentSplit: PaymentSplit? = null,
         notes: String = "",
         customer: User, // Require customer to be passed, not fetched
+        exchangeGold: ExchangeGold? = null, // Exchange gold information
         onSuccess: () -> Unit
     ) {
         // Allow order processing if either a payment method is selected OR a split payment is configured
@@ -266,11 +270,20 @@ class PaymentViewModel(
                         val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
                         val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
                         
-                        // Extract kundan and jarkan from stones array
-                        val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-                        val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-                        val kundanPrice = kundanStones.sumOf { it.amount }
-                        val jarkanPrice = jarkanStones.sumOf { it.amount }
+                        // Extract all stone types from stones array using helper function
+                        val stoneBreakdown = calculateStonePrices(product.stones)
+                        val kundanPrice = stoneBreakdown.kundanPrice
+                        val kundanWeight = stoneBreakdown.kundanWeight
+                        val jarkanPrice = stoneBreakdown.jarkanPrice
+                        val jarkanWeight = stoneBreakdown.jarkanWeight
+                        val diamondPrice = stoneBreakdown.diamondPrice
+                        val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+                        val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+                        val solitairePrice = stoneBreakdown.solitairePrice
+                        val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+                        val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+                        val colorStonesPrice = stoneBreakdown.colorStonesPrice
+                        val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
                         
                         // Calculate goldRatePerGram (use collectionRate if available, otherwise use goldRate)
                         val materialTypeLower = product.materialType.lowercase()
@@ -295,9 +308,17 @@ class PaymentViewModel(
                             makingPercentage = makingPercentage,
                             labourRatePerGram = labourRate,
                             kundanPrice = kundanPrice,
-                            kundanWeight = kundanStones.sumOf { it.weight },
+                            kundanWeight = kundanWeight,
                             jarkanPrice = jarkanPrice,
-                            jarkanWeight = jarkanStones.sumOf { it.weight },
+                            jarkanWeight = jarkanWeight,
+                            diamondPrice = diamondPrice,
+                            diamondWeight = diamondWeight,
+                            diamondWeightInGrams = diamondWeightInGrams,
+                            solitairePrice = solitairePrice,
+                            solitaireWeight = solitaireWeight,
+                            solitaireWeightInGrams = solitaireWeightInGrams,
+                            colorStonesPrice = colorStonesPrice,
+                            colorStonesWeight = colorStonesWeight,
                             goldRatePerGram = goldRatePerGram
                         )
                         
@@ -342,11 +363,8 @@ class PaymentViewModel(
                     }
                 } else null
 
-                // Calculate GST percentage
-                val taxableAmount = totalProductValue - discountAmount
-                val gstPercentage = if (taxableAmount > 0 && gst > 0) {
-                    (gst / taxableAmount) * 100.0
-                } else 0.0
+                // Use the GST percentage passed from PaymentScreen (selected by user)
+                // Don't recalculate it from GST amount to avoid rounding errors
 
                 // PaymentSplit already has bank (sum), cash, and dueAmount in new format
                 // No conversion needed - use as is
@@ -366,6 +384,19 @@ class PaymentViewModel(
                 println("   - Total Amount: $finalTotal")
                 println("   - Transaction Date: $transactionDate")
 
+                // Convert ExchangeGold to ExchangeGoldInfo if provided
+                val exchangeGoldInfo = exchangeGold?.let { exchange ->
+                    ExchangeGoldInfo(
+                        productName = exchange.name,
+                        goldWeight = exchange.grossWeight,
+                        goldPurity = exchange.description, // Purity is stored directly in description
+                        goldRate = exchange.rate,
+                        finalGoldExchangePrice = exchange.value,
+                        totalProductWeight = exchange.totalProductWeight,
+                        percentage = exchange.percentage
+                    )
+                }
+
                 val order = Order(
                     orderId = generateOrderId(),
                     customerId = cart.customerId, // Reference to users collection
@@ -378,6 +409,7 @@ class PaymentViewModel(
                     totalAmount = finalTotal, // Total payable amount after GST and discount applied
                     isGstIncluded = _isGstIncluded.value,
                     items = orderItems,
+                    exchangeGold = exchangeGoldInfo,
                     transactionDate = transactionDate, // Set transaction date
                     notes = notes, // Add notes from payment screen
                     createdAt = System.currentTimeMillis()
@@ -419,6 +451,9 @@ class PaymentViewModel(
 
                     // Refresh product list to update UI
                     JewelryAppInitializer.getViewModel().loadProducts()
+
+                    // Customers are automatically updated via Firestore listener in CustomerRepository
+                    // No need to manually refresh customers - balance update will trigger listener
 
                     // Create transaction record
                     _lastTransaction.value = PaymentTransaction(
@@ -520,8 +555,9 @@ class PaymentViewModel(
                 
                 // Use the order retrieved from Firestore instead of the passed order
                 val orderToUse = firestoreOrder
-                // Get CartItem data from transaction if available (for accurate pricing with overrides)
+                // Get CartItem data from transaction if available (for accurate item details from receipt screen)
                 val cartItems = transaction?.items
+                println("📦 PDF GENERATION: Using ${cartItems?.size ?: 0} CartItems from transaction for accurate item details")
                 val userHome = System.getProperty("user.home")
                 if (userHome.isNullOrBlank()) {
                     throw Exception("User home directory not found")
@@ -547,7 +583,8 @@ class PaymentViewModel(
                     order = orderToUse,
                     customer = customer,
                     outputFile = pdfOutputPath,
-                    invoiceConfig = invoiceConfig
+                    invoiceConfig = invoiceConfig,
+                    cartItems = cartItems // Pass CartItems from transaction for accurate item details
                 )
 
                 if (pdfResult.isSuccess) {
@@ -555,6 +592,35 @@ class PaymentViewModel(
                     if (pdfFile.exists() && pdfFile.length() > 0) {
                         val pdfFilePath = pdfFile.absolutePath
                         _pdfPath.value = pdfFilePath
+
+                        // Upload the PDF to Firebase Storage and store the URL on the order document
+                        try {
+                            val storageService = JewelryAppInitializer.getStorageService()
+                            val firestore = JewelryAppInitializer.getFirestore()
+
+                            // Upload under "invoices/<orderId>/"
+                            val uploadedUrl = withContext(Dispatchers.IO) {
+                                storageService.uploadFile(
+                                    pdfFile.toPath(),
+                                    directoryPath = "invoices/${orderToUse.orderId}"
+                                )
+                            }
+
+                            if (!uploadedUrl.isNullOrEmpty()) {
+                                withContext(Dispatchers.IO) {
+                                    firestore.collection("orders")
+                                        .document(orderToUse.orderId)
+                                        .update(mapOf("invoiceUrl" to uploadedUrl))
+                                        .get()
+                                }
+                                println("✅ PAYMENT VIEWMODEL: Invoice PDF uploaded and URL saved to order: $uploadedUrl")
+                            } else {
+                                println("⚠️ PAYMENT VIEWMODEL: Invoice PDF upload failed or returned null URL")
+                            }
+                        } catch (e: Exception) {
+                            println("⚠️ PAYMENT VIEWMODEL: Error uploading invoice PDF to Storage: ${e.message}")
+                            e.printStackTrace()
+                        }
                         
                         // Update receipt UI state if loading
                         if (_receiptUiState.value.isLoading) {
@@ -735,6 +801,12 @@ class PaymentViewModel(
     
     private fun generatePdfForLastTransactionInternal(customer: User) {
         val transaction = _lastTransaction.value ?: return
+        
+        viewModelScope.launch {
+            try {
+                // Try to fetch the order from Firestore first to get the correct GST percentage
+                val firestoreOrder = orderRepository.getOrderById(transaction.id)
+                
         // Calculate taxable amount (subtotal - discount amount)
         val taxableAmount = transaction.subtotal - transaction.discountAmount
         
@@ -747,8 +819,8 @@ class PaymentViewModel(
             (transaction.discountAmount / transaction.subtotal) * 100.0
         } else null
         
-        // Calculate GST percentage
-        val gstPercentage = if (taxableAmount > 0 && transaction.gstAmount > 0) {
+                // Use GST percentage from Firestore Order if available, otherwise calculate as fallback
+                val gstPercentage = firestoreOrder?.gstPercentage ?: if (taxableAmount > 0 && transaction.gstAmount > 0) {
             (transaction.gstAmount / taxableAmount) * 100.0
         } else 0.0
         
@@ -760,7 +832,7 @@ class PaymentViewModel(
             discountAmount = transaction.discountAmount,
             discountPercent = discountPercent,
             gstAmount = transaction.gstAmount,
-            gstPercentage = gstPercentage,
+                    gstPercentage = gstPercentage, // Use GST percentage from Firestore Order if available
             totalAmount = transaction.totalAmount, // Total payable amount after GST and discount applied
             isGstIncluded = true,
             items = transaction.items.map { cartItem ->
@@ -786,10 +858,20 @@ class PaymentViewModel(
                 val defaultGoldRate = metalRates.getGoldRateForKarat(metalKarat)
                 val goldRate = if (cartItem.customGoldRate > 0) cartItem.customGoldRate else defaultGoldRate
                 
-                val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-                val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-                val kundanPrice = kundanStones.sumOf { it.amount }
-                val jarkanPrice = jarkanStones.sumOf { it.amount }
+                // Extract all stone types from stones array using helper function
+                val stoneBreakdown = calculateStonePrices(product.stones)
+                val kundanPrice = stoneBreakdown.kundanPrice
+                val kundanWeight = stoneBreakdown.kundanWeight
+                val jarkanPrice = stoneBreakdown.jarkanPrice
+                val jarkanWeight = stoneBreakdown.jarkanWeight
+                val diamondPrice = stoneBreakdown.diamondPrice
+                val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+                val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+                val solitairePrice = stoneBreakdown.solitairePrice
+                val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+                val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+                val colorStonesPrice = stoneBreakdown.colorStonesPrice
+                val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
                 
                 // Calculate goldRatePerGram
                 val materialTypeLower = product.materialType.lowercase()
@@ -813,9 +895,17 @@ class PaymentViewModel(
                     makingPercentage = makingPercentage,
                     labourRatePerGram = labourRate,
                     kundanPrice = kundanPrice,
-                    kundanWeight = kundanStones.sumOf { it.weight },
+                    kundanWeight = kundanWeight,
                     jarkanPrice = jarkanPrice,
-                    jarkanWeight = jarkanStones.sumOf { it.weight },
+                    jarkanWeight = jarkanWeight,
+                    diamondPrice = diamondPrice,
+                    diamondWeight = diamondWeight,
+                    diamondWeightInGrams = diamondWeightInGrams,
+                    solitairePrice = solitairePrice,
+                    solitaireWeight = solitaireWeight,
+                    solitaireWeightInGrams = solitaireWeightInGrams,
+                    colorStonesPrice = colorStonesPrice,
+                    colorStonesWeight = colorStonesWeight,
                     goldRatePerGram = goldRatePerGram
                 )
                 
@@ -834,7 +924,15 @@ class PaymentViewModel(
             transactionDate = transactionDate, // Set transaction date
             createdAt = transaction.timestamp
         )
-        generateOrderPDF(order, customer)
+                // CRITICAL: Pass transaction to ensure cartItems (with updated product values) are used for PDF generation
+                // This ensures items table section matches ReceiptScreen values exactly
+                generateOrderPDF(order, customer, transaction)
+            } catch (e: Exception) {
+                println("❌ Error in generatePdfForLastTransactionInternal: ${e.message}")
+                e.printStackTrace()
+                _errorMessage.value = "Error generating PDF: ${e.message}"
+            }
+        }
     }
 
     fun runPDFDiagnostics() {

@@ -59,6 +59,7 @@ import org.example.project.data.PaymentSplit
 import org.example.project.data.ExchangeGold
 import org.example.project.ui.ProductPriceInputs
 import org.example.project.ui.calculateProductPrice
+import org.example.project.ui.calculateStonePrices
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.data.extractKaratFromMaterialType
 
@@ -85,6 +86,7 @@ fun PaymentScreen(
     val selectedPaymentMethod by paymentViewModel.selectedPaymentMethod
     val discountType by paymentViewModel.discountType
     val discountValue by paymentViewModel.discountValue
+    val discountAmountState by paymentViewModel.discountAmount // Track applied discount amount
     val exchangeGoldValue = exchangeGold?.value ?: 0.0
     val isProcessing by paymentViewModel.isProcessing
     val errorMessage by paymentViewModel.errorMessage
@@ -109,7 +111,7 @@ fun PaymentScreen(
     // Calculate totals using the EXACT same logic as cart screen (ProductPriceCalculator)
     val metalRates by MetalRatesManager.metalRates
     val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
-    val subtotal = remember(cart, metalRates) {
+    val baseSubtotal = remember(cart, metalRates) {
         val total = cart.items.sumOf { cartItem ->
             val currentProduct = cartItem.product
             
@@ -118,17 +120,20 @@ fun PaymentScreen(
             val makingPercentage = currentProduct.makingPercent
             val labourRatePerGram = currentProduct.labourRate
             
-            // Extract kundan and jarkan from stones array
-            val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-            val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-            
-            // Sum all Kundan prices and weights
-            val kundanPrice = kundanStones.sumOf { it.amount }
-            val kundanWeight = kundanStones.sumOf { it.weight }
-            
-            // Sum all Jarkan prices and weights
-            val jarkanPrice = jarkanStones.sumOf { it.amount }
-            val jarkanWeight = jarkanStones.sumOf { it.weight }
+            // Extract all stone types from stones array using helper function
+            val stoneBreakdown = calculateStonePrices(currentProduct.stones)
+            val kundanPrice = stoneBreakdown.kundanPrice
+            val kundanWeight = stoneBreakdown.kundanWeight
+            val jarkanPrice = stoneBreakdown.jarkanPrice
+            val jarkanWeight = stoneBreakdown.jarkanWeight
+            val diamondPrice = stoneBreakdown.diamondPrice
+            val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+            val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+            val solitairePrice = stoneBreakdown.solitairePrice
+            val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+            val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+            val colorStonesPrice = stoneBreakdown.colorStonesPrice
+            val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
             
             // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
             val metalKarat = if (cartItem.metal.isNotEmpty()) {
@@ -170,6 +175,14 @@ fun PaymentScreen(
                 kundanWeight = kundanWeight,
                 jarkanPrice = jarkanPrice,
                 jarkanWeight = jarkanWeight,
+                diamondPrice = diamondPrice,
+                diamondWeight = diamondWeight,
+                diamondWeightInGrams = diamondWeightInGrams,
+                solitairePrice = solitairePrice,
+                solitaireWeight = solitaireWeight,
+                solitaireWeightInGrams = solitaireWeightInGrams,
+                colorStonesPrice = colorStonesPrice,
+                colorStonesWeight = colorStonesWeight,
                 goldRatePerGram = goldRatePerGram
             )
             
@@ -185,35 +198,82 @@ fun PaymentScreen(
         total
     }
     
-    // Calculate discount amount using the new method that includes GST
-    val calculatedDiscountAmount = if (discountValue.isNotEmpty()) {
-        paymentViewModel.calculateDiscountAmount(subtotal, 0.0) // Pass 0.0 for now, will recalculate after GST
-    } else {
-        0.0
+    // Keep base subtotal as is (before exchange gold reduction)
+    val subtotal = baseSubtotal
+    
+    // Amount after reducing exchange gold (for discount and GST calculations)
+    val amountAfterExchangeGold = remember(baseSubtotal, exchangeGoldValue) {
+        (baseSubtotal - exchangeGoldValue).coerceAtLeast(0.0)
     }
     
-    // Calculate GST amount based on selected GST type
-    val gstAmount = remember(cart, metalRates, selectedGstType, customGstValue, subtotal, calculatedDiscountAmount) {
-        // Get GST percentage based on selection
-        val gstPercentage = when (selectedGstType) {
+    // Get GST percentage
+    val gstPercentage = remember(selectedGstType, customGstValue) {
+        when (selectedGstType) {
             GstType.ZERO -> 0.0
             GstType.THREE -> 3.0
             GstType.FIVE -> 5.0
             GstType.CUSTOM -> customGstValue.toDoubleOrNull() ?: 0.0
-            null -> 0.0 // Default to 0% if not selected
+            null -> 0.0
         }
-        
+    }
+    
+    // Calculate discount amount - for TOTAL_PAYABLE, use reverse calculation
+    // For TOTAL_PAYABLE: Solve for discount where totalPayable = (amountAfterExchangeGold - discount) * (1 + GST%)
+    // discount = amountAfterExchangeGold - (totalPayable / (1 + GST%))
+    // For AMOUNT and PERCENTAGE: Use applied discount amount from ViewModel (set by Apply button)
+    val calculatedDiscountAmount = remember(discountValue, discountType, amountAfterExchangeGold, gstPercentage, discountAmountState) {
+        if (discountType == DiscountType.TOTAL_PAYABLE && discountValue.isNotEmpty()) {
+            // TOTAL_PAYABLE: Calculate automatically from entered value
+            val totalPayable = discountValue.toDoubleOrNull() ?: 0.0
+            if (gstPercentage == 0.0) {
+                // No GST: discount = amountAfterExchangeGold - totalPayable
+                (amountAfterExchangeGold - totalPayable).coerceAtLeast(0.0)
+            } else {
+                // With GST: totalPayable = (amountAfterExchangeGold - discount) * (1 + GST%)
+                // Solving: discount = amountAfterExchangeGold - (totalPayable / (1 + GST%))
+                val gstMultiplier = 1.0 + (gstPercentage / 100.0)
+                val taxableAmount = totalPayable / gstMultiplier
+                val discount = (amountAfterExchangeGold - taxableAmount).coerceAtLeast(0.0)
+                discount
+            }
+        } else if (discountValue.isNotEmpty()) {
+            // For PERCENTAGE and AMOUNT: Use calculateDiscountAmount which uses discountAmountState
+            // This will be 0 if Apply button hasn't been clicked, or the calculated value if it has
+            // The discountAmountState is set by applyDiscount() when Apply button is clicked
+            paymentViewModel.calculateDiscountAmount(amountAfterExchangeGold, 0.0)
+        } else {
+            0.0
+        }
+    }
+    
+    // Amount after discount (exchange gold already reduced)
+    val amountAfterDiscount = amountAfterExchangeGold - calculatedDiscountAmount
+    
+    // Calculate GST amount - always on amount after discount
+    val gstAmount = remember(amountAfterDiscount, gstPercentage) {
         if (gstPercentage == 0.0) {
             0.0
         } else {
-            // Calculate GST on subtotal after discount
-            val taxableAmount = subtotal - calculatedDiscountAmount
-            taxableAmount * (gstPercentage / 100.0)
+            amountAfterDiscount * (gstPercentage / 100.0)
+        }
+    }
+    
+    // Calculate final total
+    // For TOTAL_PAYABLE: Use the entered total payable amount (reverse calculation result)
+    // For other types: (Subtotal - Exchange Gold - Discount) + GST
+    val finalTotal = remember(discountType, discountValue, amountAfterDiscount, gstAmount) {
+        if (discountType == DiscountType.TOTAL_PAYABLE && discountValue.isNotEmpty()) {
+            // Use the entered total payable amount directly
+            // This is the result of reverse calculation: (amountAfterExchangeGold - discount) + GST
+            discountValue.toDoubleOrNull() ?: (amountAfterDiscount + gstAmount)
+        } else {
+            // Normal calculation
+            amountAfterDiscount + gstAmount
         }
     }
     
     // Calculate total amount for payment split
-    val totalAmountForSplit = subtotal + gstAmount - calculatedDiscountAmount - exchangeGoldValue
+    val totalAmountForSplit = finalTotal
 
     // Calculate due amount automatically
     val calculatedDueAmount = remember(cashAmount, cardAmount, bankAmount, onlineAmount, totalAmountForSplit) {
@@ -262,20 +322,22 @@ fun PaymentScreen(
     val onConfirmOrder: () -> Unit = run {
         // Take snapshot of current payment split state (captured once when composable is created)
         val snapshotPaymentSplit = paymentSplit?.copy()
-        val snapshotSubtotal = subtotal
+        val snapshotSubtotal = subtotal // Base subtotal before exchange gold reduction
+        val snapshotExchangeGoldValue = exchangeGoldValue
         val snapshotDiscountAmount = calculatedDiscountAmount
         val snapshotGstAmount = gstAmount
-        val snapshotFinalTotal = snapshotSubtotal + snapshotGstAmount - snapshotDiscountAmount - exchangeGoldValue
+        val snapshotFinalTotal = finalTotal // Already calculated as: (subtotal - exchangeGold - discount) + GST
         val snapshotNotes = notes
         
         // Return the lambda function
         {
             // Re-capture snapshot values at call time to prevent desync
             val currentSnapshotPaymentSplit = paymentSplit?.copy()
-            val currentSnapshotSubtotal = subtotal
+            val currentSnapshotSubtotal = subtotal // Base subtotal before exchange gold reduction
+            val currentSnapshotExchangeGoldValue = exchangeGoldValue
             val currentSnapshotDiscountAmount = calculatedDiscountAmount
             val currentSnapshotGstAmount = gstAmount
-            val currentSnapshotFinalTotal = currentSnapshotSubtotal + currentSnapshotGstAmount - currentSnapshotDiscountAmount - exchangeGoldValue
+            val currentSnapshotFinalTotal = finalTotal // Already calculated as: (subtotal - exchangeGold - discount) + GST
             val currentSnapshotNotes = notes
             
             // Validate payment split if provided (using current snapshot)
@@ -301,16 +363,27 @@ fun PaymentScreen(
                 products = productsViewModel.products.value,
                 onValidationResult = { isValid, errors ->
                     if (isValid) {
+                        // Get GST percentage from selected GST type
+                        val snapshotGstPercentage = when (selectedGstType) {
+                            GstType.ZERO -> 0.0
+                            GstType.THREE -> 3.0
+                            GstType.FIVE -> 5.0
+                            GstType.CUSTOM -> customGstValue.toDoubleOrNull() ?: 0.0
+                            null -> 0.0
+                        }
+                        
                         // Use current snapshot values for order creation
                         paymentViewModel.saveOrderWithPaymentMethod(
                             cart = cart,
                             subtotal = currentSnapshotSubtotal,
                             discountAmount = currentSnapshotDiscountAmount,
                             gst = currentSnapshotGstAmount,
+                            gstPercentage = snapshotGstPercentage, // Pass selected GST percentage
                             finalTotal = currentSnapshotFinalTotal,
                             paymentSplit = currentSnapshotPaymentSplit,
                             notes = currentSnapshotNotes,
                             customer = selectedCustomer, // Pass customer as parameter
+                            exchangeGold = exchangeGold, // Pass exchange gold information
                             onSuccess = onPaymentComplete
                         )
                     } else {
@@ -399,7 +472,7 @@ fun PaymentScreen(
                 subtotal = subtotal,
                 discountAmount = calculatedDiscountAmount,
                 gst = gstAmount,
-                total = subtotal + gstAmount - calculatedDiscountAmount - exchangeGoldValue,
+                total = finalTotal,
                 paymentSplit = paymentSplit,
                 exchangeGoldValue = exchangeGoldValue,
                 cartViewModel = cartViewModel,
@@ -409,7 +482,9 @@ fun PaymentScreen(
                 selectedGstType = selectedGstType,
                 customGstValue = customGstValue,
                 onGstTypeChange = { selectedGstType = it },
-                onCustomGstValueChange = { customGstValue = it }
+                onCustomGstValueChange = { customGstValue = it },
+                discountType = discountType,
+                discountValue = discountValue
             )
         }
 
@@ -1377,7 +1452,9 @@ private fun OrderSummarySection(
     selectedGstType: GstType? = null,
     customGstValue: String = "",
     onGstTypeChange: ((GstType?) -> Unit)? = null,
-    onCustomGstValueChange: ((String) -> Unit)? = null
+    onCustomGstValueChange: ((String) -> Unit)? = null,
+    discountType: DiscountType? = null,
+    discountValue: String = ""
 ) {
     Card(
         modifier = modifier.fillMaxHeight(),
@@ -1422,6 +1499,7 @@ private fun OrderSummarySection(
 
             PriceBreakdown(
                 subtotal = subtotal,
+                exchangeGoldValue = exchangeGoldValue,
                 discountAmount = discountAmount,
                 gst = gst,
                 total = total,
@@ -1429,7 +1507,9 @@ private fun OrderSummarySection(
                 customGstValue = customGstValue,
                 onGstTypeChange = onGstTypeChange,
                 onCustomGstValueChange = onCustomGstValueChange,
-                isProcessing = isProcessing
+                isProcessing = isProcessing,
+                discountType = discountType,
+                discountValue = discountValue
             )
 
             // Payment Split Information
@@ -1574,17 +1654,20 @@ private fun OrderSummaryItem(
             val makingPercentage = currentProduct.makingPercent
             val labourRatePerGram = currentProduct.labourRate
             
-            // Extract kundan and jarkan from stones array
-            val kundanStones = currentProduct.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-            val jarkanStones = currentProduct.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-            
-            // Sum all Kundan prices and weights
-            val kundanPrice = kundanStones.sumOf { it.amount }
-            val kundanWeight = kundanStones.sumOf { it.weight }
-            
-            // Sum all Jarkan prices and weights
-            val jarkanPrice = jarkanStones.sumOf { it.amount }
-            val jarkanWeight = jarkanStones.sumOf { it.weight }
+            // Extract all stone types from stones array using helper function
+            val stoneBreakdown = calculateStonePrices(currentProduct.stones)
+            val kundanPrice = stoneBreakdown.kundanPrice
+            val kundanWeight = stoneBreakdown.kundanWeight
+            val jarkanPrice = stoneBreakdown.jarkanPrice
+            val jarkanWeight = stoneBreakdown.jarkanWeight
+            val diamondPrice = stoneBreakdown.diamondPrice
+            val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+            val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+            val solitairePrice = stoneBreakdown.solitairePrice
+            val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+            val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+            val colorStonesPrice = stoneBreakdown.colorStonesPrice
+            val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
             
             // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
             val metalKarat = if (cartItem.metal.isNotEmpty()) {
@@ -1626,6 +1709,14 @@ private fun OrderSummaryItem(
                 kundanWeight = kundanWeight,
                 jarkanPrice = jarkanPrice,
                 jarkanWeight = jarkanWeight,
+                diamondPrice = diamondPrice,
+                diamondWeight = diamondWeight,
+                diamondWeightInGrams = diamondWeightInGrams,
+                solitairePrice = solitairePrice,
+                solitaireWeight = solitaireWeight,
+                solitaireWeightInGrams = solitaireWeightInGrams,
+                colorStonesPrice = colorStonesPrice,
+                colorStonesWeight = colorStonesWeight,
                 goldRatePerGram = goldRatePerGram
             )
             
@@ -1651,6 +1742,7 @@ private fun OrderSummaryItem(
 @Composable
 private fun PriceBreakdown(
     subtotal: Double,
+    exchangeGoldValue: Double = 0.0,
     discountAmount: Double,
     gst: Double,
     total: Double,
@@ -1658,18 +1750,38 @@ private fun PriceBreakdown(
     customGstValue: String = "",
     onGstTypeChange: ((GstType?) -> Unit)? = null,
     onCustomGstValueChange: ((String) -> Unit)? = null,
-    isProcessing: Boolean = false
+    isProcessing: Boolean = false,
+    discountType: DiscountType? = null,
+    discountValue: String = ""
 ) {
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        // Subtotal (base amount before exchange gold reduction)
         PriceRow(
             label = "Subtotal",
             amount = subtotal,
             isTotal = false
         )
 
-        if (discountAmount > 0) {
+        // Exchange Gold (shown after subtotal, before discount)
+        if (exchangeGoldValue > 0) {
+            PriceRow(
+                label = "Exchange Gold",
+                amount = -exchangeGoldValue,
+                isDiscount = true,
+                isTotal = false
+            )
+        }
+
+        // Discount (calculated on amount after exchange gold reduction)
+        // Show discount if:
+        // 1. Discount amount is greater than 0.01 (to handle rounding)
+        // 2. OR if discount type is selected and value is entered (even if calculated amount is 0)
+        val shouldShowDiscount = discountAmount > 0.01 || 
+            (discountType != null && discountValue.isNotEmpty() && discountValue.toDoubleOrNull() != null)
+        
+        if (shouldShowDiscount) {
             PriceRow(
                 label = "Discount",
                 amount = -discountAmount,

@@ -75,10 +75,82 @@ class ProductsViewModel(
     val featuredProducts: State<List<Product>> = _featuredProducts
 
     init {
-        loadProducts()
-        loadCategories()
-        loadMaterials()
-        loadStoneSuggestions()
+        // Observe StateFlow from repository instead of calling load methods
+        // The repository listener will automatically update these StateFlows
+        viewModelScope.launch {
+            repository.products.collect { productsList ->
+                try {
+                    _products.value = productsList
+                    // Load inventory data after products are updated (only if products are not empty)
+                    if (productsList.isNotEmpty() && inventoryRepository != null) {
+                    loadInventoryData()
+                    }
+                } catch (e: Exception) {
+                    println("⚠️ PRODUCTS VIEWMODEL: Failed to update products from StateFlow: ${e.message}")
+                }
+            }
+        }
+        
+        viewModelScope.launch {
+            repository.categories.collect { categoriesList ->
+                try {
+                    _categories.value = categoriesList
+                } catch (e: Exception) {
+                    println("⚠️ PRODUCTS VIEWMODEL: Failed to update categories from StateFlow: ${e.message}")
+                }
+            }
+        }
+        
+        viewModelScope.launch {
+            repository.materials.collect { materialsList ->
+                try {
+                    _materials.value = materialsList
+                } catch (e: Exception) {
+                    println("⚠️ PRODUCTS VIEWMODEL: Failed to update materials from StateFlow: ${e.message}")
+                }
+            }
+        }
+        
+        viewModelScope.launch {
+            repository.loading.collect { isLoading ->
+                try {
+                    _loading.value = isLoading
+                } catch (e: Exception) {
+                    println("⚠️ PRODUCTS VIEWMODEL: Failed to update loading from StateFlow: ${e.message}")
+                }
+            }
+        }
+        
+        viewModelScope.launch {
+            repository.error.collect { errorMessage ->
+                try {
+                    _error.value = errorMessage
+                } catch (e: Exception) {
+                    println("⚠️ PRODUCTS VIEWMODEL: Failed to update error from StateFlow: ${e.message}")
+                }
+            }
+        }
+        
+        // Observe StateFlow from stones repository
+        stonesRepository?.let { repo ->
+            viewModelScope.launch {
+                repo.stones.collect { stonesList ->
+                    try {
+                        _stones.value = stonesList
+                        _stoneNames.value = stonesList.map { it.name }.distinct().sorted()
+                        _stonePurities.value = stonesList
+                            .flatMap { it.types.map { stoneType -> stoneType.purity } }
+                            .distinct()
+                            .filter { it.isNotEmpty() }
+                            .sorted()
+                    } catch (e: Exception) {
+                        println("⚠️ PRODUCTS VIEWMODEL: Failed to update stones from StateFlow: ${e.message}")
+                    }
+                }
+            }
+        }
+        
+        // Still need to load featured products as it doesn't have a listener yet
         loadFeaturedProducts()
     }
 
@@ -87,12 +159,29 @@ class ProductsViewModel(
      * This prevents UI blocking by loading inventory data in the background
      */
     fun loadInventoryData() {
-        val repo = inventoryRepository ?: return
+        val repo = inventoryRepository ?: run {
+            println("⚠️ PRODUCTS VIEWMODEL: inventoryRepository is null, cannot load inventory data")
+            return
+        }
+
+        val allProducts = _products.value
+        if (allProducts.isEmpty()) {
+            println("⚠️ PRODUCTS VIEWMODEL: Products list is empty, skipping inventory load")
+            return
+        }
+
+        println("🔄 PRODUCTS VIEWMODEL: Loading inventory data for ${allProducts.size} products")
 
         viewModelScope.launch {
-            _inventoryLoading.value = true
             try {
-                val allProducts = _products.value
+                _inventoryLoading.value = true
+            } catch (e: Exception) {
+                // ViewModel may be disposed, silently return
+                println("⚠️ Failed to set inventory loading state: ${e.message}")
+                return@launch
+            }
+            
+            try {
                 val inventoryDataMap = mutableMapOf<String, InventoryData>()
 
                 // Load inventory data in parallel for better performance
@@ -120,17 +209,89 @@ class ProductsViewModel(
                     inventoryDataMap[productId] = data
                 }
 
-                _inventoryData.value = inventoryDataMap
+                // Update state with null safety check
+                try {
+                    _inventoryData.value = inventoryDataMap
+                    println("✅ PRODUCTS VIEWMODEL: Inventory data loaded successfully - ${inventoryDataMap.size} products")
+                    _inventoryLoading.value = false
+                } catch (e: Exception) {
+                    // ViewModel may be disposed, log and continue
+                    println("⚠️ Failed to update inventory data: ${e.message}")
+                    // Silently fail if ViewModel is disposed
+                }
             } catch (e: Exception) {
-                _error.value = "Failed to load inventory data: ${e.message}"
+                println("❌ PRODUCTS VIEWMODEL: Error loading inventory data: ${e.message}")
+                e.printStackTrace()
+                // Only update error state if ViewModel is still active
+                try {
+                    _error.value = "Failed to load inventory data: ${e.message}"
+                    _inventoryLoading.value = false
+                } catch (ex: Exception) {
+                    println("⚠️ Failed to update error state: ${ex.message}")
+                    // ViewModel may be disposed, silently ignore
+                }
             } finally {
-                _inventoryLoading.value = false
+                // Only update loading state if ViewModel is still active
+                try {
+                    _inventoryLoading.value = false
+                } catch (e: Exception) {
+                    // ViewModel may be disposed, silently ignore
+                    println("⚠️ Failed to update inventory loading state: ${e.message}")
+                }
             }
         }
     }
 
     fun clearError() {
-        _error.value = null
+        try {
+            _error.value = null
+        } catch (e: Exception) {
+            println("⚠️ Failed to clear error: ${e.message}")
+        }
+    }
+
+    /**
+     * Refresh inventory data for a single product (optimized for single product updates)
+     */
+    fun refreshInventoryDataForProduct(productId: String) {
+        val repo = inventoryRepository ?: return
+        
+        viewModelScope.launch {
+            try {
+                val availableItems = repo.getAvailableInventoryItemsByProductId(productId)
+                val allItems = repo.getInventoryItemsByProductId(productId)
+                val barcodeIds = allItems.map { it.barcodeId }
+                
+                val newInventoryData = InventoryData(
+                    availableCount = availableItems.size,
+                    barcodeIds = barcodeIds
+                )
+                
+                // Update state with null safety check
+                try {
+                    // Update only this product's inventory data in the map
+                    try {
+                        _inventoryData.value = _inventoryData.value.toMutableMap().apply {
+                            put(productId, newInventoryData)
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _inventoryData: ${e.message}")
+                    }
+                    
+                    // Trigger UI refresh for grouped products
+                    try {
+                        _inventoryRefreshTrigger.value = _inventoryRefreshTrigger.value + 1
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _inventoryRefreshTrigger: ${e.message}")
+                    }
+                    println("✅ Inventory data refreshed for product: $productId")
+                } catch (e: Exception) {
+                    println("⚠️ Failed to update inventory state: ${e.message}")
+                }
+            } catch (e: Exception) {
+                println("⚠️ Failed to refresh inventory data for product $productId: ${e.message}")
+            }
+        }
     }
 
     /**
@@ -138,28 +299,22 @@ class ProductsViewModel(
      * This should be called whenever inventory changes occur
      */
     fun triggerInventoryRefresh() {
-        _inventoryRefreshTrigger.value = _inventoryRefreshTrigger.value + 1
-        println("🔄 Inventory refresh triggered: ${_inventoryRefreshTrigger.value}")
+        try {
+            _inventoryRefreshTrigger.value = _inventoryRefreshTrigger.value + 1
+            println("🔄 Inventory refresh triggered: ${_inventoryRefreshTrigger.value}")
 
-        // Reload inventory data asynchronously
-        loadInventoryData()
+            // Reload inventory data asynchronously
+            loadInventoryData()
+        } catch (e: Exception) {
+            println("⚠️ Failed to trigger inventory refresh: ${e.message}")
+            // Silently fail if ViewModel is disposed
+        }
     }
 
     fun loadProducts() {
-        viewModelScope.launch {
-            _loading.value = true
-            try {
-                _products.value = repository.getAllProducts()
-                _error.value = null
-
-                // Load inventory data after products are loaded
-                loadInventoryData()
-            } catch (e: Exception) {
-                _error.value = "Failed to load products: ${e.message}"
-            } finally {
-                _loading.value = false
-            }
-        }
+        // No longer needed - products are automatically updated via StateFlow listener
+        // This method is kept for backward compatibility but does nothing
+        println("ℹ️ PRODUCTS VIEWMODEL: loadProducts() called but products are now managed by repository listener")
     }
 
     // Stones suggestions
@@ -179,10 +334,22 @@ class ProductsViewModel(
         viewModelScope.launch {
             try {
                 _stoneNames.value = stonesRepository.getAllStoneNames()
-                _stonePurities.value = stonesRepository.getAllStonePurities()
-                _stones.value = stonesRepository.getAllStones()
+                try {
+                    _stonePurities.value = stonesRepository.getAllStonePurities()
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _stonePurities: ${e.message}")
+                }
+                try {
+                    _stones.value = stonesRepository.getAllStones()
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _stones: ${e.message}")
+                }
             } catch (e: Exception) {
-                _error.value = "Failed to load stones: ${e.message}"
+                try {
+                    _error.value = "Failed to load stones: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             }
         }
     }
@@ -195,7 +362,11 @@ class ProductsViewModel(
                 loadStoneSuggestions()
                 onComplete(id)
             } catch (e: Exception) {
-                _error.value = "Failed to add stone: ${e.message}"
+                try {
+                    _error.value = "Failed to add stone: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             }
         }
     }
@@ -209,35 +380,39 @@ class ProductsViewModel(
                     val success = repository.updateProduct(updatedProduct)
                     if (success) {
                         loadProducts() // Refresh the list
-                        _error.value = null
+                        try {
+                            _error.value = null
+                        } catch (e: Exception) {
+                            println("⚠️ Failed to set _error to null: ${e.message}")
+                        }
                     } else {
-                        _error.value = "Failed to update quantity"
+                        try {
+                            _error.value = "Failed to update quantity"
+                        } catch (e: Exception) {
+                            println("⚠️ Failed to set _error value: ${e.message}")
+                        }
                     }
                 }
             } catch (e: Exception) {
-                _error.value = "Failed to update quantity: ${e.message}"
+                try {
+                    _error.value = "Failed to update quantity: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             }
         }
     }
 
     private fun loadCategories() {
-        viewModelScope.launch {
-            try {
-                _categories.value = repository.getCategories()
-            } catch (e: Exception) {
-                _error.value = "Failed to load categories: ${e.message}"
-            }
-        }
+        // No longer needed - categories are automatically updated via StateFlow listener
+        // This method is kept for backward compatibility but does nothing
+        println("ℹ️ PRODUCTS VIEWMODEL: loadCategories() called but categories are now managed by repository listener")
     }
 
     private fun loadMaterials() {
-        viewModelScope.launch {
-            try {
-                _materials.value = repository.getMaterials()
-            } catch (e: Exception) {
-                _error.value = "Failed to load materials: ${e.message}"
-            }
-        }
+        // No longer needed - materials are automatically updated via StateFlow listener
+        // This method is kept for backward compatibility but does nothing
+        println("ℹ️ PRODUCTS VIEWMODEL: loadMaterials() called but materials are now managed by repository listener")
     }
 
     private fun loadFeaturedProducts() {
@@ -245,7 +420,11 @@ class ProductsViewModel(
             try {
                 _featuredProducts.value = repository.getFeaturedProducts()
             } catch (e: Exception) {
-                _error.value = "Failed to load featured products: ${e.message}"
+                try {
+                    _error.value = "Failed to load featured products: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             }
         }
     }
@@ -280,7 +459,11 @@ class ProductsViewModel(
                 loadCategories()
                 onComplete(id)
             } catch (e: Exception) {
-                _error.value = "Failed to add category: ${e.message}"
+                try {
+                    _error.value = "Failed to add category: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             }
         }
     }
@@ -292,7 +475,11 @@ class ProductsViewModel(
                 loadCategories()
                 onComplete(id)
             } catch (e: Exception) {
-                _error.value = "Failed to add category: ${e.message}"
+                try {
+                    _error.value = "Failed to add category: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             }
         }
     }
@@ -306,7 +493,11 @@ class ProductsViewModel(
                 }
                 onComplete(success)
             } catch (e: Exception) {
-                _error.value = "Failed to update category: ${e.message}"
+                try {
+                    _error.value = "Failed to update category: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
                 onComplete(false)
             }
         }
@@ -321,7 +512,11 @@ class ProductsViewModel(
                 }
                 onComplete(success)
             } catch (e: Exception) {
-                _error.value = "Failed to delete category: ${e.message}"
+                try {
+                    _error.value = "Failed to delete category: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
                 onComplete(false)
             }
         }
@@ -334,7 +529,11 @@ class ProductsViewModel(
                 loadMaterials()
                 onComplete(id)
             } catch (e: Exception) {
-                _error.value = "Failed to add material: ${e.message}"
+                try {
+                    _error.value = "Failed to add material: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             }
         }
     }
@@ -346,23 +545,48 @@ class ProductsViewModel(
                 loadMaterials()
                 onComplete(ok)
             } catch (e: Exception) {
-                _error.value = "Failed to add material type: ${e.message}"
+                try {
+                    _error.value = "Failed to add material type: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             }
         }
     }
 
     fun selectProduct(productId: String) {
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 val product = repository.getProductById(productId)
-                _currentProduct.value = product
+                try {
+                    _currentProduct.value = product
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _currentProduct: ${e.message}")
+                }
                 println("Product loaded for editing: $productId - ${product?.name}")
-                _error.value = null
+                try {
+                    _error.value = null
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _error to null: ${e.message}")
+                }
             } catch (e: Exception) {
-                _error.value = "Failed to get product: ${e.message}"
+                try {
+                    _error.value = "Failed to get product: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
             }
         }
     }
@@ -388,28 +612,49 @@ class ProductsViewModel(
     }
 
     fun createNewProduct() {
-        _currentProduct.value = Product()
+        try {
+            _currentProduct.value = Product()
+        } catch (e: Exception) {
+            println("⚠️ Failed to create new product: ${e.message}")
+        }
     }
 
     fun addProduct(product: Product) {
         println("=== ProductsViewModel.addProduct() called ===")
         println("Product details - Name: '${product.name}', ID: '${product.id}'")
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 println("📤 Calling repository.addProduct...")
                 val result = repository.addProduct(product)
                 println("📥 Repository.addProduct completed")
                 loadProducts() // Refresh the list
                 loadFeaturedProducts() // Refresh featured products list
-                _error.value = null
+                try {
+                    _error.value = null
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _error to null: ${e.message}")
+                }
                 println("✅ Product added successfully, loading products...")
             } catch (e: Exception) {
                 println("💥 Exception in addProduct: ${e.message}")
                 e.printStackTrace()
-                _error.value = "Failed to add product: ${e.message}"
+                try {
+                    _error.value = "Failed to add product: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
                 println("🏁 addProduct operation completed")
             }
         }
@@ -458,29 +703,113 @@ class ProductsViewModel(
 
                     // Update product quantity - increment by 1
                     val updatedProduct = productToDuplicate.copy(quantity = productToDuplicate.quantity + 1)
+                    
+                    // Update local state immediately (same as delete barcode - instant UI update)
+                    _products.value = _products.value.map { product ->
+                        if (product.id == productId) {
+                            updatedProduct
+                        } else {
+                            product
+                        }
+                    }
+                    
+                    // Update inventory data immediately with new barcode (same as delete barcode)
+                    val currentInventoryData = try {
+                        _inventoryData.value[productId] ?: InventoryData()
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to get current inventory data: ${e.message}")
+                        InventoryData()
+                    }
+                    
+                    try {
+                    val newBarcodeIds = currentInventoryData.barcodeIds + barcodeId
+                    val newInventoryData = InventoryData(
+                        availableCount = currentInventoryData.availableCount + 1,
+                        barcodeIds = newBarcodeIds
+                    )
+                    try {
+                        _inventoryData.value = _inventoryData.value.toMutableMap().apply {
+                            put(productId, newInventoryData)
+                        }
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _inventoryData: ${e.message}")
+                    }
+                    
+                    // Trigger UI refresh for grouped products
+                    try {
+                        _inventoryRefreshTrigger.value = _inventoryRefreshTrigger.value + 1
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _inventoryRefreshTrigger: ${e.message}")
+                    }
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to update inventory data: ${e.message}")
+                    }
+                    
+                    // Update product in Firestore (same as delete barcode - synchronous)
                     val updateSuccess = repository.updateProduct(updatedProduct)
                     if (updateSuccess) {
                         println("✅ Product quantity updated: ${productToDuplicate.quantity} -> ${updatedProduct.quantity}")
                     } else {
                         println("⚠️ Failed to update product quantity, but inventory item was created")
+                        // Revert optimistic update on failure
+                        try {
+                            try {
+                                _products.value = _products.value.map { product ->
+                                    if (product.id == productId) {
+                                        productToDuplicate
+                                    } else {
+                                        product
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                println("⚠️ Failed to revert _products: ${e.message}")
+                            }
+                            // Revert inventory data on failure
+                            try {
+                                _inventoryData.value = _inventoryData.value.toMutableMap().apply {
+                                    put(productId, currentInventoryData)
+                                }
+                            } catch (e: Exception) {
+                                println("⚠️ Failed to revert _inventoryData: ${e.message}")
+                            }
+                        } catch (e: Exception) {
+                            println("⚠️ Failed to revert inventory data: ${e.message}")
+                        }
                     }
 
-                    // Trigger immediate refresh of dashboard to show updated quantity
-                    triggerInventoryRefresh()
-                    loadProducts() // Refresh product list to show updated quantity
-
-                    _error.value = null
+                    try {
+                        _error.value = null
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error to null: ${e.message}")
+                    }
                     println("✅ Product duplicated successfully - inventory item added and quantity incremented")
                 } else {
-                    _error.value = "Failed to create inventory item for duplicated product"
+                    try {
+                        _loading.value = false
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _loading to false: ${e.message}")
+                    }
+                    try {
+                        _error.value = "Failed to create inventory item for duplicated product"
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error value: ${e.message}")
+                    }
                     println("❌ Failed to create inventory item")
                 }
             } catch (e: Exception) {
                 println("💥 Exception in duplicateProductWithBarcode: ${e.message}")
                 e.printStackTrace()
-                _error.value = "Failed to duplicate product: ${e.message}"
+                try {
+                    _error.value = "Failed to duplicate product: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
             }
         }
     }
@@ -490,7 +819,12 @@ class ProductsViewModel(
         println("Base product - Name: '${baseProduct.name}', Barcodes count: ${barcodes.size}")
         println("Barcodes: $barcodes")
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 println("🔄 Starting batch processing...")
 
@@ -515,15 +849,27 @@ class ProductsViewModel(
 
                 loadProducts()
                 loadFeaturedProducts() // Refresh featured products list
-                _error.value = null
+                try {
+                    _error.value = null
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _error to null: ${e.message}")
+                }
                 println("✅ Batch products and inventory items added successfully")
                 onComplete?.let { it() }
             } catch (e: Exception) {
                 println("💥 Exception in addProductsBatch: ${e.message}")
                 e.printStackTrace()
-                _error.value = "Failed to add products: ${e.message}"
+                try {
+                    _error.value = "Failed to add products: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
                 println("🏁 addProductsBatch operation completed")
             }
         }
@@ -540,20 +886,41 @@ class ProductsViewModel(
 
     fun updateProduct(product: Product) {
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 val success = repository.updateProduct(product)
                 if (success) {
                     loadProducts() // Refresh the list
                     loadFeaturedProducts() // Refresh featured products list
-                    _error.value = null
+                    try {
+                        _error.value = null
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error to null: ${e.message}")
+                    }
                 } else {
-                    _error.value = "Failed to update product"
+                    try {
+                        _error.value = "Failed to update product"
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error value: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
-                _error.value = "Failed to update product: ${e.message}"
+                try {
+                    _error.value = "Failed to update product: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
             }
         }
     }
@@ -564,7 +931,12 @@ class ProductsViewModel(
         println("   - Timestamp: ${System.currentTimeMillis()}")
 
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 println("🗑️ PRODUCT DELETION START")
                 println("   - Product ID: $productId")
@@ -583,16 +955,32 @@ class ProductsViewModel(
                     println("✅ Product and all related inventory items deleted successfully")
                     loadProducts() // Refresh the list
                     triggerInventoryRefresh() // Trigger dashboard refresh
-                    _error.value = null
+                    try {
+                        _error.value = null
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error to null: ${e.message}")
+                    }
                 } else {
                     println("❌ Failed to delete product document")
-                    _error.value = "Failed to delete product"
+                    try {
+                        _error.value = "Failed to delete product"
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error value: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 println("💥 Exception in deleteProduct: ${e.message}")
-                _error.value = "Failed to delete product: ${e.message}"
+                try {
+                    _error.value = "Failed to delete product: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
             }
         }
     }
@@ -610,7 +998,12 @@ class ProductsViewModel(
         println("   - Timestamp: ${System.currentTimeMillis()}")
 
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 if (groupedProduct.commonId == null) {
                     // Single product - delete directly
@@ -628,10 +1021,18 @@ class ProductsViewModel(
                         println("   - ✅ Single product and all inventory items deleted successfully")
                         loadProducts() // Refresh the list
                         triggerInventoryRefresh() // Trigger dashboard refresh
-                        _error.value = null
+                        try {
+                            _error.value = null
+                        } catch (e: Exception) {
+                            println("⚠️ Failed to set _error to null: ${e.message}")
+                        }
                     } else {
                         println("   - ❌ Failed to delete single product")
-                        _error.value = "Failed to delete product"
+                        try {
+                            _error.value = "Failed to delete product"
+                        } catch (e: Exception) {
+                            println("⚠️ Failed to set _error value: ${e.message}")
+                        }
                     }
                 } else {
                     // Grouped product - keep parent, delete others
@@ -679,13 +1080,25 @@ class ProductsViewModel(
 
                     loadProducts() // Refresh the list
                     triggerInventoryRefresh() // Trigger dashboard refresh
-                    _error.value = null
+                    try {
+                        _error.value = null
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error to null: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 println("❌ Error in grouped product deletion: ${e.message}")
-                _error.value = "Failed to delete grouped product: ${e.message}"
+                try {
+                    _error.value = "Failed to delete grouped product: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
             }
         }
     }
@@ -696,7 +1109,12 @@ class ProductsViewModel(
         println("   - Timestamp: ${System.currentTimeMillis()}")
 
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 println("🔍 Searching for inventory item with barcode: $barcodeId")
                 val inventoryItem = inventoryRepository?.getInventoryItemByBarcodeId(barcodeId)
@@ -733,22 +1151,42 @@ class ProductsViewModel(
                         // Trigger dashboard refresh to show updated quantities
                         triggerInventoryRefresh()
                         loadProducts() // Refresh product list to show updated quantity
-                        _error.value = null
+                        try {
+                            _error.value = null
+                        } catch (e: Exception) {
+                            println("⚠️ Failed to set _error to null: ${e.message}")
+                        }
                     } else {
                         println("❌ Failed to delete inventory item!")
-                        _error.value = "Failed to delete barcode $barcodeId"
+                        try {
+                            _error.value = "Failed to delete barcode $barcodeId"
+                        } catch (e: Exception) {
+                            println("⚠️ Failed to set _error value: ${e.message}")
+                        }
                     }
                 } else {
                     println("❌ No inventory item found with barcode: $barcodeId")
-                    _error.value = "No inventory item found with barcode $barcodeId"
+                    try {
+                        _error.value = "No inventory item found with barcode $barcodeId"
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error value: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
                 println("💥 Exception during barcode deletion:")
                 println("   - Barcode: $barcodeId")
                 println("   - Error: ${e.message}")
-                _error.value = "Failed to delete product with barcode $barcodeId: ${e.message}"
+                try {
+                    _error.value = "Failed to delete product with barcode $barcodeId: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
                 println("🏁 BARCODE DELETE REQUEST END")
                 println("   - Barcode ID: $barcodeId")
                 println("   - Loading state: false")
@@ -769,57 +1207,120 @@ class ProductsViewModel(
     // Category management methods
     fun addCategory(category: Category) {
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 val id = repository.addCompleteCategory(category)
                 if (id.isNotEmpty()) {
                     loadCategories() // Refresh the list after adding
-                    _error.value = null
+                    try {
+                        _error.value = null
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error to null: ${e.message}")
+                    }
                 } else {
-                    _error.value = "Failed to add category to Firestore"
+                    try {
+                        _error.value = "Failed to add category to Firestore"
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error value: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
-                _error.value = "Failed to add category: ${e.message}"
+                try {
+                    _error.value = "Failed to add category: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
             }
         }
     }
 
     fun updateCategory(category: Category) {
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 val success = repository.updateCategory(category)
                 if (success) {
                     loadCategories() // Refresh the list after updating
-                    _error.value = null
+                    try {
+                        _error.value = null
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error to null: ${e.message}")
+                    }
                 } else {
-                    _error.value = "Failed to update category in Firestore"
+                    try {
+                        _error.value = "Failed to update category in Firestore"
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error value: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
-                _error.value = "Failed to update category: ${e.message}"
+                try {
+                    _error.value = "Failed to update category: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
             }
         }
     }
 
     fun deleteCategory(categoryId: String) {
         viewModelScope.launch {
-            _loading.value = true
+            try {
+                _loading.value = true
+            } catch (e: Exception) {
+                println("⚠️ Failed to set _loading to true: ${e.message}")
+                return@launch
+            }
             try {
                 val success = repository.deleteCategory(categoryId)
                 if (success) {
                     loadCategories() // Refresh the list after deleting
-                    _error.value = null
+                    try {
+                        _error.value = null
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error to null: ${e.message}")
+                    }
                 } else {
-                    _error.value = "Failed to delete category from Firestore"
+                    try {
+                        _error.value = "Failed to delete category from Firestore"
+                    } catch (e: Exception) {
+                        println("⚠️ Failed to set _error value: ${e.message}")
+                    }
                 }
             } catch (e: Exception) {
-                _error.value = "Failed to delete category: ${e.message}"
+                try {
+                    _error.value = "Failed to delete category: ${e.message}"
+                } catch (e2: Exception) {
+                    println("⚠️ Failed to set _error value: ${e2.message}")
+                }
             } finally {
-                _loading.value = false
+                try {
+                    _loading.value = false
+                } catch (e: Exception) {
+                    println("⚠️ Failed to set _loading to false in finally: ${e.message}")
+                }
             }
         }
     }
@@ -953,6 +1454,25 @@ class ProductsViewModel(
             println("   - Product ID: $productId")
             println("   - Inventory Items Deleted: $deletedCount")
             println("   - Inventory Items Failed: $failedCount")
+
+            // Update product quantity - deduct the number of deleted inventory items
+            if (deletedCount > 0) {
+                try {
+                    val product = repository.getProductById(productId)
+                    if (product != null) {
+                        val newQuantity = (product.quantity - deletedCount).coerceAtLeast(0)
+                        val updatedProduct = product.copy(quantity = newQuantity)
+                        val updateSuccess = repository.updateProduct(updatedProduct)
+                        if (updateSuccess) {
+                            println("✅ Product quantity updated: ${product.quantity} -> ${updatedProduct.quantity} (deducted $deletedCount)")
+                        } else {
+                            println("⚠️ Failed to update product quantity after deleting inventory items")
+                        }
+                    }
+                } catch (e: Exception) {
+                    println("⚠️ Error updating product quantity: ${e.message}")
+                }
+            }
 
             // Return true if at least some items were deleted successfully
             deletedCount > 0

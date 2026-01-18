@@ -141,7 +141,6 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     val appointmentViewModel = JewelryAppInitializer.getAppointmentViewModel()
     val availabilityRepository = JewelryAppInitializer.getAvailabilityRepository()
     val profileViewModel = ProfileViewModel(
-        JewelryAppInitializer.getCustomerRepository(),
         FirestoreOrderRepository(JewelryAppInitializer.getFirestore()),
         FirestoreCashAmountRepository(JewelryAppInitializer.getFirestore())
     )

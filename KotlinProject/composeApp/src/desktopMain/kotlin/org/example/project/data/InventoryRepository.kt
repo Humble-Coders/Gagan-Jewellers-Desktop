@@ -1,10 +1,22 @@
 package org.example.project.data
 
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.FirestoreException
+import com.google.cloud.firestore.ListenerRegistration
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 interface InventoryRepository {
+    val inventoryItems: StateFlow<List<InventoryItem>>
+    val loading: StateFlow<Boolean>
+    val error: StateFlow<String?>
+    
     suspend fun getInventoryItemById(id: String): InventoryItem?
     suspend fun getInventoryItemByBarcodeId(barcodeId: String): InventoryItem?
     suspend fun getInventoryItemsByProductId(productId: String): List<InventoryItem>
@@ -14,119 +26,192 @@ interface InventoryRepository {
     suspend fun deleteInventoryItem(id: String): Boolean
     suspend fun generateUniqueBarcodes(quantity: Int, digits: Int): List<String>
     fun generateBarcode(digits: Int): String
+    
+    // Lifecycle methods
+    fun startListening()
+    fun stopListening()
 }
 
-class FirestoreInventoryRepository(private val firestore: Firestore) : InventoryRepository {
-
-    override suspend fun getInventoryItemById(id: String): InventoryItem? = withContext(Dispatchers.IO) {
-        try {
-            val docRef = firestore.collection("inventory").document(id)
-            val future = docRef.get()
-            val snapshot = future.get()
-
-            if (snapshot.exists()) {
-                val data = snapshot.data
-                InventoryItem(
-                    id = snapshot.id,
-                    productId = data?.get("product_id") as? String ?: "",
-                    barcodeId = data?.get("barcode_id") as? String ?: "",
-                    createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data?.get("updated_at") as? Number)?.toLong() ?: System.currentTimeMillis()
-                )
-            } else null
-        } catch (e: Exception) {
-            println("Error fetching inventory item by ID: ${e.message}")
-            null
-        }
+object FirestoreInventoryRepository : InventoryRepository {
+    private lateinit var firestore: Firestore
+    private var listenerRegistration: ListenerRegistration? = null
+    
+    // Coroutine scope for listener callback processing
+    private val listenerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    
+    // StateFlow for reactive data
+    private val _inventoryItems = MutableStateFlow<List<InventoryItem>>(emptyList())
+    override val inventoryItems: StateFlow<List<InventoryItem>> = _inventoryItems.asStateFlow()
+    
+    private val _loading = MutableStateFlow<Boolean>(false)
+    override val loading: StateFlow<Boolean> = _loading.asStateFlow()
+    
+    private val _error = MutableStateFlow<String?>(null)
+    override val error: StateFlow<String?> = _error.asStateFlow()
+    
+    fun initialize(firestoreInstance: Firestore) {
+        println("🔧 INVENTORY REPOSITORY: Initializing repository object")
+        println("   - Thread: ${Thread.currentThread().name}")
+        firestore = firestoreInstance
+        startListening()
     }
+    
+    override fun startListening() {
+        if (listenerRegistration != null) {
+            println("⚠️ INVENTORY REPOSITORY: Listener already active - NOT creating duplicate listener")
+            println("   - Thread: ${Thread.currentThread().name}")
+            println("   - Current inventory items count: ${_inventoryItems.value.size}")
+            return
+        }
+        
+        if (!::firestore.isInitialized) {
+            println("❌ INVENTORY REPOSITORY: Firestore not initialized. Call initialize() first.")
+            return
+        }
+        
+        println("=".repeat(80))
+        println("👂 INVENTORY REPOSITORY: Starting Firestore listener on inventory collection")
+        println("   - Thread: ${Thread.currentThread().name}")
+        println("   - Repository instance: ${this.hashCode()}")
+        println("   - This is the ONLY listener that will be created")
+        println("=".repeat(80))
+        _loading.value = true
+        
+        val inventoryCollection = firestore.collection("inventory")
+        
+        listenerRegistration = inventoryCollection.addSnapshotListener { snapshot, exception ->
+            println("📡 INVENTORY REPOSITORY: Listener callback triggered")
+            println("   - Thread: ${Thread.currentThread().name}")
+            println("   - Repository instance: ${this.hashCode()}")
+            
+            if (exception != null) {
+                println("❌ INVENTORY REPOSITORY: Listener error: ${exception.message}")
+                _error.value = "Failed to load inventory: ${exception.message}"
+                _loading.value = false
+                return@addSnapshotListener
+            }
+            
+            if (snapshot == null) {
+                println("⚠️ INVENTORY REPOSITORY: Snapshot is null")
+                _loading.value = false
+                return@addSnapshotListener
+            }
+            
+            // Process snapshot on IO dispatcher for consistency with other repository methods
+            listenerScope.launch(Dispatchers.IO) {
+                try {
+                    println("📥 INVENTORY REPOSITORY: Processing snapshot from Firestore")
+                    println("   - Thread: ${Thread.currentThread().name}")
+                    println("   - Document count: ${snapshot.documents.size}")
+                    
+                    val inventoryList = snapshot.documents.mapNotNull { doc ->
+                        parseInventoryItemDocument(doc)
+                    }
+                    
+                    println("✅ INVENTORY REPOSITORY: Parsed ${inventoryList.size} inventory items from snapshot")
+                    println("   - Updating StateFlow (this will notify all ViewModels)")
+                    println("   - Previous inventory items count: ${_inventoryItems.value.size}")
+                    
+                    _inventoryItems.value = inventoryList
+                    _error.value = null
+                    _loading.value = false
+                    
+                    println("✅ INVENTORY REPOSITORY: StateFlow updated successfully")
+                    println("   - New inventory items count: ${inventoryList.size}")
+                    println("   - All ViewModels using this repository will receive this update automatically")
+                    println("   - Repository instance: ${this.hashCode()}")
+                    println("-".repeat(80))
+                } catch (e: Exception) {
+                    println("❌ INVENTORY REPOSITORY: Error parsing documents: ${e.message}")
+                    _error.value = "Error parsing inventory data: ${e.message}"
+                    _loading.value = false
+                }
+            }
+        }
+        
+        println("✅ INVENTORY REPOSITORY: Listener attached successfully")
+        println("   - Listener registration: ${listenerRegistration.hashCode()}")
+    }
+    
+    override fun stopListening() {
+        println(" INVENTORY REPOSITORY: Stopping Firestore listener")
+        println("   - Thread: ${Thread.currentThread().name}")
+        println("   - Repository instance: ${this.hashCode()}")
+        listenerRegistration?.remove()
+        listenerRegistration = null
+        println("✅ INVENTORY REPOSITORY: Firestore listener stopped")
+    }
+    
+    private fun parseInventoryItemDocument(doc: com.google.cloud.firestore.DocumentSnapshot): InventoryItem? {
+        val data = doc.data ?: return null
+        
+        return InventoryItem(
+            id = doc.id,
+            productId = data["product_id"] as? String ?: "",
+            barcodeId = data["barcode_id"] as? String ?: "",
+            createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+            updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
+        )
+    }
+    
+    override suspend fun getInventoryItemById(id: String): InventoryItem? = withContext(Dispatchers.IO) {
+        // First check cached data
+        _inventoryItems.value.find { it.id == id }
+            ?: run {
+                // Fallback to direct query if not in cache
+                try {
+                    val docRef = firestore.collection("inventory").document(id)
+                    val doc = docRef.get().get()
+                    if (doc.exists()) parseInventoryItemDocument(doc) else null
+                } catch (e: Exception) {
+                    println("❌ INVENTORY REPOSITORY: Error fetching inventory item by ID: ${e.message}")
+                    null
+                }
+            }
+    }
+
 
     override suspend fun getInventoryItemByBarcodeId(barcodeId: String): InventoryItem? = withContext(Dispatchers.IO) {
         try {
-            println("🔍 INVENTORY: Searching for barcode in inventory collection")
+            println("🔍 INVENTORY: Searching for barcode in cached inventory")
             println("   - Barcode ID: $barcodeId")
             
+            // First check cached data
+            val cachedItem = _inventoryItems.value.find { it.barcodeId == barcodeId }
+            if (cachedItem != null) {
+                println("✅ INVENTORY: Found inventory item in cache")
+                return@withContext cachedItem
+            }
+            
+            // Fallback to direct query if not in cache
+            println("🔍 INVENTORY: Barcode not in cache, querying Firestore")
             val inventoryCollection = firestore.collection("inventory")
-            // Note: Ensure Firestore index exists for barcode_id field for optimal query performance
             val query = inventoryCollection.whereEqualTo("barcode_id", barcodeId)
-            val future = query.get()
-            val snapshot = future.get()
-
-            println("🔍 INVENTORY: Query executed")
-            println("   - Snapshot size: ${snapshot.size()}")
-            println("   - Is empty: ${snapshot.isEmpty}")
+            val snapshot = query.get().get()
 
             if (!snapshot.isEmpty) {
                 val document = snapshot.documents.first()
-                val data = document.data
-                
-                println("✅ INVENTORY: Found inventory item")
-                println("   - Document ID: ${document.id}")
-                println("   - Product ID: ${data?.get("product_id")}")
-                
-                InventoryItem(
-                    id = document.id,
-                    productId = data?.get("product_id") as? String ?: "",
-                    barcodeId = data?.get("barcode_id") as? String ?: "",
-                    createdAt = (data?.get("created_at") as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data?.get("updated_at") as? Number)?.toLong() ?: System.currentTimeMillis()
-                )
+                val item = parseInventoryItemDocument(document)
+                println("✅ INVENTORY: Found inventory item in Firestore")
+                item
             } else {
                 println("❌ INVENTORY: No inventory item found with barcode")
                 null
             }
         } catch (e: Exception) {
-            println("💥 INVENTORY: Exception during barcode search")
-            println("   - Barcode: $barcodeId")
-            println("   - Error: ${e.message}")
+            println("💥 INVENTORY: Exception during barcode search: ${e.message}")
             null
         }
     }
 
     override suspend fun getInventoryItemsByProductId(productId: String): List<InventoryItem> = withContext(Dispatchers.IO) {
-        try {
-            val inventoryCollection = firestore.collection("inventory")
-            val query = inventoryCollection.whereEqualTo("product_id", productId)
-            val future = query.get()
-            val snapshot = future.get()
-            
-            snapshot.documents.map { doc ->
-                val data = doc.data
-                InventoryItem(
-                    id = doc.id,
-                    productId = data["product_id"] as? String ?: "",
-                    barcodeId = data["barcode_id"] as? String ?: "",
-                    createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-                )
-            }
-        } catch (e: Exception) {
-            println("Error fetching inventory items by product ID: ${e.message}")
-            emptyList()
-        }
+        // Use cached data from StateFlow
+        _inventoryItems.value.filter { it.productId == productId }
     }
 
     override suspend fun getAvailableInventoryItemsByProductId(productId: String): List<InventoryItem> = withContext(Dispatchers.IO) {
-        try {
-            // Since status field is removed, return all inventory items for the product
-            val inventoryCollection = firestore.collection("inventory")
-            val query = inventoryCollection.whereEqualTo("product_id", productId)
-            val future = query.get()
-            val snapshot = future.get()
-            
-            snapshot.documents.map { doc ->
-                val data = doc.data
-                InventoryItem(
-                    id = doc.id,
-                    productId = data["product_id"] as? String ?: "",
-                    barcodeId = data["barcode_id"] as? String ?: "",
-                    createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                    updatedAt = (data["updated_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-                )
-            }
-        } catch (e: Exception) {
-            println("Error fetching inventory items by product ID: ${e.message}")
-            emptyList()
-        }
+        // Since status field is removed, return all inventory items for the product from cache
+        _inventoryItems.value.filter { it.productId == productId }
     }
 
     override suspend fun addInventoryItem(inventoryItem: InventoryItem): String = withContext(Dispatchers.IO) {
@@ -145,17 +230,15 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
                 "created_at" to (inventoryItem.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis()),
                 "updated_at" to (inventoryItem.updatedAt.takeIf { it > 0 } ?: System.currentTimeMillis())
             )
-
-            println("🔍 INVENTORY REPOSITORY: About to write to Firestore")
-            println("   - Collection: inventory")
-            println("   - Document ID: $newInventoryId")
-            println("   - Data: $inventoryMap")
             
             docRef.set(inventoryMap).get()
-            println("✅ Inventory item created with ID: $newInventoryId")
+            // Listener will automatically update _inventoryItems - no manual refresh needed
+            println("✅ INVENTORY REPOSITORY: Inventory item added to Firestore")
+            println("   - Document ID: $newInventoryId")
+            println("   - Listener will automatically detect this change and update StateFlow")
             newInventoryId
         } catch (e: Exception) {
-            println("Error adding inventory item: ${e.message}")
+            println("❌ INVENTORY REPOSITORY: Failed to add inventory item: ${e.message}")
             e.printStackTrace()
             throw e
         }
@@ -164,17 +247,18 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
     override suspend fun updateInventoryItem(inventoryItem: InventoryItem): Boolean = withContext(Dispatchers.IO) {
         try {
             val docRef = firestore.collection("inventory").document(inventoryItem.id)
-
             val inventoryMap = mapOf(
                 "product_id" to inventoryItem.productId,
                 "barcode_id" to inventoryItem.barcodeId,
                 "updated_at" to System.currentTimeMillis()
             )
-
             docRef.update(inventoryMap).get()
+            // Listener will automatically update _inventoryItems - no manual refresh needed
+            println("✅ INVENTORY REPOSITORY: Inventory item updated in Firestore")
+            println("   - Listener will automatically detect this change and update StateFlow")
             true
         } catch (e: Exception) {
-            println("Error updating inventory item: ${e.message}")
+            println("❌ INVENTORY REPOSITORY: Failed to update inventory item: ${e.message}")
             false
         }
     }
@@ -182,9 +266,12 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
     override suspend fun deleteInventoryItem(id: String): Boolean = withContext(Dispatchers.IO) {
         try {
             firestore.collection("inventory").document(id).delete().get()
+            // Listener will automatically update _inventoryItems - no manual refresh needed
+            println("✅ INVENTORY REPOSITORY: Inventory item deleted from Firestore")
+            println("   - Listener will automatically detect this change and update StateFlow")
             true
         } catch (e: Exception) {
-            println("Error deleting inventory item: ${e.message}")
+            println("❌ INVENTORY REPOSITORY: Failed to delete inventory item: ${e.message}")
             false
         }
     }
@@ -203,9 +290,15 @@ class FirestoreInventoryRepository(private val firestore: Firestore) : Inventory
     }
 
     private suspend fun isBarcodeUnique(barcode: String): Boolean = withContext(Dispatchers.IO) {
+        // Check cached data first
+        val existsInCache = _inventoryItems.value.any { it.barcodeId == barcode }
+        if (existsInCache) {
+            return@withContext false
+        }
+        
+        // Fallback to direct query if not in cache (for race conditions)
         val inventoryCollection = firestore.collection("inventory")
         val query = inventoryCollection.whereEqualTo("barcode_id", barcode)
-        // Note: Ensure Firestore index exists for barcode_id field for optimal performance
         val snapshot = query.get().get()
         snapshot.isEmpty
     }

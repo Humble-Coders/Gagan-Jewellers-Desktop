@@ -14,6 +14,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,10 +31,10 @@ fun CustomerSelectionStep(
     onCustomerSelected: (User) -> Unit,
     onContinue: () -> Unit
 ) {
-    val customers by viewModel.customers
+    val customers by viewModel.customers.collectAsState()
     val selectedCustomer by viewModel.selectedCustomer
-    val isLoading by viewModel.loading
-    val error by viewModel.error
+    val isLoading by viewModel.loading.collectAsState()
+    val error by viewModel.error.collectAsState()
     var showAddCustomerDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
 

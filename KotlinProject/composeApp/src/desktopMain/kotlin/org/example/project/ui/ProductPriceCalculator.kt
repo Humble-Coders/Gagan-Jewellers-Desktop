@@ -38,6 +38,14 @@ data class ProductPriceInputs(
     val kundanWeight: Double,               // grams (sum of all Kundan weights)
     val jarkanPrice: Double,               // ₹ (sum of all Jarkan prices)
     val jarkanWeight: Double,              // grams (sum of all Jarkan weights)
+    val diamondPrice: Double,              // ₹ (sum of all Diamond prices: cent * rate)
+    val diamondWeight: Double,             // carats (sum of all Diamond cent values in carats, for display)
+    val diamondWeightInGrams: Double,      // grams (sum of all Diamond weights in grams, for calculation)
+    val solitairePrice: Double,            // ₹ (sum of all Solitaire prices: cent * rate)
+    val solitaireWeight: Double,           // carats (sum of all Solitaire cent values in carats, for display)
+    val solitaireWeightInGrams: Double,    // grams (sum of all Solitaire weights in grams, for calculation)
+    val colorStonesPrice: Double,          // ₹ (sum of all Color Stones prices: weight * rate)
+    val colorStonesWeight: Double,         // grams or carats (sum of all Color Stones weights)
     val goldRatePerGram: Double            // ₹/gram (fetched from materials section)
 )
 
@@ -52,6 +60,11 @@ data class ProductPriceResult(
     val goldPrice: Double,
     val kundanPrice: Double,
     val jarkanPrice: Double,
+    val diamondPrice: Double,
+    val solitairePrice: Double,
+    val colorStonesPrice: Double,
+    val totalStonesPrice: Double,         // Sum of all stone prices
+    val totalStonesWeight: Double,        // Sum of all stone weights (in grams)
     val totalProductPrice: Double
 )
 
@@ -76,23 +89,45 @@ fun calculateProductPrice(inputs: ProductPriceInputs): ProductPriceResult {
     // Always calculate as: Labour Rate × New Weight
     val labourCharges = labourRatePerGram * newWeight
     
-    // Step 4: Handle Kundan/Jarkan
-    // Both Jarkan and Kundan weights are subtracted from new weight
+    // Step 4: Handle all stone types
+    // Kundan and Jarkan weights are subtracted from new weight (in grams)
     val kundanWeight = inputs.kundanWeight.coerceAtLeast(0.0)
     val kundanPrice = inputs.kundanPrice.coerceAtLeast(0.0)
     val jarkanWeight = inputs.jarkanWeight.coerceAtLeast(0.0)
     val jarkanPrice = inputs.jarkanPrice.coerceAtLeast(0.0)
     
+    // Diamond and Solitaire: prices already calculated (cent * rate)
+    // diamondWeight/solitaireWeight are in carats (for display)
+    // diamondWeightInGrams/solitaireWeightInGrams are in grams (for calculation)
+    val diamondWeight = inputs.diamondWeight.coerceAtLeast(0.0) // carats (for display)
+    val diamondPrice = inputs.diamondPrice.coerceAtLeast(0.0)
+    val diamondWeightInGrams = inputs.diamondWeightInGrams.coerceAtLeast(0.0) // grams (for calculation)
+    val solitaireWeight = inputs.solitaireWeight.coerceAtLeast(0.0) // carats (for display)
+    val solitairePrice = inputs.solitairePrice.coerceAtLeast(0.0)
+    val solitaireWeightInGrams = inputs.solitaireWeightInGrams.coerceAtLeast(0.0) // grams (for calculation)
+    
+    // Color Stones: weights in grams, prices already calculated (weight * rate)
+    val colorStonesWeight = inputs.colorStonesWeight.coerceAtLeast(0.0)
+    val colorStonesPrice = inputs.colorStonesPrice.coerceAtLeast(0.0)
+    
     // Step 5: Effective Metal Weight (for pricing)
-    // Effective Metal Weight = New Weight - (Jarkan Weight + Kundan Weight)
-    val effectiveGoldWeight = (newWeight - jarkanWeight - kundanWeight).coerceAtLeast(0.0)
+    // Effective Metal Weight = New Weight - (All Stone Weights in grams)
+    // Stone weights: Kundan, Jarkan, Diamond, Solitaire, Color Stones (all in grams)
+    val totalStoneWeightInGrams = kundanWeight + jarkanWeight + diamondWeightInGrams + solitaireWeightInGrams + colorStonesWeight
+    val effectiveGoldWeight = (newWeight - totalStoneWeightInGrams).coerceAtLeast(0.0)
     
     // Step 6: Gold Price
     val goldPrice = effectiveGoldWeight * goldRatePerGram
     
-    // Step 7: Final Product Price
-    // Total = Gold Price + Kundan Price + Jarkan Price + Labour Charges
-    val totalProductPrice = goldPrice + kundanPrice + jarkanPrice + labourCharges
+    // Step 7: Total Stones Price (sum of all stone prices)
+    val totalStonesPrice = kundanPrice + jarkanPrice + diamondPrice + solitairePrice + colorStonesPrice
+    
+    // Step 8: Total Stones Weight (in grams for display)
+    val totalStonesWeight = totalStoneWeightInGrams
+    
+    // Step 9: Final Product Price
+    // Total = Gold Price + All Stone Prices + Labour Charges
+    val totalProductPrice = goldPrice + totalStonesPrice + labourCharges
     
     return ProductPriceResult(
         makingWeight = makingWeight,
@@ -102,6 +137,11 @@ fun calculateProductPrice(inputs: ProductPriceInputs): ProductPriceResult {
         goldPrice = goldPrice,
         kundanPrice = kundanPrice,
         jarkanPrice = jarkanPrice,
+        diamondPrice = diamondPrice,
+        solitairePrice = solitairePrice,
+        colorStonesPrice = colorStonesPrice,
+        totalStonesPrice = totalStonesPrice,
+        totalStonesWeight = totalStonesWeight,
         totalProductPrice = totalProductPrice
     )
 }
@@ -119,6 +159,81 @@ private fun formatWeight(weight: Double): String {
     formatter.minimumFractionDigits = 2
     return formatter.format(weight)
 }
+
+/**
+ * Helper function to calculate stone prices from ProductStone list
+ * Extracts and sums prices and weights for each stone type
+ */
+fun calculateStonePrices(stones: List<org.example.project.data.ProductStone>): StonePriceBreakdown {
+    // Filter stones by type
+    val kundanStones = stones.filter { it.name.equals("Kundan", ignoreCase = true) }
+    val jarkanStones = stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
+    val diamondStones = stones.filter { it.name.equals("Diamond", ignoreCase = true) }
+    val solitaireStones = stones.filter { it.name.equals("Solitaire", ignoreCase = true) }
+    val colorStones = stones.filter { stone ->
+        !stone.name.equals("Kundan", ignoreCase = true) &&
+        !stone.name.equals("Jarkan", ignoreCase = true) &&
+        !stone.name.equals("Diamond", ignoreCase = true) &&
+        !stone.name.equals("Solitaire", ignoreCase = true)
+    }
+    
+    // Calculate Kundan: amount is direct, weight in grams
+    val kundanPrice = kundanStones.sumOf { it.amount }
+    val kundanWeight = kundanStones.sumOf { it.weight } // in grams
+    
+    // Calculate Jarkan: amount is direct (can be 0), weight in grams
+    val jarkanPrice = jarkanStones.sumOf { it.amount }
+    val jarkanWeight = jarkanStones.sumOf { it.weight } // in grams
+    
+    // Calculate Diamond: amount = cent * rate (where cent is in carats, stored in quantity)
+    // For Diamond, weight (grams) is in weight field, cent (carats) is in quantity field
+    val diamondPrice = diamondStones.sumOf { it.amount } // Already calculated: cent (carats) * rate
+    val diamondWeightInCarats = diamondStones.sumOf { it.quantity } // cent (carats) from quantity field
+    val diamondWeightInGrams = diamondStones.sumOf { it.weight } // weight in grams (for total weight calculation)
+    
+    // Calculate Solitaire: amount = cent * rate (where cent is in carats, stored in quantity)
+    // For Solitaire, weight (grams) is in weight field, cent (carats) is in quantity field
+    val solitairePrice = solitaireStones.sumOf { it.amount } // Already calculated: cent (carats) * rate
+    val solitaireWeightInCarats = solitaireStones.sumOf { it.quantity } // cent (carats) from quantity field
+    val solitaireWeightInGrams = solitaireStones.sumOf { it.weight } // weight in grams (for total weight calculation)
+    
+    // Calculate Color Stones: amount = weight * rate (weight in grams/carats, rate per gram/carat)
+    val colorStonesPrice = colorStones.sumOf { it.amount } // Already calculated: weight * rate
+    val colorStonesWeight = colorStones.sumOf { it.weight } // in grams or carats
+    
+    return StonePriceBreakdown(
+        kundanPrice = kundanPrice,
+        kundanWeight = kundanWeight,
+        jarkanPrice = jarkanPrice,
+        jarkanWeight = jarkanWeight,
+        diamondPrice = diamondPrice,
+        diamondWeight = diamondWeightInCarats, // Return carats for display
+        solitairePrice = solitairePrice,
+        solitaireWeight = solitaireWeightInCarats, // Return carats for display
+        colorStonesPrice = colorStonesPrice,
+        colorStonesWeight = colorStonesWeight,
+        diamondWeightInGrams = diamondWeightInGrams, // For total weight calculation
+        solitaireWeightInGrams = solitaireWeightInGrams // For total weight calculation
+    )
+}
+
+/**
+ * Data class for stone price breakdown
+ */
+data class StonePriceBreakdown(
+    val kundanPrice: Double = 0.0,
+    val kundanWeight: Double = 0.0,
+    val jarkanPrice: Double = 0.0,
+    val jarkanWeight: Double = 0.0,
+    val diamondPrice: Double = 0.0,
+    val diamondWeight: Double = 0.0, // carats (for display)
+    val solitairePrice: Double = 0.0,
+    val solitaireWeight: Double = 0.0, // carats (for display)
+    val colorStonesPrice: Double = 0.0,
+    val colorStonesWeight: Double = 0.0,
+    val diamondWeightInGrams: Double = 0.0, // grams (for calculation)
+    val solitaireWeightInGrams: Double = 0.0 // grams (for calculation)
+)
 
 /**
  * Reusable composable for product price calculation and display
@@ -471,6 +586,108 @@ fun ProductPriceCalculatorComposable(
                     }
                 }
                 
+                // Diamond Price
+                if (result.diamondPrice > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Diamond Price (${formatWeight(inputs.diamondWeight)} carats)",
+                            fontSize = 14.sp,
+                            color = Color(0xFF555555)
+                        )
+                        Text(
+                            "${CurrencyFormatter.formatRupees(result.diamondPrice)}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF555555)
+                        )
+                    }
+                }
+                
+                // Solitaire Price
+                if (result.solitairePrice > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Solitaire Price (${formatWeight(inputs.solitaireWeight)} carats)",
+                            fontSize = 14.sp,
+                            color = Color(0xFF555555)
+                        )
+                        Text(
+                            "${CurrencyFormatter.formatRupees(result.solitairePrice)}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF555555)
+                        )
+                    }
+                }
+                
+                // Color Stones Price
+                if (result.colorStonesPrice > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Color Stones Price (${formatWeight(inputs.colorStonesWeight)}g)",
+                            fontSize = 14.sp,
+                            color = Color(0xFF555555)
+                        )
+                        Text(
+                            "${CurrencyFormatter.formatRupees(result.colorStonesPrice)}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF555555)
+                        )
+                    }
+                }
+                
+                // Total Stones Weight (show if any stones exist)
+                if (result.totalStonesWeight > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Total Stones Weight",
+                            fontSize = 14.sp,
+                            color = Color(0xFF555555),
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "${formatWeight(result.totalStonesWeight)}g",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF555555)
+                        )
+                    }
+                }
+                
+                // Total Stones Price (show if any stones exist)
+                if (result.totalStonesPrice > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Total Stones Price",
+                            fontSize = 14.sp,
+                            color = Color(0xFF555555),
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            "${CurrencyFormatter.formatRupees(result.totalStonesPrice)}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF555555)
+                        )
+                    }
+                }
+                
                 // Labour Charges (always calculated from rate × new weight)
                 if (result.labourCharges > 0) {
                     Row(
@@ -493,7 +710,7 @@ fun ProductPriceCalculatorComposable(
             }
             
             // Divider before total
-            if (result.goldPrice > 0 || result.kundanPrice > 0 || result.jarkanPrice > 0 || result.labourCharges > 0) {
+            if (result.goldPrice > 0 || result.totalStonesPrice > 0 || result.labourCharges > 0) {
                 Divider(color = MaterialTheme.colors.primary.copy(alpha = 0.3f))
             }
             

@@ -41,6 +41,9 @@ kotlin {
             // OpenHTMLToPDF for HTML to PDF conversion - using compatible versions
             implementation("com.openhtmltopdf:openhtmltopdf-core:1.0.10")
             implementation("com.openhtmltopdf:openhtmltopdf-pdfbox:1.0.10")
+            
+            // OpenPDF for ERP-grade invoice generation (programmatic rendering)
+            implementation("com.github.librepdf:openpdf:1.3.30")
 
 
             // extended icons

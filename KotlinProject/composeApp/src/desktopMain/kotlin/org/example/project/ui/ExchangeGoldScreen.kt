@@ -2,11 +2,9 @@ package org.example.project.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.*
@@ -15,111 +13,90 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import org.example.project.JewelryAppInitializer
 import org.example.project.data.ExchangeGold
-import java.text.NumberFormat
-import java.util.Locale
+import org.example.project.data.extractKaratFromMaterialType
+import org.example.project.data.normalizeMaterialType
+import org.example.project.utils.CurrencyFormatter
+import org.example.project.viewModels.MetalRateViewModel
 
 @Composable
 fun ExchangeGoldScreen(
     onExchangeGoldComplete: (ExchangeGold) -> Unit,
     onBack: () -> Unit
 ) {
-    var exchangeGold by remember { mutableStateOf(ExchangeGold()) }
+    var productName by remember { mutableStateOf("") }
+    var totalProductWeight by remember { mutableStateOf("") }
+    var percentage by remember { mutableStateOf("") }
+    var goldWeight by remember { mutableStateOf("") }
+    var selectedPurity by remember { mutableStateOf("") }
+    var goldRateDisplay by remember { mutableStateOf("") }
+    var isRateAutoFetched by remember { mutableStateOf(false) } // Track if rate was auto-fetched from metal rates
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Editing state management
-    var editingField by remember { mutableStateOf<String?>(null) }
-    var fieldValues by remember { mutableStateOf<Map<String, TextFieldValue>>(emptyMap()) }
+    val metalRateViewModel = JewelryAppInitializer.getMetalRateViewModel()
+    val metalRates by metalRateViewModel.metalRates.collectAsState()
 
-    // Auto-calculate derived values with proper rounding
-    val calculatedNetWeight = remember(exchangeGold.grossWeight, exchangeGold.lessWeight) {
-        (exchangeGold.grossWeight - exchangeGold.lessWeight).coerceAtLeast(0.0)
+    // Load metal rates if not already loaded
+    LaunchedEffect(Unit) {
+        metalRateViewModel.loadMetalRates()
     }
 
-    val calculatedFineWeight = remember(calculatedNetWeight, exchangeGold.tunch) {
-        if (exchangeGold.tunch > 0) {
-            (calculatedNetWeight * exchangeGold.tunch / 100.0)
-        } else 0.0
-    }
-
-    val calculatedValue = remember(calculatedFineWeight, exchangeGold.rate) {
-        (calculatedFineWeight * exchangeGold.rate)
-    }
-
-    // Helper functions for field management
-    fun onEditingFieldChange(fieldKey: String?) {
-        editingField = fieldKey
-    }
-
-    fun onFieldValueChange(fieldKey: String, value: TextFieldValue) {
-        fieldValues = fieldValues + (fieldKey to value)
-    }
-
-    fun onSaveAndCloseEditing() {
-        editingField = null
-    }
-
-    fun onSaveAndMoveToNextField() {
-        onSaveAndCloseEditing()
-    }
-
-    // Save field value function with validation
-    fun saveFieldValue(fieldKey: String, value: String) {
-        when (fieldKey) {
-            "type" -> exchangeGold = exchangeGold.copy(type = value)
-            "firm" -> exchangeGold = exchangeGold.copy(firm = value)
-            "account" -> exchangeGold = exchangeGold.copy(account = value)
-            "description" -> exchangeGold = exchangeGold.copy(description = value)
-            "name" -> exchangeGold = exchangeGold.copy(name = value)
-            "grossWeight" -> {
-                val weight = value.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-                exchangeGold = exchangeGold.copy(grossWeight = weight)
-            }
-            "lessWeight" -> {
-                val weight = value.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-                exchangeGold = exchangeGold.copy(lessWeight = weight)
-            }
-            "tunch" -> {
-                val tunch = value.toDoubleOrNull()?.coerceIn(0.0, 100.0) ?: 0.0
-                exchangeGold = exchangeGold.copy(tunch = tunch)
-            }
-            "laborWeight" -> {
-                val weight = value.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-                exchangeGold = exchangeGold.copy(laborWeight = weight)
-            }
-            "ffnWeight" -> {
-                val weight = value.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-                exchangeGold = exchangeGold.copy(ffnWeight = weight)
-            }
-            "rate" -> {
-                val rate = value.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-                exchangeGold = exchangeGold.copy(rate = rate)
-            }
-            "averageRate" -> {
-                val avgRate = value.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 0.0
-                exchangeGold = exchangeGold.copy(averageRate = avgRate)
-            }
+    // Get Gold material rates from MetalRateRepository (filters for Gold material only)
+    val goldRates = remember(metalRates) {
+        metalRates.filter { rate ->
+            rate.materialName.equals("Gold", ignoreCase = true) && 
+            rate.materialId.isNotEmpty() // Exclude stones (stones have empty materialId)
         }
+    }
+
+    // Get Gold material ID from first Gold rate (all Gold rates have same materialId)
+    val goldMaterialId = goldRates.firstOrNull()?.materialId ?: ""
+
+    // Get available purities for Gold material from metal rates
+    val availablePurities = remember(goldRates) {
+        goldRates
+            .map { it.materialType } // materialType contains the purity (e.g., "22K", "24K")
+                .distinct()
+                .sorted()
+    }
+
+    // Auto-calculate gold weight from total product weight and percentage
+    // Formula: goldWeight = totalProductWeight * (percentage / 100)
+    LaunchedEffect(totalProductWeight, percentage) {
+        val totalWeight = totalProductWeight.toDoubleOrNull() ?: 0.0
+        val percent = percentage.toDoubleOrNull() ?: 0.0
+        
+        if (totalWeight > 0 && percent >= 0) {
+            val calculatedWeight = totalWeight * (percent / 100.0)
+            goldWeight = String.format("%.2f", calculatedWeight)
+        } else if (totalProductWeight.isEmpty() && percentage.isEmpty()) {
+            // Only clear if both fields are empty
+            goldWeight = ""
+        }
+    }
+
+    // Calculate gold rate from display string (updated by AutoCompleteTextField handlers)
+    val goldRate = goldRateDisplay.toDoubleOrNull() ?: 0.0
+
+    // Calculate final exchange gold price
+    val finalExchangePrice = remember(goldWeight, goldRate) {
+        val weight = goldWeight.toDoubleOrNull() ?: 0.0
+        weight * goldRate
     }
 
     Dialog(onDismissRequest = onBack) {
         Card(
             modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.95f),
+                .width(800.dp)
+                .height(750.dp),
             shape = RoundedCornerShape(20.dp),
             elevation = 16.dp
         ) {
@@ -135,7 +112,7 @@ fun ExchangeGoldScreen(
                         )
                     )
             ) {
-                // Header with gradient
+                // Header
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -156,14 +133,14 @@ fun ExchangeGoldScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                Icons.Default.CheckCircle,
+                                Icons.Default.SwapHoriz,
                                 contentDescription = null,
                                 tint = Color.White,
                                 modifier = Modifier.size(28.dp)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
-                                "Exchange Gold Details",
+                                "Exchange Gold",
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
@@ -187,96 +164,403 @@ fun ExchangeGoldScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(20.dp)
                 ) {
-                    // Metal Details Section
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 32.dp, vertical = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(20.dp)
+                    ) {
+                        // Product Name (Optional)
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundColor = Color.White,
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = 2.dp
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = productName,
+                                    onValueChange = { productName = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Product Name (Optional)") },
+                                    placeholder = { Text("Enter product name", color = Color.Gray.copy(alpha = 0.5f)) },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                                    colors = TextFieldDefaults.outlinedTextFieldColors(
+                                        focusedBorderColor = Color(0xFFB8973D),
+                                        unfocusedBorderColor = Color(0xFFE0E0E0),
+                                        cursorColor = Color(0xFFB8973D),
+                                        focusedLabelColor = Color(0xFFB8973D)
+                                    ),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        }
+
+                        // Total Product Weight
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundColor = Color.White,
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = 2.dp
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Total Product Weight (grams)",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFB8973D)
+                                    )
+                                    Text(
+                                        " *",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFD32F2F)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = totalProductWeight,
+                                    onValueChange = { 
+                                        // Validate input (allow decimal numbers)
+                                        if (it.isEmpty() || it.matches(Regex("^\\d*\\.?\\d*$"))) {
+                                            totalProductWeight = it
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Total Product Weight") },
+                                    placeholder = { Text("Enter total product weight in grams", color = Color.Gray.copy(alpha = 0.5f)) },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                                    colors = TextFieldDefaults.outlinedTextFieldColors(
+                                        focusedBorderColor = Color(0xFFB8973D),
+                                        unfocusedBorderColor = Color(0xFFE0E0E0),
+                                        cursorColor = Color(0xFFB8973D),
+                                        focusedLabelColor = Color(0xFFB8973D)
+                                    ),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        }
+
+                        // Percentage
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundColor = Color.White,
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = 2.dp
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Percentage (%)",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFB8973D)
+                                    )
+                                    Text(
+                                        " *",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFD32F2F)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                OutlinedTextField(
+                                    value = percentage,
+                                    onValueChange = { 
+                                        // Validate input (allow decimal numbers, max 100)
+                                        if (it.isEmpty() || it.matches(Regex("^\\d*\\.?\\d*$"))) {
+                                            val value = it.toDoubleOrNull() ?: 0.0
+                                            if (value <= 100.0) {
+                                                percentage = it
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Percentage") },
+                                    placeholder = { Text("Enter percentage (0-100)", color = Color.Gray.copy(alpha = 0.5f)) },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                                    colors = TextFieldDefaults.outlinedTextFieldColors(
+                                        focusedBorderColor = Color(0xFFB8973D),
+                                        unfocusedBorderColor = Color(0xFFE0E0E0),
+                                        cursorColor = Color(0xFFB8973D),
+                                        focusedLabelColor = Color(0xFFB8973D)
+                                    ),
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        }
+
+                        // Gold Weight (Auto-calculated)
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         backgroundColor = Color.White,
-                        shape = RoundedCornerShape(16.dp),
-                        elevation = 4.dp
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = 2.dp
                     ) {
                         Column(
-                            modifier = Modifier.padding(20.dp)
+                            modifier = Modifier.padding(16.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(bottom = 16.dp)
-                            ) {
-                                Icon(
-                                    Icons.Default.Info,
-                                    contentDescription = null,
-                                    tint = Color(0xFFB8973D),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "Metal Received by Customer",
-                                    fontSize = 18.sp,
+                                    "Gold Weight (grams)",
+                                    fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF2E2E2E)
+                                    color = Color(0xFFB8973D)
+                                )
+                                Text(
+                                    " *",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFD32F2F)
                                 )
                             }
-
-                            Divider(
-                                color = Color(0xFFE0E0E0),
-                                thickness = 1.dp,
-                                modifier = Modifier.padding(bottom = 16.dp)
-                            )
-
-                            // Exchange Gold Form
-                            ExchangeGoldForm(
-                                exchangeGold = exchangeGold,
-                                calculatedNetWeight = calculatedNetWeight,
-                                calculatedFineWeight = calculatedFineWeight,
-                                calculatedValue = calculatedValue,
-                                editingField = editingField,
-                                fieldValues = fieldValues,
-                                onEditingFieldChange = ::onEditingFieldChange,
-                                onFieldValueChange = ::onFieldValueChange,
-                                onSaveAndMoveToNextField = ::onSaveAndMoveToNextField,
-                                onSaveAndCloseEditing = ::onSaveAndCloseEditing,
-                                saveFieldValue = ::saveFieldValue
+                            Spacer(modifier = Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = goldWeight,
+                                onValueChange = { 
+                                    // Validate input (allow decimal numbers)
+                                    if (it.isEmpty() || it.matches(Regex("^\\d*\\.?\\d*$"))) {
+                                        goldWeight = it
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Gold Weight") },
+                                placeholder = { Text("Enter gold weight in grams", color = Color.Gray.copy(alpha = 0.5f)) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                                colors = TextFieldDefaults.outlinedTextFieldColors(
+                                    focusedBorderColor = Color(0xFFB8973D),
+                                    unfocusedBorderColor = Color(0xFFE0E0E0),
+                                    cursorColor = Color(0xFFB8973D),
+                                    focusedLabelColor = Color(0xFFB8973D)
+                                ),
+                                shape = RoundedCornerShape(8.dp)
                             )
                         }
                     }
 
+                        // Metal Purity
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            backgroundColor = Color.White,
+                            shape = RoundedCornerShape(12.dp),
+                            elevation = 2.dp
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "Metal Purity",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFB8973D)
+                                    )
+                                    Text(
+                                        " *",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFD32F2F)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                
+                                // Purity Selection (similar to Step3SelectAndSpecs for metals)
+                                // Get available purities from gold material's types array (always for gold)
+                                // Wrap in Box to ensure dropdown is properly positioned above other elements
+                                Box(modifier = Modifier.fillMaxWidth()) {
+                                AutoCompleteTextField(
+                                    value = selectedPurity,
+                                    onValueChange = { newValue ->
+                                        selectedPurity = newValue
+                                            // Normalize user input for comparison (22, 22K, 22k should match)
+                                            val normalizedInput = normalizeMaterialType(newValue)
+                                            
+                                            // Check if purity exists in available purities (already normalized)
+                                            val purityExists = availablePurities.any { 
+                                                normalizeMaterialType(it) == normalizedInput
+                                            }
+                                            
+                                            if (newValue.isNotEmpty() && goldMaterialId.isNotEmpty() && purityExists) {
+                                                // Purity exists - try to get rate from metal rates
+                                                try {
+                                                    val goldRate = goldRates.find { 
+                                                        normalizeMaterialType(it.materialType) == normalizedInput
+                                                    }
+                                                    val rateFromMetalRates = goldRate?.pricePerGram ?: 0.0
+                                                
+                                                if (rateFromMetalRates > 0) {
+                                                    // Use rate directly from metal rates
+                                                    goldRateDisplay = String.format("%.2f", rateFromMetalRates)
+                                                        isRateAutoFetched = true // Rate was auto-fetched, disable editing
+                                                    } else {
+                                                        // Purity exists but no rate - allow user to type
+                                                        goldRateDisplay = ""
+                                                        isRateAutoFetched = false // Rate not found, enable editing
+                                                    }
+                                                } catch (e: Exception) {
+                                                    println("⚠️ Error fetching rate: ${e.message}")
+                                                    goldRateDisplay = ""
+                                                    isRateAutoFetched = false
+                                                }
+                                            } else if (newValue.isNotEmpty()) {
+                                                // New purity (not in available purities) - allow user to type rate
+                                                goldRateDisplay = ""
+                                                isRateAutoFetched = false // New purity, enable editing
+                                            } else {
+                                                // Clear when purity is empty
+                                                goldRateDisplay = ""
+                                                isRateAutoFetched = false
+                                            }
+                                        },
+                                        suggestions = availablePurities, // All purities from Gold metal rates
+                                        label = "Purity",
+                                        placeholder = if (goldMaterialId.isEmpty()) "Gold material not found" else "Select or enter purity (e.g., 22K, 24K)",
+                                        modifier = Modifier.fillMaxWidth(), // Remove height constraint to allow dropdown to show
+                                        maxSuggestions = 100, // Show all available purities (high limit ensures all are shown)
+                                    onItemSelected = { selected ->
+                                        selectedPurity = selected
+                                            // Normalize selected purity for comparison (22, 22K, 22k should match)
+                                            val normalizedSelected = normalizeMaterialType(selected)
+                                            
+                                            // Purity selected from dropdown - fetch rate from metal rates
+                                        if (selected.isNotEmpty() && goldMaterialId.isNotEmpty()) {
+                                            try {
+                                                    val goldRate = goldRates.find { 
+                                                        normalizeMaterialType(it.materialType) == normalizedSelected
+                                                    }
+                                                    val rateFromMetalRates = goldRate?.pricePerGram ?: 0.0
+                                                
+                                                if (rateFromMetalRates > 0) {
+                                                    // Use rate directly from metal rates
+                                                    goldRateDisplay = String.format("%.2f", rateFromMetalRates)
+                                                        isRateAutoFetched = true // Rate was auto-fetched, disable editing
+                                                    } else {
+                                                        // Purity exists but no rate - allow user to type
+                                                        goldRateDisplay = ""
+                                                        isRateAutoFetched = false // Rate not found, enable editing
+                                                    }
+                                                } catch (e: Exception) {
+                                                    println("⚠️ Error fetching rate: ${e.message}")
+                                                    goldRateDisplay = ""
+                                                    isRateAutoFetched = false
+                                                }
+                                            } else {
+                                                // Clear if selection is invalid
+                                                goldRateDisplay = ""
+                                                isRateAutoFetched = false
+                                            }
+                                        },
+                                        onAddNew = { newPurity ->
+                                            // New purity added - allow user to type rate manually
+                                            selectedPurity = newPurity
+                                            goldRateDisplay = ""
+                                            isRateAutoFetched = false // New purity, enable editing
+                                    },
+                                    enabled = goldMaterialId.isNotEmpty()
+                                )
+                                }
+
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Summary Card
+                                // Rate Field (auto-filled from material types or editable for new purity)
+                                OutlinedTextField(
+                                    value = goldRateDisplay,
+                                    onValueChange = { newValue ->
+                                        // Only allow editing if rate is not auto-fetched
+                                        if (!isRateAutoFetched) {
+                                            // Validate input (allow decimal numbers)
+                                            if (newValue.isEmpty() || newValue.matches(Regex("^\\d*\\.?\\d*$"))) {
+                                                goldRateDisplay = newValue
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Rate per gram (₹)") },
+                                    placeholder = { 
+                                        Text(
+                                            if (isRateAutoFetched) "Rate will be auto-filled" else "Enter rate manually",
+                                            color = Color.Gray.copy(alpha = 0.5f)
+                                        ) 
+                                    },
+                                    singleLine = true,
+                                    readOnly = isRateAutoFetched, // Read-only when auto-fetched, but still visible
+                                    enabled = true, // Always enabled for proper display
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        fontSize = 14.sp,
+                                        color = if (isRateAutoFetched) Color(0xFF1B5E20) else Color(0xFF000000) // Dark green when auto-fetched, black when editable
+                                    ),
+                                    colors = if (isRateAutoFetched) {
+                                        // Green styling for auto-fetched rate - make text clearly visible
+                                        TextFieldDefaults.outlinedTextFieldColors(
+                                            focusedBorderColor = Color(0xFF4CAF50),
+                                            unfocusedBorderColor = Color(0xFF4CAF50),
+                                            focusedLabelColor = Color(0xFF4CAF50),
+                                            unfocusedLabelColor = Color(0xFF4CAF50),
+                                            cursorColor = Color(0xFF4CAF50)
+                                        )
+                                    } else {
+                                        // Normal styling for editable rate
+                                        TextFieldDefaults.outlinedTextFieldColors(
+                                            focusedBorderColor = Color(0xFFB8973D),
+                                            unfocusedBorderColor = Color(0xFFE0E0E0),
+                                            focusedLabelColor = Color(0xFFB8973D),
+                                            unfocusedLabelColor = Color(0xFF666666),
+                                            cursorColor = Color(0xFFB8973D)
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(8.dp)
+                                )
+                            }
+                        }
+
+
+                        // Final Exchange Gold Price
+                        if (finalExchangePrice > 0) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        backgroundColor = Color(0xFFF5F5F5),
+                                backgroundColor = Color(0xFFFFF9C4),
                         shape = RoundedCornerShape(12.dp),
-                        elevation = 2.dp
+                                elevation = 4.dp
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            SummaryItem(
-                                label = "Net Weight",
-                                value = String.format("%.3f g", calculatedNetWeight),
-                                icon = Icons.Default.AccountBox
-                            )
-                            SummaryItem(
-                                label = "Fine Weight",
-                                value = String.format("%.3f g", calculatedFineWeight),
-                                icon = Icons.Default.AccountBox
-                            )
-                            SummaryItem(
-                                label = "Total Value",
-                                value = formatCurrency(calculatedValue),
-                                icon = Icons.Default.AccountBox,
-                                highlight = true
-                            )
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        "Final Exchange Gold Price:",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFB8973D)
+                                    )
+                                    Text(
+                                        CurrencyFormatter.formatRupees(finalExchangePrice),
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFB8973D)
+                                    )
+                                }
+                            }
                         }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
 
                     // Error Message
                     errorMessage?.let { error ->
@@ -305,12 +589,15 @@ fun ExchangeGoldScreen(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(16.dp))
+                        }
                     }
 
                     // Action Buttons
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp)
+                            .padding(bottom = 24.dp, top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         OutlinedButton(
@@ -331,16 +618,54 @@ fun ExchangeGoldScreen(
 
                         Button(
                             onClick = {
-                                if (isValidExchangeGold(exchangeGold)) {
-                                    onExchangeGoldComplete(exchangeGold.copy(
-                                        netWeight = calculatedNetWeight,
-                                        fineWeight = calculatedFineWeight,
-                                        value = calculatedValue
-                                    ))
-                                    errorMessage = null
-                                } else {
-                                    errorMessage = "Please fill: Gross Weight, Rate, and Tunch"
+                                val totalWeight = totalProductWeight.toDoubleOrNull() ?: 0.0
+                                val percent = percentage.toDoubleOrNull() ?: 0.0
+                                val weight = goldWeight.toDoubleOrNull() ?: 0.0
+                                
+                                if (totalWeight <= 0) {
+                                    errorMessage = "Please enter a valid total product weight"
+                                    return@Button
                                 }
+                                if (percent <= 0 || percent > 100) {
+                                    errorMessage = "Please enter a valid percentage (0-100)"
+                                    return@Button
+                                }
+                                if (weight <= 0) {
+                                    errorMessage = "Please ensure total product weight and percentage are entered to calculate gold weight"
+                                    return@Button
+                                }
+                                if (selectedPurity.isEmpty()) {
+                                    errorMessage = "Please select purity"
+                                    return@Button
+                                }
+                                if (goldMaterialId.isEmpty()) {
+                                    errorMessage = "Gold material not found. Please contact administrator."
+                                    return@Button
+                                }
+                                if (goldRate <= 0) {
+                                    if (isRateAutoFetched) {
+                                    errorMessage = "Unable to fetch gold rate. Please check purity selection."
+                                    } else {
+                                        errorMessage = "Please enter rate for the selected purity."
+                                    }
+                                    return@Button
+                                }
+
+                                // Create ExchangeGold object with simplified data
+                                // Store purity in description field for later extraction
+                                val exchangeGold = ExchangeGold(
+                                    name = productName.ifEmpty { "Exchange Gold" },
+                                    grossWeight = weight,
+                                    rate = goldRate,
+                                    value = finalExchangePrice,
+                                    type = "GOLD",
+                                    description = selectedPurity, // Store purity directly in description
+                                    totalProductWeight = totalWeight, // Store total product weight
+                                    percentage = percent // Store percentage
+                                )
+
+                                onExchangeGoldComplete(exchangeGold)
+                                errorMessage = null
                             },
                             modifier = Modifier
                                 .weight(1f)
@@ -367,500 +692,5 @@ fun ExchangeGoldScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun SummaryItem(
-    label: String,
-    value: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    highlight: Boolean = false
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = if (highlight) Color(0xFFB8973D) else Color(0xFF666666),
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            label,
-            fontSize = 11.sp,
-            color = Color(0xFF666666),
-            fontWeight = FontWeight.Medium
-        )
-        Text(
-            value,
-            fontSize = if (highlight) 16.sp else 14.sp,
-            color = if (highlight) Color(0xFFB8973D) else Color(0xFF333333),
-            fontWeight = if (highlight) FontWeight.Bold else FontWeight.SemiBold
-        )
-    }
-}
-
-@Composable
-private fun ExchangeGoldForm(
-    exchangeGold: ExchangeGold,
-    calculatedNetWeight: Double,
-    calculatedFineWeight: Double,
-    calculatedValue: Double,
-    editingField: String?,
-    fieldValues: Map<String, TextFieldValue>,
-    onEditingFieldChange: (String?) -> Unit,
-    onFieldValueChange: (String, TextFieldValue) -> Unit,
-    onSaveAndMoveToNextField: () -> Unit,
-    onSaveAndCloseEditing: () -> Unit,
-    saveFieldValue: (String, String) -> Unit
-) {
-    Column {
-        // Section: Basic Information
-        Text(
-            "Basic Information",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF666666),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            EditableExchangeField(
-                fieldKey = "type",
-                label = "TYPE",
-                currentValue = exchangeGold.type,
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Text
-            )
-            EditableExchangeField(
-                fieldKey = "firm",
-                label = "FIRM",
-                currentValue = exchangeGold.firm,
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Text
-            )
-            EditableExchangeField(
-                fieldKey = "account",
-                label = "ACCOUNT",
-                currentValue = exchangeGold.account,
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Text
-            )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            EditableExchangeField(
-                fieldKey = "description",
-                label = "DESCRIPTION",
-                currentValue = exchangeGold.description,
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Text
-            )
-            EditableExchangeField(
-                fieldKey = "name",
-                label = "NAME",
-                currentValue = exchangeGold.name,
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Text
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Section: Weight Details
-        Text(
-            "Weight Details",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF666666),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            EditableExchangeField(
-                fieldKey = "grossWeight",
-                label = "GROSS WT (g)",
-                currentValue = if (exchangeGold.grossWeight == 0.0) "" else String.format("%.3f", exchangeGold.grossWeight),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal,
-                isRequired = true
-            )
-            EditableExchangeField(
-                fieldKey = "lessWeight",
-                label = "LESS WT (g)",
-                currentValue = if (exchangeGold.lessWeight == 0.0) "" else String.format("%.3f", exchangeGold.lessWeight),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal
-            )
-            EditableExchangeField(
-                fieldKey = "netWeight",
-                label = "NET WT (g)",
-                currentValue = String.format("%.3f", calculatedNetWeight),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal,
-                enabled = false,
-                isCalculated = true
-            )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            EditableExchangeField(
-                fieldKey = "tunch",
-                label = "TUNCH (%)",
-                currentValue = if (exchangeGold.tunch == 0.0) "" else String.format("%.2f", exchangeGold.tunch),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal,
-                isRequired = true
-            )
-            EditableExchangeField(
-                fieldKey = "fineWeight",
-                label = "FINE WT (g)",
-                currentValue = String.format("%.3f", calculatedFineWeight),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal,
-                enabled = false,
-                isCalculated = true
-            )
-            EditableExchangeField(
-                fieldKey = "laborWeight",
-                label = "LABOR WT (g)",
-                currentValue = if (exchangeGold.laborWeight == 0.0) "" else String.format("%.3f", exchangeGold.laborWeight),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal
-            )
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Section: Financial Details
-        Text(
-            "Financial Details",
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF666666),
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            EditableExchangeField(
-                fieldKey = "ffnWeight",
-                label = "FFN WT (g)",
-                currentValue = if (exchangeGold.ffnWeight == 0.0) "" else String.format("%.3f", exchangeGold.ffnWeight),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal
-            )
-            EditableExchangeField(
-                fieldKey = "rate",
-                label = "RATE (₹/g)",
-                currentValue = if (exchangeGold.rate == 0.0) "" else String.format("%.2f", exchangeGold.rate),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal,
-                isRequired = true
-            )
-            EditableExchangeField(
-                fieldKey = "value",
-                label = "VALUE (₹)",
-                currentValue = String.format("%.2f", calculatedValue),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal,
-                enabled = false,
-                isCalculated = true
-            )
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            EditableExchangeField(
-                fieldKey = "averageRate",
-                label = "AVG RATE (₹/g)",
-                currentValue = if (exchangeGold.averageRate == 0.0) "" else String.format("%.2f", exchangeGold.averageRate),
-                modifier = Modifier.weight(1f),
-                editingField = editingField,
-                fieldValues = fieldValues,
-                onEditingFieldChange = onEditingFieldChange,
-                onFieldValueChange = onFieldValueChange,
-                onSaveAndMoveToNextField = onSaveAndMoveToNextField,
-                onSaveAndCloseEditing = onSaveAndCloseEditing,
-                saveFieldValue = saveFieldValue,
-                keyboardType = KeyboardType.Decimal
-            )
-            // Empty spacers for alignment
-            Spacer(modifier = Modifier.weight(1f))
-            Spacer(modifier = Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun EditableExchangeField(
-    fieldKey: String,
-    label: String,
-    currentValue: String,
-    modifier: Modifier,
-    editingField: String?,
-    fieldValues: Map<String, TextFieldValue>,
-    onEditingFieldChange: (String?) -> Unit,
-    onFieldValueChange: (String, TextFieldValue) -> Unit,
-    onSaveAndMoveToNextField: () -> Unit,
-    onSaveAndCloseEditing: () -> Unit,
-    saveFieldValue: (String, String) -> Unit,
-    keyboardType: KeyboardType = KeyboardType.Decimal,
-    enabled: Boolean = true,
-    isCalculated: Boolean = false,
-    isRequired: Boolean = false
-) {
-    Column(modifier = modifier) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = label,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (isRequired) Color(0xFFB8973D) else Color(0xFF666666)
-            )
-            if (isRequired) {
-                Text(
-                    text = " *",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFD32F2F)
-                )
-            }
-            if (isCalculated) {
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(
-                    Icons.Default.Create,
-                    contentDescription = "Auto-calculated",
-                    tint = Color(0xFF4CAF50),
-                    modifier = Modifier.size(12.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        if (editingField == fieldKey && enabled) {
-            val focusRequester = remember { FocusRequester() }
-            val textFieldValue = fieldValues[fieldKey] ?: TextFieldValue(
-                text = currentValue,
-                selection = TextRange(0, currentValue.length)
-            )
-
-            OutlinedTextField(
-                value = textFieldValue,
-                onValueChange = { value ->
-                    onFieldValueChange(fieldKey, value)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .focusRequester(focusRequester),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = keyboardType,
-                    imeAction = ImeAction.Done
-                ),
-                textStyle = androidx.compose.ui.text.TextStyle(
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center,
-                    color = Color(0xFF333333),
-                    fontWeight = FontWeight.Medium
-                ),
-                keyboardActions = KeyboardActions(
-                    onDone = {
-                        val finalValue = textFieldValue.text
-                        saveFieldValue(fieldKey, finalValue)
-                        onSaveAndMoveToNextField()
-                    }
-                ),
-                colors = TextFieldDefaults.outlinedTextFieldColors(
-                    focusedBorderColor = Color(0xFFB8973D),
-                    unfocusedBorderColor = Color(0xFFB8973D),
-                    backgroundColor = Color(0xFFFFFBF5),
-                    cursorColor = Color(0xFFB8973D)
-                ),
-                singleLine = true
-            )
-
-            LaunchedEffect(Unit) {
-                focusRequester.requestFocus()
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clickable(enabled = enabled) {
-                        if (enabled) onEditingFieldChange(fieldKey)
-                    }
-                    .background(
-                        color = when {
-                            isCalculated -> Color(0xFFE8F5E9)
-                            !enabled -> Color(0xFFF5F5F5)
-                            else -> Color.White
-                        },
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .border(
-                        width = 1.5.dp,
-                        color = when {
-                            isCalculated -> Color(0xFF4CAF50)
-                            isRequired && currentValue.isEmpty() -> Color(0xFFFFB74D)
-                            else -> Color(0xFFE0E0E0)
-                        },
-                        shape = RoundedCornerShape(8.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (currentValue.isEmpty()) "---" else currentValue,
-                    fontSize = 14.sp,
-                    color = when {
-                        currentValue.isEmpty() -> Color(0xFFBDBDBD)
-                        !enabled -> Color(0xFF666666)
-                        isCalculated -> Color(0xFF2E7D32)
-                        else -> Color(0xFF333333)
-                    },
-                    textAlign = TextAlign.Center,
-                    fontWeight = if (isCalculated) FontWeight.Bold else FontWeight.Medium
-                )
-            }
-        }
-    }
-}
-
-private fun isValidExchangeGold(exchangeGold: ExchangeGold): Boolean {
-    return exchangeGold.grossWeight > 0.0 &&
-            exchangeGold.rate > 0.0 &&
-            exchangeGold.tunch > 0.0
-}
-
-private fun formatCurrency(amount: Double): String {
-    return if (amount == 0.0) {
-        "₹0.00"
-    } else {
-        val formatter = NumberFormat.getCurrencyInstance(Locale("en", "IN"))
-        formatter.format(amount)
     }
 }

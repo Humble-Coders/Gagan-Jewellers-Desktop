@@ -3,15 +3,29 @@ package org.example.project.data
 // Repository.kt
 import com.google.cloud.firestore.DocumentSnapshot
 import com.google.cloud.firestore.Firestore
+import com.google.cloud.firestore.FirestoreException
+import com.google.cloud.firestore.ListenerRegistration
 import com.google.cloud.firestore.Transaction
 import com.google.cloud.storage.Storage
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 
 interface ProductRepository {
+    val products: StateFlow<List<Product>>
+    val categories: StateFlow<List<Category>>
+    val materials: StateFlow<List<Material>>
+    val loading: StateFlow<Boolean>
+    val error: StateFlow<String?>
+    
     suspend fun getAllProducts(): List<Product>
     suspend fun getProductById(id: String): Product?
     suspend fun addProduct(product: Product): String
@@ -29,17 +43,524 @@ interface ProductRepository {
     suspend fun addMaterialType(materialId: String, type: String): Boolean
     // Featured products management
     suspend fun getFeaturedProducts(): List<Product>
+    
+    // Lifecycle methods
+    fun startListening()
+    fun stopListening()
 }
 
-class FirestoreProductRepository(private val firestore: Firestore, private val storage: Storage) :
-    ProductRepository {
+object FirestoreProductRepository : ProductRepository {
+    private lateinit var firestore: Firestore
+    private lateinit var storage: Storage
+    private var productsListenerRegistration: ListenerRegistration? = null
+    private var categoriesListenerRegistration: ListenerRegistration? = null
+    private var materialsListenerRegistration: ListenerRegistration? = null
+    
+    // Coroutine scope for listener callback processing
+    private val listenerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    
+    // StateFlow for reactive data
+    private val _products = MutableStateFlow<List<Product>>(emptyList())
+    override val products: StateFlow<List<Product>> = _products.asStateFlow()
+    
+    private val _categories = MutableStateFlow<List<Category>>(emptyList())
+    override val categories: StateFlow<List<Category>> = _categories.asStateFlow()
+    
+    private val _materials = MutableStateFlow<List<Material>>(emptyList())
+    override val materials: StateFlow<List<Material>> = _materials.asStateFlow()
+    
+    private val _loading = MutableStateFlow<Boolean>(false)
+    override val loading: StateFlow<Boolean> = _loading.asStateFlow()
+    
+    private val _error = MutableStateFlow<String?>(null)
+    override val error: StateFlow<String?> = _error.asStateFlow()
+    
+    fun initialize(firestoreInstance: Firestore, storageInstance: Storage) {
+        println("🔧 PRODUCT REPOSITORY: Initializing repository object")
+        println("   - Thread: ${Thread.currentThread().name}")
+        firestore = firestoreInstance
+        storage = storageInstance
+        startListening()
+    }
+    
+    override fun startListening() {
+        if (productsListenerRegistration != null) {
+            println("⚠️ PRODUCT REPOSITORY: Listeners already active - NOT creating duplicate listeners")
+            println("   - Thread: ${Thread.currentThread().name}")
+            println("   - Current products count: ${_products.value.size}")
+            println("   - Current categories count: ${_categories.value.size}")
+            println("   - Current materials count: ${_materials.value.size}")
+            return
+        }
+        
+        if (!::firestore.isInitialized) {
+            println("❌ PRODUCT REPOSITORY: Firestore not initialized. Call initialize() first.")
+            return
+        }
+        
+        println("=".repeat(80))
+        println("👂 PRODUCT REPOSITORY: Starting Firestore listeners on products, categories, and materials collections")
+        println("   - Thread: ${Thread.currentThread().name}")
+        println("   - Repository instance: ${this.hashCode()}")
+        println("   - This is the ONLY set of listeners that will be created")
+        println("=".repeat(80))
+        _loading.value = true
+        
+        // Start listening to products collection
+        val productsCollection = firestore.collection("products")
+        productsListenerRegistration = productsCollection.addSnapshotListener { snapshot, exception ->
+            println("📡 PRODUCT REPOSITORY: Products listener callback triggered")
+            println("   - Thread: ${Thread.currentThread().name}")
+            println("   - Repository instance: ${this.hashCode()}")
+            
+            if (exception != null) {
+                println("❌ PRODUCT REPOSITORY: Products listener error: ${exception.message}")
+                _error.value = "Failed to load products: ${exception.message}"
+                _loading.value = false
+                return@addSnapshotListener
+            }
+            
+            if (snapshot == null) {
+                println("⚠️ PRODUCT REPOSITORY: Products snapshot is null")
+                _loading.value = false
+                return@addSnapshotListener
+            }
+            
+            // Process snapshot on IO dispatcher
+            listenerScope.launch(Dispatchers.IO) {
+                try {
+                    println("📥 PRODUCT REPOSITORY: Processing products snapshot from Firestore")
+                    println("   - Thread: ${Thread.currentThread().name}")
+                    println("   - Document count: ${snapshot.documents.size}")
+                    
+                    val productsList = snapshot.documents.mapNotNull { doc ->
+                        parseProductDocument(doc)
+                    }
+                    
+                    println("✅ PRODUCT REPOSITORY: Parsed ${productsList.size} products from snapshot")
+                    println("   - Updating StateFlow (this will notify all ViewModels)")
+                    println("   - Previous products count: ${_products.value.size}")
+                    
+                    _products.value = productsList
+                    _error.value = null
+                    _loading.value = false
+                    
+                    println("✅ PRODUCT REPOSITORY: Products StateFlow updated successfully")
+                    println("   - New products count: ${productsList.size}")
+                    println("   - All ViewModels using this repository will receive this update automatically")
+                    println("-".repeat(80))
+                } catch (e: Exception) {
+                    println("❌ PRODUCT REPOSITORY: Error parsing products documents: ${e.message}")
+                    _error.value = "Error parsing product data: ${e.message}"
+                    _loading.value = false
+                }
+            }
+        }
+        
+        // Start listening to categories collection
+        val categoriesCollection = firestore.collection("categories")
+        categoriesListenerRegistration = categoriesCollection.addSnapshotListener { snapshot, exception ->
+            println("📡 PRODUCT REPOSITORY: Categories listener callback triggered")
+            println("   - Thread: ${Thread.currentThread().name}")
+            
+            if (exception != null) {
+                println("❌ PRODUCT REPOSITORY: Categories listener error: ${exception.message}")
+                _error.value = "Failed to load categories: ${exception.message}"
+                return@addSnapshotListener
+            }
+            
+            if (snapshot == null) {
+                println("⚠️ PRODUCT REPOSITORY: Categories snapshot is null")
+                return@addSnapshotListener
+            }
+            
+            // Process snapshot on IO dispatcher
+            listenerScope.launch(Dispatchers.IO) {
+                try {
+                    println("📥 PRODUCT REPOSITORY: Processing categories snapshot from Firestore")
+                    println("   - Thread: ${Thread.currentThread().name}")
+                    println("   - Document count: ${snapshot.documents.size}")
+                    
+                    val categoriesList = snapshot.documents.mapNotNull { doc ->
+                        parseCategoryDocument(doc)
+                    }.sortedBy { it.order }
+                    
+                    println("✅ PRODUCT REPOSITORY: Parsed ${categoriesList.size} categories from snapshot")
+                    println("   - Updating StateFlow")
+                    println("   - Previous categories count: ${_categories.value.size}")
+                    
+                    _categories.value = categoriesList
+                    
+                    println("✅ PRODUCT REPOSITORY: Categories StateFlow updated successfully")
+                    println("   - New categories count: ${categoriesList.size}")
+                    println("-".repeat(80))
+                } catch (e: Exception) {
+                    println("❌ PRODUCT REPOSITORY: Error parsing categories documents: ${e.message}")
+                    _error.value = "Error parsing category data: ${e.message}"
+                }
+            }
+        }
+        
+        // Start listening to materials collection
+        val materialsCollection = firestore.collection("materials")
+        materialsListenerRegistration = materialsCollection.addSnapshotListener { snapshot, exception ->
+            println("📡 PRODUCT REPOSITORY: Materials listener callback triggered")
+            println("   - Thread: ${Thread.currentThread().name}")
+            
+            if (exception != null) {
+                println("❌ PRODUCT REPOSITORY: Materials listener error: ${exception.message}")
+                _error.value = "Failed to load materials: ${exception.message}"
+                return@addSnapshotListener
+            }
+            
+            if (snapshot == null) {
+                println("⚠️ PRODUCT REPOSITORY: Materials snapshot is null")
+                return@addSnapshotListener
+            }
+            
+            // Process snapshot on IO dispatcher
+            listenerScope.launch(Dispatchers.IO) {
+                try {
+                    println("📥 PRODUCT REPOSITORY: Processing materials snapshot from Firestore")
+                    println("   - Thread: ${Thread.currentThread().name}")
+                    println("   - Document count: ${snapshot.documents.size}")
+                    
+                    val materialsList = snapshot.documents.mapNotNull { doc ->
+                        parseMaterialDocument(doc)
+                    }
+                    
+                    println("✅ PRODUCT REPOSITORY: Parsed ${materialsList.size} materials from snapshot")
+                    println("   - Updating StateFlow")
+                    println("   - Previous materials count: ${_materials.value.size}")
+                    
+                    _materials.value = materialsList
+                    
+                    println("✅ PRODUCT REPOSITORY: Materials StateFlow updated successfully")
+                    println("   - New materials count: ${materialsList.size}")
+                    println("-".repeat(80))
+                } catch (e: Exception) {
+                    println("❌ PRODUCT REPOSITORY: Error parsing materials documents: ${e.message}")
+                    _error.value = "Error parsing material data: ${e.message}"
+                }
+            }
+        }
+        
+        println("✅ PRODUCT REPOSITORY: All listeners attached successfully")
+        println("   - Products listener registration: ${productsListenerRegistration.hashCode()}")
+        println("   - Categories listener registration: ${categoriesListenerRegistration.hashCode()}")
+        println("   - Materials listener registration: ${materialsListenerRegistration.hashCode()}")
+    }
+    
+    override fun stopListening() {
+        println("🛑 PRODUCT REPOSITORY: Stopping Firestore listeners")
+        println("   - Thread: ${Thread.currentThread().name}")
+        println("   - Repository instance: ${this.hashCode()}")
+        productsListenerRegistration?.remove()
+        productsListenerRegistration = null
+        categoriesListenerRegistration?.remove()
+        categoriesListenerRegistration = null
+        materialsListenerRegistration?.remove()
+        materialsListenerRegistration = null
+        println("✅ PRODUCT REPOSITORY: All Firestore listeners stopped")
+    }
+    
+    private fun parseProductDocument(doc: DocumentSnapshot): Product? {
+        val data = doc.data ?: return null
+        val showMap = (data["show"] as? Map<*, *>)?.mapValues { entry ->
+            when (val v = entry.value) {
+                is Boolean -> v
+                is String -> v.toBoolean()
+                else -> true
+            }
+        } ?: emptyMap()
+        
+        return Product(
+            id = doc.id,
+            name = data["name"] as? String ?: "",
+            description = data["description"] as? String ?: "",
+            price = (data["price"] as? Number)?.toDouble() 
+                ?: (data["price"] as? String)?.toDoubleOrNull() 
+                ?: 0.0,
+            categoryId = data["category_id"] as? String ?: "",
+            materialId = data["material_id"] as? String ?: "",
+            materialType = data["material_type"] as? String ?: "",
+            materialName = data["material_name"] as? String ?: "",
+            quantity = (data["quantity"] as? String)?.toIntOrNull() ?: 0,
+            totalWeight = (data["total_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
+            hasStones = when (val value = data["has_stones"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            stones = if (data["stones"] != null) {
+                parseProductStones(data["stones"])
+            } else {
+                val stoneName = data["stone_name"] as? String
+                val stoneQuantity = (data["stone_quantity"] as? String)?.toDoubleOrNull()
+                val stoneRate = (data["stone_rate"] as? String)?.toDoubleOrNull()
+                val stoneAmount = (data["stone_amount"] as? String)?.toDoubleOrNull()
+                val cwWeight = (data["cw_weight"] as? String)?.toDoubleOrNull()
+                parseProductStonesFromOldFormat(stoneName, stoneQuantity, stoneRate, stoneAmount, cwWeight)
+            },
+            materialWeight = (data["material_weight"] as? Number)?.toDouble() 
+                ?: (data["material_weight"] as? String)?.toDoubleOrNull() 
+                ?: (data["gold_weight"] as? Number)?.toDouble()
+                ?: (data["gold_weight"] as? String)?.toDoubleOrNull()
+                ?: 0.0,
+            stoneWeight = if (data["stones"] != null) {
+                parseProductStones(data["stones"]).sumOf { it.weight }
+            } else {
+                (data["stone_weight"] as? String)?.toDoubleOrNull() ?: 0.0
+            },
+            makingPercent = (data["making_percent"] as? String)?.toDoubleOrNull() ?: 0.0,
+            labourCharges = (data["labour_charges"] as? String)?.toDoubleOrNull() ?: 0.0,
+            effectiveWeight = (data["effective_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
+            effectiveMetalWeight = (data["effective_metal_weight"] as? String)?.toDoubleOrNull() ?: (data["effective_gold_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
+            labourRate = (data["labour_rate"] as? String)?.toDoubleOrNull() ?: 0.0,
+            stoneAmount = if (data["stones"] != null) {
+                parseProductStones(data["stones"]).sumOf { it.amount }
+            } else {
+                (data["stone_rate"] as? String)?.toDoubleOrNull() 
+                    ?: (data["stone_amount"] as? String)?.toDoubleOrNull() 
+                    ?: 0.0
+            },
+            hasCustomPrice = when (val value = data["has_custom_price"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            customPrice = (data["custom_price"] as? String)?.toDoubleOrNull() ?: 0.0,
+            available = when (val value = data["available"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> true
+            },
+            featured = when (val value = data["featured"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            images = (data["images"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+            autoGenerateId = when (val value = data["auto_generate_id"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+            isCollectionProduct = when (val value = data["is_collection_product"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            collectionId = data["collection_id"] as? String ?: "",
+            show = ProductShowConfig(
+                name = showMap["name"] as? Boolean ?: true,
+                description = showMap["description"] as? Boolean ?: true,
+                category = showMap["category_id"] as? Boolean ?: true,
+                material = showMap["material_id"] as? Boolean ?: true,
+                materialType = showMap["material_type"] as? Boolean ?: true,
+                quantity = showMap["quantity"] as? Boolean ?: true,
+                totalWeight = showMap["total_weight"] as? Boolean ?: true,
+                price = showMap["price"] as? Boolean ?: true,
+                hasStones = showMap["has_stones"] as? Boolean ?: true,
+                stones = showMap["stones"] as? Boolean ?: true,
+                customPrice = showMap["custom_price"] as? Boolean ?: true,
+                materialWeight = (showMap["material_weight"] as? Boolean) ?: (showMap["gold_weight"] as? Boolean) ?: true,
+                stoneWeight = showMap["stone_weight"] as? Boolean ?: true,
+                makingPercent = showMap["making_percent"] as? Boolean ?: true,
+                labourCharges = showMap["labour_charges"] as? Boolean ?: true,
+                effectiveWeight = showMap["effective_weight"] as? Boolean ?: true,
+                effectiveMetalWeight = (showMap["effective_metal_weight"] as? Boolean) ?: (showMap["effective_gold_weight"] as? Boolean) ?: true,
+                labourRate = showMap["labour_rate"] as? Boolean ?: true,
+                stoneAmount = showMap["stone_amount"] as? Boolean ?: true,
+                images = showMap["images"] as? Boolean ?: true,
+                available = showMap["available"] as? Boolean ?: true,
+                featured = showMap["featured"] as? Boolean ?: true,
+                isCollectionProduct = showMap["is_collection_product"] as? Boolean ?: true,
+                collectionId = showMap["collection_id"] as? Boolean ?: true
+            )
+        )
+    }
+    
+    private fun parseCategoryDocument(doc: DocumentSnapshot): Category? {
+        val data = doc.data ?: return null
+        return Category(
+            id = doc.id,
+            name = data["name"] as? String ?: "",
+            description = data["description"] as? String ?: "",
+            imageUrl = data["image_url"] as? String ?: "",
+            hasGenderVariants = data["has_gender_variants"] as? Boolean ?: false,
+            order = (data["order"] as? Number)?.toInt() ?: 0,
+            categoryType = data["category_type"] as? String ?: "JEWELRY",
+            isActive = data["is_active"] as? Boolean ?: true,
+            createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
+        )
+    }
+    
+    private fun parseMaterialDocument(doc: DocumentSnapshot): Material? {
+        val data = doc.data ?: return null
+        val typesList = mutableListOf<MaterialType>()
+        val typesData = data["types"]
+        
+        when (typesData) {
+            is List<*> -> {
+                typesData.forEach { typeItem ->
+                    when (typeItem) {
+                        is String -> {
+                            val normalizedPurity = normalizeMaterialType(typeItem)
+                            typesList.add(MaterialType(purity = normalizedPurity, rate = ""))
+                        }
+                        is Map<*, *> -> {
+                            val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
+                            val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
+                            val normalizedPurity = normalizeMaterialType(purity)
+                            typesList.add(MaterialType(purity = normalizedPurity, rate = rate))
+                        }
+                    }
+                }
+            }
+        }
+        
+        return Material(
+            id = doc.id,
+            name = data["name"] as? String ?: "",
+            imageUrl = data["image_url"] as? String ?: "",
+            types = typesList,
+            createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
+        )
+    }
 
     override suspend fun getAllProducts(): List<Product> = withContext(Dispatchers.IO) {
+        // Use cached data from StateFlow
+        _products.value
+    }
+    
+    // Keep the old implementation for parsing (used by listener)
+    private fun parseProductDocumentOld(doc: DocumentSnapshot): Product? {
+        val data = doc.data ?: return null
+        val showMap = (data["show"] as? Map<*, *>)?.mapValues { entry ->
+            when (val v = entry.value) {
+                is Boolean -> v
+                is String -> v.toBoolean()
+                else -> true
+            }
+        } ?: emptyMap()
+        
+        return Product(
+            id = doc.id,
+            name = data["name"] as? String ?: "",
+            description = data["description"] as? String ?: "",
+            price = (data["price"] as? Number)?.toDouble() 
+                ?: (data["price"] as? String)?.toDoubleOrNull() 
+                ?: 0.0,
+            categoryId = data["category_id"] as? String ?: "",
+            materialId = data["material_id"] as? String ?: "",
+            materialType = data["material_type"] as? String ?: "",
+            materialName = data["material_name"] as? String ?: "",
+            quantity = (data["quantity"] as? String)?.toIntOrNull() ?: 0,
+            totalWeight = (data["total_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
+            hasStones = when (val value = data["has_stones"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            stones = if (data["stones"] != null) {
+                parseProductStones(data["stones"])
+            } else {
+                val stoneName = data["stone_name"] as? String
+                val stoneQuantity = (data["stone_quantity"] as? String)?.toDoubleOrNull()
+                val stoneRate = (data["stone_rate"] as? String)?.toDoubleOrNull()
+                val stoneAmount = (data["stone_amount"] as? String)?.toDoubleOrNull()
+                val cwWeight = (data["cw_weight"] as? String)?.toDoubleOrNull()
+                parseProductStonesFromOldFormat(stoneName, stoneQuantity, stoneRate, stoneAmount, cwWeight)
+            },
+            materialWeight = (data["material_weight"] as? Number)?.toDouble() 
+                ?: (data["material_weight"] as? String)?.toDoubleOrNull() 
+                ?: (data["gold_weight"] as? Number)?.toDouble()
+                ?: (data["gold_weight"] as? String)?.toDoubleOrNull()
+                ?: 0.0,
+            stoneWeight = if (data["stones"] != null) {
+                parseProductStones(data["stones"]).sumOf { it.weight }
+            } else {
+                (data["stone_weight"] as? String)?.toDoubleOrNull() ?: 0.0
+            },
+            makingPercent = (data["making_percent"] as? String)?.toDoubleOrNull() ?: 0.0,
+            labourCharges = (data["labour_charges"] as? String)?.toDoubleOrNull() ?: 0.0,
+            effectiveWeight = (data["effective_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
+            effectiveMetalWeight = (data["effective_metal_weight"] as? String)?.toDoubleOrNull() ?: (data["effective_gold_weight"] as? String)?.toDoubleOrNull() ?: 0.0,
+            labourRate = (data["labour_rate"] as? String)?.toDoubleOrNull() ?: 0.0,
+            stoneAmount = if (data["stones"] != null) {
+                parseProductStones(data["stones"]).sumOf { it.amount }
+            } else {
+                (data["stone_rate"] as? String)?.toDoubleOrNull() 
+                    ?: (data["stone_amount"] as? String)?.toDoubleOrNull() 
+                    ?: 0.0
+            },
+            hasCustomPrice = when (val value = data["has_custom_price"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            customPrice = (data["custom_price"] as? String)?.toDoubleOrNull() ?: 0.0,
+            available = when (val value = data["available"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> true
+            },
+            featured = when (val value = data["featured"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            images = (data["images"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
+            autoGenerateId = when (val value = data["auto_generate_id"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+            isCollectionProduct = when (val value = data["is_collection_product"]) {
+                is Boolean -> value
+                is String -> value.toBoolean()
+                else -> false
+            },
+            collectionId = data["collection_id"] as? String ?: "",
+            show = ProductShowConfig(
+                name = showMap["name"] as? Boolean ?: true,
+                description = showMap["description"] as? Boolean ?: true,
+                category = showMap["category_id"] as? Boolean ?: true,
+                material = showMap["material_id"] as? Boolean ?: true,
+                materialType = showMap["material_type"] as? Boolean ?: true,
+                quantity = showMap["quantity"] as? Boolean ?: true,
+                totalWeight = showMap["total_weight"] as? Boolean ?: true,
+                price = showMap["price"] as? Boolean ?: true,
+                hasStones = showMap["has_stones"] as? Boolean ?: true,
+                stones = showMap["stones"] as? Boolean ?: true,
+                customPrice = showMap["custom_price"] as? Boolean ?: true,
+                materialWeight = (showMap["material_weight"] as? Boolean) ?: (showMap["gold_weight"] as? Boolean) ?: true,
+                stoneWeight = showMap["stone_weight"] as? Boolean ?: true,
+                makingPercent = showMap["making_percent"] as? Boolean ?: true,
+                labourCharges = showMap["labour_charges"] as? Boolean ?: true,
+                effectiveWeight = showMap["effective_weight"] as? Boolean ?: true,
+                effectiveMetalWeight = (showMap["effective_metal_weight"] as? Boolean) ?: (showMap["effective_gold_weight"] as? Boolean) ?: true,
+                labourRate = showMap["labour_rate"] as? Boolean ?: true,
+                stoneAmount = showMap["stone_amount"] as? Boolean ?: true,
+                images = showMap["images"] as? Boolean ?: true,
+                available = showMap["available"] as? Boolean ?: true,
+                featured = showMap["featured"] as? Boolean ?: true,
+                isCollectionProduct = showMap["is_collection_product"] as? Boolean ?: true,
+                collectionId = showMap["collection_id"] as? Boolean ?: true
+            )
+        )
+    }
+    
+    // Old implementation kept for reference - now unused
+    private suspend fun getAllProductsOld(): List<Product> = withContext(Dispatchers.IO) {
         val productsCollection = firestore.collection("products")
         val future = productsCollection.get()
 
         val snapshot = future.get()
-        snapshot.documents.map { doc ->
+        snapshot.documents.mapNotNull { doc ->
             val data = doc.data
             val showMap = (data["show"] as? Map<*, *>)?.mapValues { entry ->
                 when (val v = entry.value) {
@@ -163,6 +684,26 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
     }
 
     override suspend fun getProductById(id: String): Product? = withContext(Dispatchers.IO) {
+        // First check cached data from StateFlow
+        _products.value.find { it.id == id }
+            ?: run {
+                // Fallback to direct query if not in cache
+                try {
+                    val docRef = firestore.collection("products").document(id)
+                    val future = docRef.get()
+                    val snapshot = future.get()
+                    if (snapshot.exists()) {
+                        parseProductDocument(snapshot)
+                    } else null
+                } catch (e: Exception) {
+                    println("❌ PRODUCT REPOSITORY: Error fetching product by ID: ${e.message}")
+                    null
+                }
+            }
+    }
+    
+    // Old implementation kept for reference - now unused
+    private suspend fun getProductByIdOld(id: String): Product? = withContext(Dispatchers.IO) {
         try {
             val docRef = firestore.collection("products").document(id)
             val future = docRef.get()
@@ -313,7 +854,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["stones"] = product.stones.map { stone ->
                 mapOf(
                     "name" to stone.name,
-                    "purity" to stone.purity,
                     "quantity" to stone.quantity.toString(),
                     "rate" to stone.rate.toString(),
                     "weight" to stone.weight.toString(),
@@ -511,7 +1051,6 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             productMap["stones"] = product.stones.map { stone ->
                 mapOf(
                     "name" to stone.name,
-                    "purity" to stone.purity,
                     "quantity" to stone.quantity.toString(),
                     "rate" to stone.rate.toString(),
                     "weight" to stone.weight.toString(),
@@ -889,68 +1428,13 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
     }
 
     override suspend fun getCategories(): List<Category> = withContext(Dispatchers.IO) {
-        val categoriesCollection = firestore.collection("categories")
-        val future = categoriesCollection.get()
-
-        val snapshot = future.get()
-        snapshot.documents.map { doc ->
-            val data = doc.data
-            Category(
-                id = doc.id,
-                name = data["name"] as? String ?: "",
-                description = data["description"] as? String ?: "",
-                imageUrl = data["image_url"] as? String ?: "",
-                hasGenderVariants = data["has_gender_variants"] as? Boolean ?: false,
-                order = (data["order"] as? Number)?.toInt() ?: 0,
-                categoryType = data["category_type"] as? String ?: "JEWELRY",
-                isActive = data["is_active"] as? Boolean ?: true,
-                createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-            )
-        }.sortedBy { it.order } // Sort by order field
+        // Use cached data from StateFlow
+        _categories.value
     }
 
     override suspend fun getMaterials(): List<Material> = withContext(Dispatchers.IO) {
-        val materialsCollection = firestore.collection("materials")
-        val future = materialsCollection.get()
-
-        val snapshot = future.get()
-        snapshot.documents.map { doc ->
-            val data = doc.data
-            // Parse types array - can be List<String> (old format) or List<Map> (new format)
-            val typesList = mutableListOf<MaterialType>()
-            val typesData = data["types"]
-            
-            when (typesData) {
-                is List<*> -> {
-                    typesData.forEach { typeItem ->
-                        when (typeItem) {
-                            is String -> {
-                                // Old format: just string types, convert to MaterialType with empty rate
-                                // Normalize purity (22, 22K, 22k should be same)
-                                val normalizedPurity = org.example.project.data.normalizeMaterialType(typeItem)
-                                typesList.add(MaterialType(purity = normalizedPurity, rate = ""))
-                            }
-                            is Map<*, *> -> {
-                                // New format: map with purity and rate
-                                val purity = (typeItem["purity"] as? String) ?: (typeItem["purity"] as? Number)?.toString() ?: ""
-                                val rate = (typeItem["rate"] as? String) ?: (typeItem["rate"] as? Number)?.toString() ?: ""
-                                // Normalize purity (22, 22K, 22k should be same)
-                                val normalizedPurity = org.example.project.data.normalizeMaterialType(purity)
-                                typesList.add(MaterialType(purity = normalizedPurity, rate = rate))
-                            }
-                        }
-                    }
-                }
-            }
-            
-            Material(
-                id = doc.id,
-                name = data["name"] as? String ?: "",
-                imageUrl = data["image_url"] as? String ?: "",
-                types = typesList,
-                createdAt = (data["created_at"] as? Number)?.toLong() ?: System.currentTimeMillis()
-            )
-        }
+        // Use cached data from StateFlow
+        _materials.value
     }
 
     override suspend fun addCategory(name: String): String = withContext(Dispatchers.IO) {
@@ -986,7 +1470,10 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             "created_at" to category.createdAt
         )
         docRef.set(data).get()
-        println("✅ Category created in Firestore with ID: $id")
+        // Listener will automatically update _categories - no manual refresh needed
+        println("✅ PRODUCT REPOSITORY: Category created in Firestore")
+        println("   - Document ID: $id")
+        println("   - Listener will automatically detect this change and update StateFlow")
         id
     }
 
@@ -1005,7 +1492,10 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 "created_at" to category.createdAt
             )
             docRef.set(data).get()
-            println("✅ Category updated in Firestore with ID: ${category.id}")
+            // Listener will automatically update _categories - no manual refresh needed
+            println("✅ PRODUCT REPOSITORY: Category updated in Firestore")
+            println("   - Category ID: ${category.id}")
+            println("   - Listener will automatically detect this change and update StateFlow")
             true
         } catch (e: Exception) {
             println("❌ Error updating category: ${e.message}")
@@ -1018,7 +1508,10 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
             val categoriesCollection = firestore.collection("categories")
             val docRef = categoriesCollection.document(categoryId)
             docRef.delete().get()
-            println("✅ Category deleted from Firestore with ID: $categoryId")
+            // Listener will automatically update _categories - no manual refresh needed
+            println("✅ PRODUCT REPOSITORY: Category deleted from Firestore")
+            println("   - Category ID: $categoryId")
+            println("   - Listener will automatically detect this change and update StateFlow")
             true
         } catch (e: Exception) {
             println("❌ Error deleting category: ${e.message}")
@@ -1065,6 +1558,9 @@ class FirestoreProductRepository(private val firestore: Firestore, private val s
                 Unit
             }.get()
             
+            // Listener will automatically update _materials - no manual refresh needed
+            println("✅ PRODUCT REPOSITORY: Material type added")
+            println("   - Listener will automatically detect this change and update StateFlow")
             true
         } catch (e: Exception) {
             println("❌ Error adding material type: ${e.message}")

@@ -98,6 +98,7 @@ import org.example.project.JewelryAppInitializer
 import org.example.project.utils.CurrencyFormatter
 import org.example.project.ui.ProductPriceInputs
 import org.example.project.ui.calculateProductPrice
+import org.example.project.ui.calculateStonePrices
 
 // Image cache to store loaded images
 object ImageCache {
@@ -207,9 +208,9 @@ fun DashboardScreen(
     }
 
     // Single LaunchedEffect for inventory loading (depends on products)
-    LaunchedEffect(products.size, inventoryRefreshTrigger) {
+    LaunchedEffect(products.size, inventoryRefreshTrigger, products) {
         // Only load inventory if:
-        // 1. Products are loaded
+        // 1. Products are loaded and not empty
         // 2. Not already loading
         // 3. Inventory data is empty OR products have changed (stale check)
         if (products.isNotEmpty() && !inventoryLoading) {
@@ -218,6 +219,7 @@ fun DashboardScreen(
             
             // Reload if products changed or inventory is empty
             if (inventoryData.isEmpty() || productIds != inventoryProductIds) {
+                println("🔄 DASHBOARD: Loading inventory data - Products: ${products.size}, Inventory: ${inventoryData.size}")
             viewModel.loadInventoryData()
         }
     }
@@ -345,11 +347,11 @@ fun DashboardScreen(
         }
     }
 
-    val showDeleteDialog = remember { mutableStateOf(false) }
-    val productToDelete = remember { mutableStateOf<String?>(null) }
-    val groupedProductToDelete = remember { mutableStateOf<GroupedProduct?>(null) }
-    val showDuplicateDialog = remember { mutableStateOf(false) }
-    val productToDuplicate = remember { mutableStateOf<String?>(null) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var productToDelete by remember { mutableStateOf<String?>(null) }
+    var groupedProductToDelete by remember { mutableStateOf<GroupedProduct?>(null) }
+    var showDuplicateDialog by remember { mutableStateOf(false) }
+    var productToDuplicate by remember { mutableStateOf<String?>(null) }
 
     // Error display UI
     error?.let { errorMessage ->
@@ -640,9 +642,9 @@ fun DashboardScreen(
                                 materialName = materialNameMap[groupedProduct.baseProduct.materialId] ?: "",
                                 onDelete = {
                                     // For grouped products, delete all products in the group except parent
-                                    productToDelete.value = groupedProduct.baseProduct.id
-                                    groupedProductToDelete.value = groupedProduct
-                                    showDeleteDialog.value = true
+                                    productToDelete = groupedProduct.baseProduct.id
+                                    groupedProductToDelete = groupedProduct
+                                    showDeleteDialog = true
                                 },
                                 onClick = {
                                     // For grouped products, show details of the first product
@@ -651,8 +653,8 @@ fun DashboardScreen(
                                 onEditBarcode = onEditBarcode,
                                 onDeleteBarcode = onDeleteBarcode,
                                 onDuplicateProduct = { productId ->
-                                    productToDuplicate.value = productId
-                                    showDuplicateDialog.value = true
+                                    productToDuplicate = productId
+                                    showDuplicateDialog = true
                                 }
                             )
                             Divider()
@@ -664,16 +666,16 @@ fun DashboardScreen(
     }
 
     // Delete confirmation dialog
-    if (showDeleteDialog.value) {
+    if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = {
-                showDeleteDialog.value = false
-                productToDelete.value = null
-                groupedProductToDelete.value = null
+                showDeleteDialog = false
+                productToDelete = null
+                groupedProductToDelete = null
             },
             title = { Text("Confirm Deletion") },
             text = {
-                val groupedProduct = groupedProductToDelete.value
+                val groupedProduct = groupedProductToDelete
                 if (groupedProduct?.commonId != null) {
                     Text("Are you sure you want to delete this grouped product? This will delete all products in the group except the parent product. This action cannot be undone.")
                 } else {
@@ -683,14 +685,14 @@ fun DashboardScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        groupedProductToDelete.value?.let { groupedProduct ->
+                        groupedProductToDelete?.let { groupedProduct ->
                             viewModel.deleteGroupedProduct(groupedProduct)
-                        } ?: productToDelete.value?.let { productId ->
+                        } ?: productToDelete?.let { productId ->
                             viewModel.deleteProduct(productId)
                         }
-                        showDeleteDialog.value = false
-                        productToDelete.value = null
-                        groupedProductToDelete.value = null
+                        showDeleteDialog = false
+                        productToDelete = null
+                        groupedProductToDelete = null
                     },
                     colors = ButtonDefaults.buttonColors(backgroundColor = Color.Red)
                 ) {
@@ -699,9 +701,9 @@ fun DashboardScreen(
             },
             dismissButton = {
                 OutlinedButton(onClick = {
-                    showDeleteDialog.value = false
-                    productToDelete.value = null
-                    groupedProductToDelete.value = null
+                    showDeleteDialog = false
+                    productToDelete = null
+                    groupedProductToDelete = null
                 }) {
                     Text("Cancel")
                 }
@@ -710,20 +712,20 @@ fun DashboardScreen(
     }
 
     // Duplicate product dialog
-    if (showDuplicateDialog.value) {
+    if (showDuplicateDialog) {
         DuplicateProductDialog(
-            productId = productToDuplicate.value ?: "",
+            productId = productToDuplicate ?: "",
             viewModel = viewModel,
             onDismiss = {
-                showDuplicateDialog.value = false
-                productToDuplicate.value = null
+                showDuplicateDialog = false
+                productToDuplicate = null
             },
             onConfirm = { barcodeId ->
-                showDuplicateDialog.value = false
-                productToDuplicate.value?.let { productId ->
+                showDuplicateDialog = false
+                productToDuplicate?.let { productId ->
                     onDuplicateProduct(productId, barcodeId)
                 }
-                productToDuplicate.value = null
+                productToDuplicate = null
             }
         )
     }
@@ -817,17 +819,20 @@ private fun GroupedProductRow(
                 val metalRates = MetalRatesManager.metalRates.value
                 val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
                 
-                // Extract kundan and jarkan from stones array
-                val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-                val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-                
-                // Sum all Kundan prices and weights
-                val kundanPrice = kundanStones.sumOf { it.amount }
-                val kundanWeight = kundanStones.sumOf { it.weight }
-                
-                // Sum all Jarkan prices and weights
-                val jarkanPrice = jarkanStones.sumOf { it.amount }
-                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                // Extract all stone types from stones array using helper function
+                val stoneBreakdown = calculateStonePrices(product.stones)
+                val kundanPrice = stoneBreakdown.kundanPrice
+                val kundanWeight = stoneBreakdown.kundanWeight
+                val jarkanPrice = stoneBreakdown.jarkanPrice
+                val jarkanWeight = stoneBreakdown.jarkanWeight
+                val diamondPrice = stoneBreakdown.diamondPrice
+                val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+                val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+                val solitairePrice = stoneBreakdown.solitairePrice
+                val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+                val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+                val colorStonesPrice = stoneBreakdown.colorStonesPrice
+                val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
                 
                 // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
                 val metalKarat = extractKaratFromMaterialType(product.materialType)
@@ -864,6 +869,14 @@ private fun GroupedProductRow(
                     kundanWeight = kundanWeight,
                     jarkanPrice = jarkanPrice,
                     jarkanWeight = jarkanWeight,
+                    diamondPrice = diamondPrice,
+                    diamondWeight = diamondWeight,
+                    diamondWeightInGrams = diamondWeightInGrams,
+                    solitairePrice = solitairePrice,
+                    solitaireWeight = solitaireWeight,
+                    solitaireWeightInGrams = solitaireWeightInGrams,
+                    colorStonesPrice = colorStonesPrice,
+                    colorStonesWeight = colorStonesWeight,
                     goldRatePerGram = goldRatePerGram
                 )
                 
@@ -1190,17 +1203,20 @@ fun ProductRow(
                 val metalRates = MetalRatesManager.metalRates.value
                 val ratesVM = JewelryAppInitializer.getMetalRateViewModel()
                 
-                // Extract kundan and jarkan from stones array
-                val kundanStones = product.stones.filter { it.name.equals("Kundan", ignoreCase = true) }
-                val jarkanStones = product.stones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-                
-                // Sum all Kundan prices and weights
-                val kundanPrice = kundanStones.sumOf { it.amount }
-                val kundanWeight = kundanStones.sumOf { it.weight }
-                
-                // Sum all Jarkan prices and weights
-                val jarkanPrice = jarkanStones.sumOf { it.amount }
-                val jarkanWeight = jarkanStones.sumOf { it.weight }
+                // Extract all stone types from stones array using helper function
+                val stoneBreakdown = calculateStonePrices(product.stones)
+                val kundanPrice = stoneBreakdown.kundanPrice
+                val kundanWeight = stoneBreakdown.kundanWeight
+                val jarkanPrice = stoneBreakdown.jarkanPrice
+                val jarkanWeight = stoneBreakdown.jarkanWeight
+                val diamondPrice = stoneBreakdown.diamondPrice
+                val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+                val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+                val solitairePrice = stoneBreakdown.solitairePrice
+                val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+                val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+                val colorStonesPrice = stoneBreakdown.colorStonesPrice
+                val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
                 
                 // Get material rate (fetched from metal rates, same as ProductPriceCalculator)
                 val metalKarat = extractKaratFromMaterialType(product.materialType)
@@ -1237,6 +1253,14 @@ fun ProductRow(
                     kundanWeight = kundanWeight,
                     jarkanPrice = jarkanPrice,
                     jarkanWeight = jarkanWeight,
+                    diamondPrice = diamondPrice,
+                    diamondWeight = diamondWeight,
+                    diamondWeightInGrams = diamondWeightInGrams,
+                    solitairePrice = solitairePrice,
+                    solitaireWeight = solitaireWeight,
+                    solitaireWeightInGrams = solitaireWeightInGrams,
+                    colorStonesPrice = colorStonesPrice,
+                    colorStonesWeight = colorStonesWeight,
                     goldRatePerGram = goldRatePerGram
                 )
                 

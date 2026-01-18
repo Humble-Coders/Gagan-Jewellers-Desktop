@@ -32,7 +32,10 @@ data class UnifiedTransaction(
     // Cash transaction-specific fields (null for orders)
     val cashAmountId: String? = null,
     val cashTransactionType: CashTransactionType? = null,
-    val createdBy: String = "system"
+    val createdBy: String = "system",
+
+    // Invoice PDF URL from Firebase Storage (for orders)
+    val invoiceUrl: String? = null
 )
 
 enum class TransactionType {
@@ -67,7 +70,8 @@ fun Order.toUnifiedTransaction(): UnifiedTransaction {
         paymentSplit = this.paymentSplit,
         cashAmountId = null,
         cashTransactionType = null,
-        createdBy = "system"
+        createdBy = "system",
+        invoiceUrl = this.invoiceUrl.ifBlank { null }
     )
 }
 

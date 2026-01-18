@@ -50,6 +50,11 @@ import org.example.project.viewModels.CartViewModel
 import org.example.project.viewModels.CustomerViewModel
 import org.example.project.viewModels.ProductsViewModel
 import org.example.project.viewModels.PaymentViewModel
+import org.example.project.viewModels.InvoiceViewModel
+import org.example.project.data.StoreInfoRepository
+import org.example.project.data.FirestoreOrderRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class BillingStep {
     CUSTOMER, CART, PAYMENT, RECEIPT
@@ -169,24 +174,63 @@ fun BillingScreen(
                         },
                         productsViewModel= productsViewModel
                     )
-                    BillingStep.RECEIPT -> ReceiptScreen(
-                        paymentViewModel = paymentViewModel,
-                        customerViewModel = customerViewModel,
+                    BillingStep.RECEIPT -> {
+                        // Use InvoiceScreen with inline editing capability
+                        val invoiceViewModel = remember { InvoiceViewModel() }
+                        val lastTransaction by paymentViewModel.lastTransaction
+                        val selectedCustomer by customerViewModel.selectedCustomer
+                        val orderId = lastTransaction?.id
+                        val orderRepository = remember { FirestoreOrderRepository(JewelryAppInitializer.getFirestore()) }
+                        val storeInfoRepository = remember { StoreInfoRepository() }
+                        var order by remember { mutableStateOf<org.example.project.data.Order?>(null) }
+                        
+                        // Fetch order when orderId is available
+                        LaunchedEffect(orderId) {
+                            if (orderId != null) {
+                                order = withContext(Dispatchers.IO) {
+                                    orderRepository.getOrderById(orderId)
+                                }
+                            }
+                        }
+                        
+                        // Initialize InvoiceViewModel from Order when all data is available
+                        LaunchedEffect(order, selectedCustomer, productsViewModel.products.value) {
+                            if (order != null && selectedCustomer != null) {
+                                val products = productsViewModel.products.value.associateBy { it.id }
+                                val cartItems = lastTransaction?.items
+                                
+                                withContext(Dispatchers.IO) {
+                                    val storeInfo = storeInfoRepository.getStoreInfo()
+                                    invoiceViewModel.initializeFromOrder(
+                                        order = order!!,
+                                        customer = selectedCustomer!!,
+                                        storeInfo = storeInfo,
+                                        products = products,
+                                        cartItems = cartItems
+                                    )
+                                }
+                            }
+                        }
+                        
+                        InvoiceScreen(
+                            viewModel = invoiceViewModel,
+                            orderId = orderId,
+                            onBack = {
+                                // Keep the receipt but go back to customer selection for new order
+                                customerViewModel.clearSelectedCustomer()
+                                cartViewModel.clearCart()
+                                paymentViewModel.resetPaymentState() // Reset discount and payment state
+                                currentStep = BillingStep.CUSTOMER
+                            },
                         onStartNewOrder = {
                             // Reset everything and start fresh
                             customerViewModel.clearSelectedCustomer()
                             cartViewModel.clearCart()
                             paymentViewModel.resetPaymentState()
                             currentStep = BillingStep.CUSTOMER
-                        },
-                        onBackToBilling = {
-                            // Keep the receipt but go back to customer selection for new order
-                            customerViewModel.clearSelectedCustomer()
-                            cartViewModel.clearCart()
-                            currentStep = BillingStep.CUSTOMER
-                        },
-                        productsViewModel = productsViewModel
-                    )
+                            }
+                        )
+                    }
                 }
             }
         }

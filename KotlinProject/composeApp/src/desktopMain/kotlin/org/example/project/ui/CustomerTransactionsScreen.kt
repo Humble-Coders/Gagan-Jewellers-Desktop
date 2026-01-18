@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,6 +41,7 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.Desktop
 import java.io.File
+import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -50,11 +52,11 @@ fun CustomerTransactionsScreen(
     onBack: () -> Unit
 ) {
     val transactions by viewModel.customerTransactions
-    val loading by viewModel.loading
-    val error by viewModel.error
+    val loading by viewModel.loading.collectAsState()
+    val error by viewModel.error.collectAsState()
 
     // Get updated customer data from the customers list
-    val allCustomers by viewModel.customers
+    val allCustomers by viewModel.customers.collectAsState()
     val updatedCustomer = allCustomers.find { it.customerId == customer.customerId } ?: customer
 
     // PDF Generation State - per order
@@ -69,7 +71,31 @@ fun CustomerTransactionsScreen(
     var cashTransactionError by remember { mutableStateOf<String?>(null) }
     val cashAmountRepository = remember { FirestoreCashAmountRepository(JewelryAppInitializer.getFirestore()) }
 
-    // PDF Generation Function
+    // Helper: open existing invoice URL in browser or system handler
+    fun openInvoiceUrl(url: String) {
+        try {
+            if (Desktop.isDesktopSupported()) {
+                val desktop = Desktop.getDesktop()
+                if (desktop.isSupported(Desktop.Action.BROWSE)) {
+                    desktop.browse(URI(url))
+                    return
+                }
+            }
+            // Fallback to Runtime.exec based on OS
+            val os = System.getProperty("os.name").lowercase()
+            when {
+                os.contains("mac") -> Runtime.getRuntime().exec(arrayOf("open", url))
+                os.contains("win") -> Runtime.getRuntime().exec(arrayOf("rundll32", "url.dll,FileProtocolHandler", url))
+                os.contains("nix") || os.contains("nux") -> Runtime.getRuntime().exec(arrayOf("xdg-open", url))
+            }
+        } catch (e: Exception) {
+            println("⚠️ CUSTOMER TRANSACTIONS: Failed to open invoice URL: ${e.message}")
+            e.printStackTrace()
+            // If opening URL fails, user can still use Generate Bill (PDF generation) as fallback.
+        }
+    }
+
+    // PDF Generation Function (fallback when no invoice URL exists)
     fun generateOrderPDF(order: Order, customer: User) {
         generatingOrderIds = generatingOrderIds + order.orderId
         pdfGenerationError = null
@@ -155,7 +181,7 @@ fun CustomerTransactionsScreen(
                     showCashDialog = false
                     
                     // Refresh customer data to show updated balance
-                    viewModel.loadCustomers()
+                        // Customers are automatically updated via Firestore listener
                     
                     // Refresh transaction list to show the new cash transaction
                     viewModel.loadCustomerTransactions(updatedCustomer.customerId)
@@ -603,29 +629,35 @@ fun CustomerTransactionsScreen(
                                 UnifiedTransactionCard(
                                     transaction = transaction,
                                     customer = updatedCustomer,
-                                    onGenerateBill = { 
+                                    onGenerateBill = {
                                         if (transaction.transactionType == TransactionType.ORDER) {
-                                            // Convert back to Order for PDF generation
-                                            val order = Order(
-                                                orderId = transaction.orderId ?: "",
-                                                customerId = transaction.customerId,
-                                                paymentSplit = transaction.paymentSplit,
-                                                totalProductValue = transaction.subtotal,
-                                                discountAmount = transaction.discountAmount,
-                                                discountPercent = transaction.discountPercent.takeIf { it > 0 },
-                                                gstAmount = transaction.gstAmount,
-                                                gstPercentage = if (transaction.taxableAmount > 0 && transaction.gstAmount > 0) {
-                                                    (transaction.gstAmount / transaction.taxableAmount) * 100.0
-                                                } else 0.0,
-                                                totalAmount = transaction.totalAmount,
-                                                isGstIncluded = transaction.isGstIncluded,
-                                                items = transaction.items,
-                                                createdAt = transaction.createdAt,
-                                                updatedAt = transaction.updatedAt,
-                                                transactionDate = transaction.transactionDate,
-                                                notes = transaction.notes
-                                            )
-                                            generateOrderPDF(order, updatedCustomer)
+                                            // If we already have an invoice URL, open it instead of regenerating
+                                            val existingUrl = transaction.invoiceUrl
+                                            if (!existingUrl.isNullOrBlank()) {
+                                                openInvoiceUrl(existingUrl)
+                                            } else {
+                                                // Fallback: convert back to Order for PDF generation
+                                                val order = Order(
+                                                    orderId = transaction.orderId ?: "",
+                                                    customerId = transaction.customerId,
+                                                    paymentSplit = transaction.paymentSplit,
+                                                    totalProductValue = transaction.subtotal,
+                                                    discountAmount = transaction.discountAmount,
+                                                    discountPercent = transaction.discountPercent.takeIf { it > 0 },
+                                                    gstAmount = transaction.gstAmount,
+                                                    gstPercentage = if (transaction.taxableAmount > 0 && transaction.gstAmount > 0) {
+                                                        (transaction.gstAmount / transaction.taxableAmount) * 100.0
+                                                    } else 0.0,
+                                                    totalAmount = transaction.totalAmount,
+                                                    isGstIncluded = transaction.isGstIncluded,
+                                                    items = transaction.items,
+                                                    createdAt = transaction.createdAt,
+                                                    updatedAt = transaction.updatedAt,
+                                                    transactionDate = transaction.transactionDate,
+                                                    notes = transaction.notes
+                                                )
+                                                generateOrderPDF(order, updatedCustomer)
+                                            }
                                         }
                                     },
                                     isGeneratingPDF = generatingOrderIds.contains(transaction.orderId)

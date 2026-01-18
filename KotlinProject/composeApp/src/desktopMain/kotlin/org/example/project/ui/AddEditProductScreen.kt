@@ -58,6 +58,7 @@ import kotlinx.coroutines.launch
 import org.example.project.ui.ProductPriceCalculatorComposable
 import org.example.project.ui.ProductPriceInputs
 import org.example.project.ui.calculateProductPrice
+import org.example.project.ui.calculateStonePrices
 
 // Helper function to extract karat from material type
 fun extractKaratFromMaterialType(materialType: String): Int {
@@ -192,6 +193,8 @@ fun AddEditProductScreen(
     var materialType by remember { mutableStateOf(product.materialType ?: "") }
     var materialName by remember { mutableStateOf(product.materialName ?: "") }
     var showAddMaterialDialog by remember { mutableStateOf(false) }
+    var editingMetalIndex by remember { mutableStateOf<Int?>(null) } // null = adding new, 0 = editing metal (only one metal)
+    var editingStoneIndex by remember { mutableStateOf<Int?>(null) } // null = adding new, index = editing stone at that index
 
     // Display values for autocomplete fields
     var materialDisplayValue by remember { mutableStateOf(materialName.ifEmpty { materials.find { it.id == materialId }?.name ?: "" }) }
@@ -225,41 +228,38 @@ fun AddEditProductScreen(
     var hasCustomPrice by remember { mutableStateOf(product.hasCustomPrice) }
     var customPrice by remember { mutableStateOf(if (product.customPrice > 0) product.customPrice.toString() else "") }
 
-    // Show/visibility toggles for fields
-    var showName by remember { mutableStateOf(product.show.name) }
-    var showDescription by remember { mutableStateOf(product.show.description) }
-    var showCategory by remember { mutableStateOf(product.show.category) }
-    var showMaterial by remember { mutableStateOf(product.show.material) }
-    var showMaterialType by remember { mutableStateOf(product.show.materialType) }
-    var showQuantity by remember { mutableStateOf(product.show.quantity) }
-    var showTotalWeight by remember { mutableStateOf(product.show.totalWeight) }
-    var showPrice by remember { mutableStateOf(product.show.price) }
-    var showHasStones by remember { mutableStateOf(product.show.hasStones) }
-    var showStones by remember { mutableStateOf(product.show.stones) }
-    var showCustomPrice by remember { mutableStateOf(product.show.customPrice) }
-    var showMaterialWeight by remember { mutableStateOf(product.show.materialWeight) }
-    var showStoneWeight by remember { mutableStateOf(product.show.stoneWeight) }
-    var showMakingPercent by remember { mutableStateOf(product.show.makingPercent) }
-    var showLabourCharges by remember { mutableStateOf(product.show.labourCharges) }
-    var showEffectiveWeight by remember { mutableStateOf(product.show.effectiveWeight) }
-    var showEffectiveMetalWeight by remember { mutableStateOf(product.show.effectiveMetalWeight) }
-    var showLabourRate by remember { mutableStateOf(product.show.labourRate) }
-    var showImages by remember { mutableStateOf(product.show.images) }
-    var showAvailable by remember { mutableStateOf(product.show.available) }
-    var showFeatured by remember { mutableStateOf(product.show.featured) }
-    var showIsCollectionProduct by remember { mutableStateOf(product.show.isCollectionProduct) }
-    var showCollectionId by remember { mutableStateOf(product.show.collectionId) }
+    // Show/visibility toggles for fields - UPDATED DEFAULTS
+    // Show/visibility toggles for fields - UPDATED WITH NULL SAFETY
+    var showName by remember { mutableStateOf(product.show?.name ?: true) }
+    var showDescription by remember { mutableStateOf(product.show?.description ?: true) }
+    var showCategory by remember { mutableStateOf(product.show?.category ?: true) }
+    var showMaterial by remember { mutableStateOf(product.show?.material ?: true) }
+    var showMaterialType by remember { mutableStateOf(product.show?.materialType ?: true) }
+    var showQuantity by remember { mutableStateOf(product.show?.quantity ?: true) }
+    var showTotalWeight by remember { mutableStateOf(false) } // FALSE BY DEFAULT
+    var showPrice by remember { mutableStateOf(product.show?.price ?: true) }
+    var showHasStones by remember { mutableStateOf(product.show?.hasStones ?: true) }
+    var showStones by remember { mutableStateOf(productStones.isNotEmpty()) } // TRUE ONLY IF STONES PRESENT
+    var showCustomPrice by remember { mutableStateOf(hasCustomPrice) } // TRUE ONLY IF hasCustomPrice IS TRUE
+    var showMaterialWeight by remember { mutableStateOf(false) } // FALSE BY DEFAULT
+    var showStoneWeight by remember { mutableStateOf(false) } // FALSE BY DEFAULT
+    var showMakingPercent by remember { mutableStateOf(product.show?.makingPercent ?: true) }
+    var showLabourCharges by remember { mutableStateOf(false) } // FALSE BY DEFAULT
+    var showEffectiveWeight by remember { mutableStateOf(product.show?.effectiveWeight ?: true) }
+    var showEffectiveMetalWeight by remember { mutableStateOf(product.show?.effectiveMetalWeight ?: true) }
+    var showLabourRate by remember { mutableStateOf(false) } // FALSE BY DEFAULT
+    var showImages by remember { mutableStateOf(product.show?.images ?: true) }
+    var showAvailable by remember { mutableStateOf(product.show?.available ?: true) }
+    var showFeatured by remember { mutableStateOf(product.show?.featured ?: true) }
+    var showIsCollectionProduct by remember { mutableStateOf(isCollectionProduct) } // TRUE ONLY IF isCollectionProduct IS TRUE
+    var showCollectionId by remember { mutableStateOf(product.show?.collectionId ?: true) }
 
 
-    // Extract kundan/jarkan stones from productStones
-    val kundanStones = remember(productStones) {
-        productStones.filter { it.name.equals("Kundan", ignoreCase = true) }
+    // Extract all stone types from productStones using helper function
+    val stoneBreakdown = remember(productStones) {
+        calculateStonePrices(productStones)
     }
-    
-    val jarkanStones = remember(productStones) {
-        productStones.filter { it.name.equals("Jarkan", ignoreCase = true) }
-    }
-    
+
     // Prepare inputs for price calculator
     val priceCalculatorInputs = remember(
         totalWeight,
@@ -267,8 +267,7 @@ fun AddEditProductScreen(
         materialType,
         materialName,
         materialWeight,
-        kundanStones,
-        jarkanStones,
+        productStones,
         makingPercent,
         labourRate,
         metalRateViewModel
@@ -276,7 +275,7 @@ fun AddEditProductScreen(
         val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
         val metalPurity = materialType
         val metalWeightValue = materialWeight.toDoubleOrNull() ?: totalWeightValue
-        
+
         // Fetch metal rate using materialId and materialType
         val metalRatePerGram = if (materialId.isNotEmpty() && materialType.isNotEmpty()) {
             try {
@@ -290,15 +289,22 @@ fun AddEditProductScreen(
         } else {
             0.0
         }
-        
-        // Sum all Kundan prices and weights from stones array
-        val kundanPrice = kundanStones.sumOf { it.amount }
-        val kundanWeight = kundanStones.sumOf { it.weight }
-        
-        // Sum all Jarkan prices and weights from stones array
-        val jarkanPrice = jarkanStones.sumOf { it.amount }
-        val jarkanWeight = jarkanStones.sumOf { it.weight }
-        
+
+        // Extract all stone types from stones array using helper function
+        val stoneBreakdown = calculateStonePrices(productStones)
+        val kundanPrice = stoneBreakdown.kundanPrice
+        val kundanWeight = stoneBreakdown.kundanWeight
+        val jarkanPrice = stoneBreakdown.jarkanPrice
+        val jarkanWeight = stoneBreakdown.jarkanWeight
+        val diamondPrice = stoneBreakdown.diamondPrice
+        val diamondWeight = stoneBreakdown.diamondWeight // in carats (for display)
+        val diamondWeightInGrams = stoneBreakdown.diamondWeightInGrams // in grams (for calculation)
+        val solitairePrice = stoneBreakdown.solitairePrice
+        val solitaireWeight = stoneBreakdown.solitaireWeight // in carats (for display)
+        val solitaireWeightInGrams = stoneBreakdown.solitaireWeightInGrams // in grams (for calculation)
+        val colorStonesPrice = stoneBreakdown.colorStonesPrice
+        val colorStonesWeight = stoneBreakdown.colorStonesWeight // in grams
+
         ProductPriceInputs(
             grossWeight = totalWeightValue,
             goldPurity = metalPurity,
@@ -309,10 +315,18 @@ fun AddEditProductScreen(
             kundanWeight = kundanWeight,
             jarkanPrice = jarkanPrice,
             jarkanWeight = jarkanWeight,
+            diamondPrice = diamondPrice,
+            diamondWeight = diamondWeight,
+            diamondWeightInGrams = diamondWeightInGrams,
+            solitairePrice = solitairePrice,
+            solitaireWeight = solitaireWeight,
+            solitaireWeightInGrams = solitaireWeightInGrams,
+            colorStonesPrice = colorStonesPrice,
+            colorStonesWeight = colorStonesWeight,
             goldRatePerGram = metalRatePerGram
         )
     }
-    
+
 
 
     // Auto-calculate stone amount when stone fields change
@@ -334,6 +348,21 @@ fun AddEditProductScreen(
         if (!featured) {
             showFeatured = false
         }
+    }
+
+    // Auto-update showStones when productStones changes
+    LaunchedEffect(productStones) {
+        showStones = productStones.isNotEmpty()
+    }
+
+    // Auto-update showCustomPrice when hasCustomPrice changes
+    LaunchedEffect(hasCustomPrice) {
+        showCustomPrice = hasCustomPrice
+    }
+
+    // Auto-update showIsCollectionProduct when isCollectionProduct changes
+    LaunchedEffect(isCollectionProduct) {
+        showIsCollectionProduct = isCollectionProduct
     }
 
     // Load collections and initialize selected collection
@@ -713,8 +742,8 @@ fun AddEditProductScreen(
                             onValueChange = { query ->
                                 categoryDisplayValue = query
                                 // Find matching category
-                                val matchedCategory = categories.find { 
-                                    it.name.equals(query, ignoreCase = true) 
+                                val matchedCategory = categories.find {
+                                    it.name.equals(query, ignoreCase = true)
                                 }
                                 if (matchedCategory != null) {
                                     categoryId = matchedCategory.id
@@ -726,8 +755,8 @@ fun AddEditProductScreen(
                             },
                             onItemSelected = { selectedCategoryName ->
                                 categoryDisplayValue = selectedCategoryName
-                                val selectedCategory = categories.find { 
-                                    it.name.equals(selectedCategoryName, ignoreCase = true) 
+                                val selectedCategory = categories.find {
+                                    it.name.equals(selectedCategoryName, ignoreCase = true)
                                 }
                                 selectedCategory?.let {
                                     categoryId = it.id
@@ -777,9 +806,9 @@ fun AddEditProductScreen(
                             placeholder = "0.00",
                             suffix = "grams",
                             keyboardType = KeyboardType.Decimal,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(enterMovesFocusModifier)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(enterMovesFocusModifier)
                         )
                     }
                     if (weightMismatchError.isNotEmpty()) {
@@ -798,7 +827,11 @@ fun AddEditProductScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     // Add Metal/Stone Button
                     Button(
-                        onClick = { showAddMaterialDialog = true },
+                        onClick = {
+                            editingMetalIndex = null
+                            editingStoneIndex = null
+                            showAddMaterialDialog = true
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text("Add Metal or Stone")
@@ -823,16 +856,24 @@ fun AddEditProductScreen(
                                     Text("Type: ${materialType.ifEmpty { "Not selected" }}", fontSize = 12.sp, color = Color.Gray)
                                     Text("Weight: ${materialWeight.ifEmpty { "0" }}g", fontSize = 12.sp, color = Color.Gray)
                                 }
-                                IconButton(onClick = {
-                                    materialId = ""
-                                    materialType = ""
-                                    materialName = ""
-                                    materialWeight = ""
-                                    materialDisplayValue = ""
-                                    materialTypeDisplayValue = ""
-                                    weightMismatchError = "" // Clear error when material is removed
-                                }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Remove")
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    IconButton(onClick = {
+                                        editingMetalIndex = 0
+                                        showAddMaterialDialog = true
+                                    }) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colors.primary)
+                                    }
+                                    IconButton(onClick = {
+                                        materialId = ""
+                                        materialType = ""
+                                        materialName = ""
+                                        materialWeight = ""
+                                        materialDisplayValue = ""
+                                        materialTypeDisplayValue = ""
+                                        weightMismatchError = "" // Clear error when material is removed
+                                    }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Remove")
+                                    }
                                 }
                             }
                         }
@@ -855,17 +896,28 @@ fun AddEditProductScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text("Stone: ${stone.name}", fontWeight = FontWeight.Medium)
-                                        Text("Purity: ${stone.purity}", fontSize = 12.sp, color = Color.Gray)
+                                        if (stone.name.equals("Diamond", ignoreCase = true) || stone.name.equals("Solitaire", ignoreCase = true)) {
+                                            Text("Cent: ${if (stone.quantity > 0) String.format("%.2f", stone.quantity) else ""} carats", fontSize = 12.sp, color = Color.Gray)
+                                        }
                                         Text("Weight: ${stone.weight}g, Rate: ${CurrencyFormatter.formatRupees(stone.rate, includeDecimals = true)}", fontSize = 12.sp, color = Color.Gray)
                                     }
-                                    IconButton(onClick = {
-                                        productStones = productStones.filterIndexed { i, _ -> i != index }
-                                        if (productStones.isEmpty()) {
-                                            hasStones = false
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        IconButton(onClick = {
+                                            editingStoneIndex = index
+                                            editingMetalIndex = null
+                                            showAddMaterialDialog = true
+                                        }) {
+                                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = MaterialTheme.colors.primary)
                                         }
-                                        weightMismatchError = "" // Clear error when stone is removed
-                                    }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Remove")
+                                        IconButton(onClick = {
+                                            productStones = productStones.filterIndexed { i, _ -> i != index }
+                                            if (productStones.isEmpty()) {
+                                                hasStones = false
+                                            }
+                                            weightMismatchError = "" // Clear error when stone is removed
+                                        }) {
+                                            Icon(Icons.Default.Close, contentDescription = "Remove")
+                                        }
                                     }
                                 }
                             }
@@ -873,7 +925,7 @@ fun AddEditProductScreen(
                     }
 
                     if (materialId.isEmpty() && productStones.isEmpty()) {
-                            Text(
+                        Text(
                             text = "No materials added yet. Click 'Add Metal or Stone' to add materials.",
                             color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f),
                             modifier = Modifier.padding(16.dp)
@@ -882,10 +934,57 @@ fun AddEditProductScreen(
                 }
             }
 
+            // Prepare existing material/stone for editing
+            val existingMaterialForEdit = remember(editingMetalIndex, editingStoneIndex, materialId, materialName, materialType, materialWeight, productStones) {
+                when {
+                    editingMetalIndex != null && materialId.isNotEmpty() -> {
+                        // Converting metal to ProductMaterial
+                        org.example.project.data.ProductMaterial(
+                            materialId = materialId,
+                            materialName = materialName,
+                            materialType = materialType,
+                            weight = materialWeight.toDoubleOrNull() ?: 0.0,
+                            rate = 0.0, // Will be fetched from rates
+                            isMetal = true
+                        )
+                    }
+                    editingStoneIndex != null -> {
+                        val stoneIndex = editingStoneIndex!!
+                        val stone = productStones.getOrNull(stoneIndex)
+                        if (stone != null) {
+                            // Converting ProductStone to ProductMaterial
+                            val materialTypeForStone = when {
+                                stone.name.equals("Diamond", ignoreCase = true) ||
+                                        stone.name.equals("Solitaire", ignoreCase = true) -> {
+                                    // For Diamond/Solitaire: materialType = "|cent" (no purity)
+                                    val cent = stone.quantity
+                                    "|$cent"
+                                }
+                                else -> "" // For other stones, no purity
+                            }
+                            org.example.project.data.ProductMaterial(
+                                materialId = "",
+                                materialName = stone.name,
+                                materialType = materialTypeForStone,
+                                weight = stone.weight,
+                                rate = stone.rate,
+                                isMetal = false
+                            )
+                        } else null
+                    }
+                    else -> null
+                }
+            }
+
             // Add Material Dialog
             AddMaterialDialog(
                 openDialog = showAddMaterialDialog,
-                onDismiss = { showAddMaterialDialog = false },
+                existingMaterial = existingMaterialForEdit,
+                onDismiss = {
+                    showAddMaterialDialog = false
+                    editingMetalIndex = null
+                    editingStoneIndex = null
+                },
                 onSave = { newMaterial ->
                     if (newMaterial.isMetal) {
                         // If it's a metal, update materialId, materialType, materialName, and materialWeight
@@ -897,24 +996,80 @@ fun AddEditProductScreen(
                         materialTypeDisplayValue = newMaterial.materialType
                         weightMismatchError = ""
                     } else {
-                        // If it's a stone (like jarkan), add it to the stones array
+                        // If it's a stone, add or update it in the stones array
+                        // Calculate amount based on stone type:
+                        // - Diamond/Solitaire: amount = cent (carats) * rate (per carat), weight (grams) used for validation
+                        // - Color Stones: amount = weight (grams) * rate (per gram)
+                        // - Kundan/Jarkan: amount = rate (direct entry)
+                        val materialName = newMaterial.materialName
+                        val (purity, centValue) = when {
+                            materialName.equals("Diamond", ignoreCase = true) ||
+                                    materialName.equals("Solitaire", ignoreCase = true) -> {
+                                // Extract purity and cent from materialType (format: "purity|cent")
+                                val parts = newMaterial.materialType.split("|")
+                                val purityValue = if (parts.size > 1 && parts[0].isNotEmpty()) parts[0] else ""
+                                val cent = parts.lastOrNull()?.toDoubleOrNull() ?: 0.0
+                                purityValue to cent
+                            }
+                            else -> {
+                                newMaterial.materialType to 0.0
+                            }
+                        }
+                        val calculatedAmount = when {
+                            materialName.equals("Diamond", ignoreCase = true) ||
+                                    materialName.equals("Solitaire", ignoreCase = true) -> {
+                                // Diamond/Solitaire: amount = cent (carats) * rate (per carat)
+                                centValue * newMaterial.rate
+                            }
+                            materialName.equals("Kundan", ignoreCase = true) ||
+                                    materialName.equals("Jarkan", ignoreCase = true) -> {
+                                // Kundan/Jarkan: amount is the rate itself (direct entry)
+                                newMaterial.rate
+                            }
+                            else -> {
+                                // Color Stones or other stones: amount = weight (grams) * rate (per gram)
+                                newMaterial.weight * newMaterial.rate
+                            }
+                        }
+
                         val newStone = org.example.project.data.ProductStone(
-                            name = newMaterial.materialName,
-                            purity = newMaterial.materialType,
-                            quantity = 0.0, // For jarkan/kundan, quantity is 0
+                            name = materialName,
+                            purity = "", // No purity field in stones array
+                            quantity = if (materialName.equals("Diamond", ignoreCase = true) ||
+                                materialName.equals("Solitaire", ignoreCase = true)) {
+                                centValue // Store cent (carats) in quantity for Diamond/Solitaire
+                            } else {
+                                0.0 // For other stones, quantity is 0
+                            },
                             rate = newMaterial.rate,
-                            weight = newMaterial.weight,
-                            amount = newMaterial.rate // For jarkan/kundan, amount is the rate
+                            weight = newMaterial.weight, // Weight in grams for Diamond/Solitaire (for validation)
+                            amount = calculatedAmount
                         )
-                        productStones = productStones + newStone
-                        hasStones = true
-                        // Update stone fields for backward compatibility
-                        stoneName = newMaterial.materialName
-                        stonePurity = newMaterial.materialType
-                        stoneRate = newMaterial.rate.toString()
-                        stoneWeight = newMaterial.weight.toString()
+
+                        // Update existing stone if editing, otherwise add new
+                        editingStoneIndex?.let { index ->
+                            productStones = productStones.mapIndexed { i, stone ->
+                                if (i == index) newStone else stone
+                            }
+                        } ?: run {
+                            productStones = productStones + newStone
+                            hasStones = true
+                        }
+
+                        // Update stone fields for backward compatibility (only update if first stone)
+                        if (productStones.isEmpty() || productStones.size == 1) {
+                            stoneName = materialName
+                            stonePurity = newMaterial.materialType
+                            stoneRate = newMaterial.rate.toString()
+                            stoneWeight = newMaterial.weight.toString()
+                        }
                         weightMismatchError = "" // Clear error when material/stone is added
                     }
+
+                    // Clear editing indices after save
+                    editingMetalIndex = null
+                    editingStoneIndex = null
+                    showAddMaterialDialog = false
                 },
                 materials = materials,
                 totalWeight = totalWeight,
@@ -931,7 +1086,7 @@ fun AddEditProductScreen(
                     onLabourRateChange = { labourRate = it.toString() },
                     modifier = Modifier.fillMaxWidth()
                 )
-                
+
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
@@ -1214,16 +1369,20 @@ fun AddEditProductScreen(
 
                         if (!nameError && !materialRateError && !categoryError && !materialError && !customIdError) {
                             // Ensure total weight matches sum of all materials and stones
+                            // For all stones (Diamond/Solitaire, Color Stones, Kundan, Jarkan): weight is in grams
                             val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
                             val materialWeightValue = materialWeight.toDoubleOrNull() ?: 0.0
-                            val stonesWeightSum = productStones.sumOf { it.weight }
-                            val totalMaterialsWeight = materialWeightValue + stonesWeightSum
-                            
+                            val stonesWeightSumInGrams = productStones.sumOf { stone ->
+                                // All stone weights are in grams
+                                stone.weight
+                            }
+                            val totalMaterialsWeight = materialWeightValue + stonesWeightSumInGrams
+
                             if (totalMaterialsWeight > 0) {
                                 val weightDiff = kotlin.math.abs(totalWeightValue - totalMaterialsWeight)
                                 if (weightDiff > 0.001) {
-                                    weightMismatchError = "Total weight ($totalWeightValue g) should match sum of materials and stones ($totalMaterialsWeight g)"
-                                    println("❌ Validation failed: weight mismatch -> total: $totalWeightValue, materials + stones sum: $totalMaterialsWeight (material: $materialWeightValue, stones: $stonesWeightSum)")
+                                    weightMismatchError = "Total weight (${String.format("%.3f", totalWeightValue)} g) should match sum of materials and stones (${String.format("%.3f", totalMaterialsWeight)} g)"
+                                    println("❌ Validation failed: weight mismatch -> total: $totalWeightValue, materials + stones sum: $totalMaterialsWeight (material: $materialWeightValue, stones: ${String.format("%.3f", stonesWeightSumInGrams)})")
                                     return@Button
                                 } else {
                                     weightMismatchError = ""
@@ -1268,19 +1427,21 @@ fun AddEditProductScreen(
                             val stonesList = productStones
 
                             // Calculate effective metal weight using price calculator
-                            // Effective Metal Weight = New Weight - (Jarkan Weight + Kundan Weight)
+                            // Effective Metal Weight = New Weight - (All Stone Weights in grams)
+                            // For all stones (Diamond/Solitaire, Color Stones, Kundan, Jarkan): weight is in grams
                             val calculatedEffectiveMetalWeight = run {
                                 val totalWeightValue = totalWeight.toDoubleOrNull() ?: 0.0
                                 val makingPercentValue = makingPercent.toDoubleOrNull() ?: 0.0
                                 val makingWeightValue = totalWeightValue * makingPercentValue / 100.0
                                 val newWeightValue = totalWeightValue + makingWeightValue
-                                
-                                // Sum jarkan and kundan weights from stones
-                                val jarkanWeight = jarkanStones.sumOf { it.weight }
-                                val kundanWeight = kundanStones.sumOf { it.weight }
-                                
-                                // Effective Metal Weight = New Weight - (Jarkan Weight + Kundan Weight)
-                                (newWeightValue - jarkanWeight - kundanWeight).coerceAtLeast(0.0)
+
+                                // Calculate all stone weights in grams (all weights are in grams)
+                                val totalStonesWeightInGrams = productStones.sumOf { stone ->
+                                    stone.weight
+                                }
+
+                                // Effective Metal Weight = New Weight - (All Stone Weights in grams)
+                                (newWeightValue - totalStonesWeightInGrams).coerceAtLeast(0.0)
                             }
 
                             val updatedProduct = Product(
@@ -1322,8 +1483,12 @@ fun AddEditProductScreen(
                                 effectiveMetalWeight = calculatedEffectiveMetalWeight,
                                 labourRate = labourRate.toDoubleOrNull() ?: 0.0,
                                 // Calculate stoneAmount and stoneWeight from stones array
+                                // stoneAmount: sum of all stone amounts
                                 stoneAmount = stonesList.sumOf { it.amount },
-                                stoneWeight = stonesList.sumOf { it.weight },
+                                // stoneWeight: sum of all stone weights in grams (all weights are in grams)
+                                stoneWeight = stonesList.sumOf { stone ->
+                                    stone.weight
+                                },
                                 hasCustomPrice = hasCustomPrice,
                                 customPrice = customPrice.toDoubleOrNull() ?: 0.0,
                                 available = available,

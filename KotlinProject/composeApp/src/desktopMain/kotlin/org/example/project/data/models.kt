@@ -443,13 +443,29 @@ data class Order(
     // Order Items
     val items: List<OrderItem> = emptyList(),
     
+    // Exchange Gold Information
+    val exchangeGold: ExchangeGoldInfo? = null,
+    
     // Timestamps
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     val transactionDate: String = "",
     
     // Additional Information
-    val notes: String = ""
+    val notes: String = "",
+
+    // Invoice PDF URL stored in Firebase Storage (set after PDF generation)
+    val invoiceUrl: String = ""
+)
+
+data class ExchangeGoldInfo(
+    val productName: String = "",
+    val goldWeight: Double = 0.0, // in grams
+    val goldPurity: String = "", // e.g., "22K", "24K"
+    val goldRate: Double = 0.0, // rate per gram
+    val finalGoldExchangePrice: Double = 0.0, // goldRate * goldWeight
+    val totalProductWeight: Double = 0.0, // Total product weight in grams
+    val percentage: Double = 0.0 // Percentage used for calculation
 )
 
 data class PaymentTransaction(
@@ -603,6 +619,8 @@ data class ExchangeGold(
     val rate: Double = 0.0, // RATE
     val value: Double = 0.0, // VAL
     val averageRate: Double = 0.0, // AVG RATE
+    val totalProductWeight: Double = 0.0, // Total product weight in grams
+    val percentage: Double = 0.0, // Percentage used for calculation
     val createdAt: Long = System.currentTimeMillis()
 ) {
     fun calculateValue(): Double {

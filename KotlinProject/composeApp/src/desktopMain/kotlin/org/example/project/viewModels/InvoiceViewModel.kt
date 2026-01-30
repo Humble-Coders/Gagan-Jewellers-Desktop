@@ -217,9 +217,8 @@ class InvoiceViewModel {
         
         viewModelScope.launch {
             try {
-                val storeInfoRepository = StoreInfoRepository()
                 val storeInfo = withContext(Dispatchers.IO) {
-                    storeInfoRepository.getStoreInfo()
+                    StoreInfoRepository.getStoreInfo()
                 }
                 
                 val calculator = InvoiceCalculator()

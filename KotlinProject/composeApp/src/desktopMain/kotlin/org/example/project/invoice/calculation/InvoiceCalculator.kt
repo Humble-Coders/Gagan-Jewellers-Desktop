@@ -82,14 +82,14 @@ class InvoiceCalculator {
             )
         }
         
-        // Build bank info
+        // Build bank info - map from StoreInfoRepository.BankInfo to Invoice.BankInfo
         val bankInfo = BankInfo(
-            accountHolder = storeInfo.bankInfo.accountHolder,
-            accountNumber = storeInfo.bankInfo.accountNumber,
-            ifscCode = storeInfo.bankInfo.ifscCode,
-            branch = storeInfo.bankInfo.branch,
-            accountType = storeInfo.bankInfo.accountType,
-            pan = storeInfo.bankInfo.pan
+            accountHolder = storeInfo.bankInfo.account_holder,
+            accountNumber = storeInfo.bankInfo.AccountNumber,
+            ifscCode = storeInfo.bankInfo.IFSC_Code,
+            branch = storeInfo.bankInfo.Branch,
+            accountType = storeInfo.bankInfo.Acc_type,
+            pan = storeInfo.bankInfo.pan_no
         )
         
         // Format dates for IRN/ACK
@@ -256,14 +256,14 @@ class InvoiceCalculator {
         // Build seller (store) party
         val mainStore = storeInfo.mainStore
         val seller = Party(
-            name = mainStore.companyName,
+            name = mainStore.name,
             address = mainStore.address,
-            phone = mainStore.phone,
-            phonePrimary = mainStore.phonePrimary,
-            phoneSecondary = mainStore.phoneSecondary,
+            phone = mainStore.phone_primary,
+            phonePrimary = mainStore.phone_primary,
+            phoneSecondary = mainStore.phone_secondary,
             email = mainStore.email,
-            gstin = mainStore.gstin,
-            pan = mainStore.pan.takeIf { it.isNotEmpty() },
+            gstin = mainStore.gstIn,
+            pan = null, // PAN removed from main_store
             stateCode = mainStore.stateCode,
             stateName = mainStore.stateName,
             certification = mainStore.certification
@@ -304,13 +304,14 @@ class InvoiceCalculator {
             )
         }
         
-        // Build bank info
+        // Build bank info - map from StoreInfoRepository.BankInfo to Invoice.BankInfo
         val bankInfo = BankInfo(
-            accountHolder = storeInfo.bankInfo.accountHolder,
-            accountNumber = storeInfo.bankInfo.accountNumber,
-            ifscCode = storeInfo.bankInfo.ifscCode,
-            branch = storeInfo.bankInfo.branch,
-            accountType = storeInfo.bankInfo.accountType
+            accountHolder = storeInfo.bankInfo.account_holder,
+            accountNumber = storeInfo.bankInfo.AccountNumber,
+            ifscCode = storeInfo.bankInfo.IFSC_Code,
+            branch = storeInfo.bankInfo.Branch,
+            accountType = storeInfo.bankInfo.Acc_type,
+            pan = storeInfo.bankInfo.pan_no
         )
         
         // Format dates for IRN/ACK

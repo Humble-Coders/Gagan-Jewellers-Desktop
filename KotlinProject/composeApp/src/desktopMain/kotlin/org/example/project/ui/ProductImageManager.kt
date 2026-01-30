@@ -118,8 +118,8 @@ fun ProductImageManager(
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            "Product Images",
-            style = MaterialTheme.typography.h6,
+            "Upload Images",
+            //style = MaterialTheme.typography.h6,
             modifier = Modifier.padding(bottom = 8.dp)
         )
 
@@ -251,10 +251,11 @@ fun ProductImageManager(
                             }
 
                             // Determine directory path based on product ID
-                            val directoryPath = if (productId.isNotEmpty()) {
-                                "products/$productId"
-                            } else {
-                                "products/${System.currentTimeMillis()}"
+                            val directoryPath = when {
+                                productId == "store" -> "store_images"
+                                productId == "store_logos" -> "logos"
+                                productId.isNotEmpty() -> "products/$productId"
+                                else -> "products/${System.currentTimeMillis()}"
                             }
 
                             println("Starting upload to $directoryPath")

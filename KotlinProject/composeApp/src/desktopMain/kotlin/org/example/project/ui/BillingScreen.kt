@@ -181,7 +181,7 @@ fun BillingScreen(
                         val selectedCustomer by customerViewModel.selectedCustomer
                         val orderId = lastTransaction?.id
                         val orderRepository = remember { FirestoreOrderRepository(JewelryAppInitializer.getFirestore()) }
-                        val storeInfoRepository = remember { StoreInfoRepository() }
+                        val storeInfoRepository = StoreInfoRepository
                         var order by remember { mutableStateOf<org.example.project.data.Order?>(null) }
                         
                         // Fetch order when orderId is available

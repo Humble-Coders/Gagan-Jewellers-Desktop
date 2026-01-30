@@ -46,8 +46,7 @@ class PdfGeneratorService {
                 }
 
                        // Fetch required data
-                       val storeInfoRepository = StoreInfoRepository()
-                       val storeInfo = storeInfoRepository.getStoreInfo()
+                       val storeInfo = StoreInfoRepository.getStoreInfo()
                        val products = fetchProductDetails(order.items.map { it.productId })
                            .associateBy { it.id }
 
@@ -79,9 +78,8 @@ class PdfGeneratorService {
         val products = fetchProductDetails(order.items.map { it.productId })
 
         // Fetch store info from Firestore
-        val storeInfoRepository = StoreInfoRepository()
         val storeInfo = kotlinx.coroutines.runBlocking {
-            storeInfoRepository.getStoreInfo()
+            StoreInfoRepository.getStoreInfo()
         }
 
         val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
@@ -101,17 +99,17 @@ class PdfGeneratorService {
         val mainStore = storeInfo.mainStore
         val bankInfo = storeInfo.bankInfo
 
-        val companyName = if (mainStore.companyName.isNotEmpty()) mainStore.companyName else invoiceConfig.companyName
+        val companyName = if (mainStore.name.isNotEmpty()) mainStore.name else invoiceConfig.companyName
         val companyAddress = if (mainStore.address.isNotEmpty()) mainStore.address else invoiceConfig.companyAddress
-        val companyPhone = if (mainStore.phone.isNotEmpty()) mainStore.phone else invoiceConfig.companyPhone
+        val companyPhone = if (mainStore.phone_primary.isNotEmpty()) mainStore.phone_primary else invoiceConfig.companyPhone
         val companyEmail = if (mainStore.email.isNotEmpty()) mainStore.email else invoiceConfig.companyEmail
-        val companyGSTIN = if (mainStore.gstin.isNotEmpty()) mainStore.gstin else invoiceConfig.companyGST
-        val companyPAN = mainStore.pan
+        val companyGSTIN = if (mainStore.gstIn.isNotEmpty()) mainStore.gstIn else invoiceConfig.companyGST
+        val companyPAN = "" // PAN removed from main_store
         val companyCertification = mainStore.certification
         val stateCode = if (mainStore.stateCode.isNotEmpty()) mainStore.stateCode else if (companyGSTIN.length >= 2) companyGSTIN.substring(0, 2) else ""
         val stateName = mainStore.stateName
 
-        val companyLogoBase64 = loadLogoAsBase64("gagan_jewellers_logo.png")
+        val companyLogoBase64 = loadGaganLogoFromFirebase()
         val bisLogoBase64 = loadLogoAsBase64("bis_logo.png")
 
         // Customer details in table format
@@ -161,20 +159,20 @@ class PdfGeneratorService {
     <td class="p-1 text-right"><strong>${CurrencyFormatter.formatRupeesNumber(productTableData.totalProductValue, includeDecimals = true)}</strong></td>
 """.trimIndent()
         val bankDetails = buildString {
-            if (bankInfo.accountHolder.isNotEmpty()) {
-                append("<p><span class=\"font-semibold\">Account Holder :</span> ${escapeHtml(bankInfo.accountHolder)}</p>")
+            if (bankInfo.account_holder.isNotEmpty()) {
+                append("<p><span class=\"font-semibold\">Account Holder :</span> ${escapeHtml(bankInfo.account_holder)}</p>")
             }
-            if (bankInfo.accountNumber.isNotEmpty()) {
-                append("<p><span class=\"font-semibold\">Account No. :</span> ${escapeHtml(bankInfo.accountNumber)}</p>")
+            if (bankInfo.AccountNumber.isNotEmpty()) {
+                append("<p><span class=\"font-semibold\">Account No. :</span> ${escapeHtml(bankInfo.AccountNumber)}</p>")
             }
-            if (bankInfo.ifscCode.isNotEmpty()) {
-                append("<p><span class=\"font-semibold\">IFSC Code :</span> ${escapeHtml(bankInfo.ifscCode)}</p>")
+            if (bankInfo.IFSC_Code.isNotEmpty()) {
+                append("<p><span class=\"font-semibold\">IFSC Code :</span> ${escapeHtml(bankInfo.IFSC_Code)}</p>")
             }
-            if (bankInfo.branch.isNotEmpty()) {
-                append("<p><span class=\"font-semibold\">Branch :</span> ${escapeHtml(bankInfo.branch)}</p>")
+            if (bankInfo.Branch.isNotEmpty()) {
+                append("<p><span class=\"font-semibold\">Branch :</span> ${escapeHtml(bankInfo.Branch)}</p>")
             }
-            if (bankInfo.accountType.isNotEmpty()) {
-                append("<p><span class=\"font-semibold\">Account Type :</span> ${escapeHtml(bankInfo.accountType)}</p>")
+            if (bankInfo.Acc_type.isNotEmpty()) {
+                append("<p><span class=\"font-semibold\">Account Type :</span> ${escapeHtml(bankInfo.Acc_type)}</p>")
             }
             if (companyGSTIN.isNotEmpty()) {
                 append("<p><span class=\"font-semibold\">Company's GSTIN No.</span> : ${escapeHtml(companyGSTIN)}</p>")
@@ -598,6 +596,39 @@ class PdfGeneratorService {
         val digest = MessageDigest.getInstance("SHA-256")
         val hashBytes = digest.digest(input.toByteArray())
         return hashBytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Load Gagan Jewellers logo from Firebase Storage (logos folder) as base64 data URI.
+     */
+    private fun loadGaganLogoFromFirebase(): String {
+        val paths = listOf(
+            "logos/gagan jewellers logo",
+            "logos/gagan jewellers logo.png",
+            "logos/gagan jewellers logo.jpg",
+            "logos/gagan jewellers logo.jpeg"
+        )
+        return try {
+            val storage = JewelryAppInitializer.getStorageService()
+            var bytes: ByteArray? = null
+            for (path in paths) {
+                val b = storage.downloadFileBytes(path)
+                if (b != null && b.isNotEmpty()) {
+                    bytes = b
+                    break
+                }
+            }
+            bytes ?: return ""
+            val base64 = Base64.getEncoder().encodeToString(bytes)
+            val mimeType = when {
+                bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() && bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte() -> "image/png"
+                bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte() -> "image/jpeg"
+                else -> "image/png"
+            }
+            "data:$mimeType;base64,$base64"
+        } catch (e: Exception) {
+            ""
+        }
     }
 
     /**

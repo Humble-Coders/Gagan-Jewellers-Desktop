@@ -89,6 +89,20 @@ class StorageService(private val storage: Storage, val bucketName: String) {
     }
 
     /**
+     * Downloads file bytes from Firebase Storage by path (e.g. "logos/gagan jewellers logo").
+     * Blocking call; use from IO context.
+     */
+    fun downloadFileBytes(path: String): ByteArray? {
+        return try {
+            val blobId = BlobId.of(bucketName, path)
+            val blob = storage.get(blobId)
+            blob?.getContent()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
      * Deletes a file from Firebase Storage.
      */
     suspend fun deleteFile(url: String): Boolean = withContext(Dispatchers.IO) {

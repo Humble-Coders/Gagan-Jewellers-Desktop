@@ -62,7 +62,10 @@ class LeftToRightRevealShape(private val revealFraction: Float) : Shape {
 }
 
 @Composable
-fun SplashScreenDesktop(onFinished: () -> Unit) {
+fun SplashScreenDesktop(
+    storeName: String = "Gagan Jewellers",
+    onFinished: () -> Unit
+) {
     // Main content animations
     val mainScale = remember { Animatable(0.9f) }
     val mainAlpha = remember { Animatable(0f) }
@@ -145,9 +148,17 @@ fun SplashScreenDesktop(onFinished: () -> Unit) {
                     modifier = Modifier
                         .padding(top = 32.dp)
                 ) {
+                    // Strip "Pvt Ltd" from store name if present
+                    val displayName = if (storeName.contains("Pvt Ltd", ignoreCase = true) || 
+                                         storeName.contains("PVT LTD", ignoreCase = true)) {
+                        storeName.split(Regex("(?i)\\s*pvt\\s*ltd"), limit = 2)[0].trim()
+                    } else {
+                        storeName
+                    }
+                    
                     // Company name
                     Text(
-                        text = "Gagan Jewellers",
+                        text = displayName,
                         color = Color.White,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,

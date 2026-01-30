@@ -98,6 +98,8 @@ import org.example.project.data.OrderRepository
 import org.example.project.data.FirestoreOrderRepository
 import org.example.project.data.CashAmountRepository
 import org.example.project.data.FirestoreCashAmountRepository
+import org.example.project.data.StoreInfoRepository
+import org.example.project.data.StoreInfo
 import org.example.project.ui.AddEditProductScreen
 import org.example.project.ui.BarcodeEditScreen
 import org.example.project.ui.BillingScreen
@@ -127,6 +129,21 @@ fun JewelryApp(viewModel: ProductsViewModel) {
     var showBarcodeEditDialog by remember { mutableStateOf(false) }
     var barcodeToEdit by remember { mutableStateOf("") }
     var newBarcodeId by remember { mutableStateOf("") }
+    
+    // Load store info for store name
+    var storeInfo by remember { mutableStateOf<StoreInfo?>(null) }
+    var storeName by remember { mutableStateOf("Gagan Jewellers") }
+    
+    // Function to reload store name
+    val reloadStoreName: suspend () -> Unit = {
+        val updatedStoreInfo = StoreInfoRepository.getStoreInfo()
+        storeInfo = updatedStoreInfo
+        storeName = updatedStoreInfo?.mainStore?.name ?: "Gagan Jewellers"
+    }
+    
+    LaunchedEffect(Unit) {
+        reloadStoreName()
+    }
 
     val coroutineScope = rememberCoroutineScope()
 
@@ -169,6 +186,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                     isSidebarExpanded = isSidebarExpanded,
                     isSidebarVisible = isSidebarVisible,
                     currentScreen = currentScreen,
+                    storeName = storeName,
                     onScreenChange = { screen ->
                         when (screen) {
                             Screen.ADD_PRODUCT -> viewModel.createNewProduct()
@@ -203,7 +221,7 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                     EnhancedTopAppBar(
                         title = {
                             Text(
-                                "Gagan Jewellers Pvt Ltd",
+                                storeName,
                                 fontWeight = FontWeight.Medium
                             )
                         },
@@ -354,7 +372,14 @@ fun JewelryApp(viewModel: ProductsViewModel) {
                                 }
                             )
 
-                            Screen.SETTINGS -> SettingsScreen()
+                            Screen.SETTINGS -> SettingsScreen(
+                                productsViewModel = viewModel,
+                                onStoreInfoSaved = {
+                                    coroutineScope.launch {
+                                        reloadStoreName()
+                                    }
+                                }
+                            )
 
                             Screen.GOLD_RATES -> GoldRateScreen(
                                 onBack = { 
@@ -808,7 +833,8 @@ fun EnhancedSidebar(
     currentScreen: Screen,
     onScreenChange: (Screen) -> Unit,
     onSidebarToggle: (Boolean) -> Unit,
-    onSidebarVisibilityChange: (Boolean) -> Unit
+    onSidebarVisibilityChange: (Boolean) -> Unit,
+    storeName: String = "Gagan Jewellers"
 ) {
     if (isSidebarVisible) {
         val sidebarInteractionSource = remember { MutableInteractionSource() }
@@ -912,13 +938,35 @@ fun EnhancedSidebar(
                                 modifier = Modifier.alpha(brandTextAlpha)
                             ) {
                                 Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
-                                    // Brand name with multiple styles
+                                    // Diamond logo icon
+                                    Icon(
+                                        Icons.Default.Diamond,
+                                        contentDescription = "App Logo",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(42.dp)
+                                    )
+                                    
+                                    // Split store name if it contains "Pvt Ltd"
+                                    val (mainName, suffix) = if (storeName.contains("Pvt Ltd", ignoreCase = true) || 
+                                                                   storeName.contains("PVT LTD", ignoreCase = true)) {
+                                        val parts = storeName.split(Regex("(?i)\\s*pvt\\s*ltd"), limit = 2)
+                                        if (parts.size == 2) {
+                                            parts[0].trim() to "Pvt Ltd"
+                                        } else {
+                                            storeName to null
+                                        }
+                                    } else {
+                                        storeName to null
+                                    }
+                                    
+                                    // Main store name
                                     Text(
-                                        "Gagan",
+                                        mainName,
                                         color = Color.White,
-                                        fontSize = 28.sp,
+                                        fontSize = 24.sp,
                                         fontWeight = FontWeight.Bold,
                                         letterSpacing = 1.sp,
                                         // Add shadow for better visibility
@@ -929,26 +977,23 @@ fun EnhancedSidebar(
                                             )
                                         )
                                     )
-                                    Text(
-                                        "Jewellers",
-                                        color = Color.White,
-                                        fontSize = 22.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        letterSpacing = 0.5.sp,
-                                        style = TextStyle(
-                                            shadow = Shadow(
-                                                color = Color.Black.copy(alpha = 0.3f),
-                                                blurRadius = 3f
+                                    
+                                    // Display "Pvt Ltd" on second line if present
+                                    suffix?.let {
+                                        Text(
+                                            it,
+                                            color = Color.White.copy(alpha = 0.9f),
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Normal,
+                                            letterSpacing = 2.sp,
+                                            style = TextStyle(
+                                                shadow = Shadow(
+                                                    color = Color.Black.copy(alpha = 0.3f),
+                                                    blurRadius = 3f
+                                                )
                                             )
                                         )
-                                    )
-                                    Text(
-                                        "Pvt Ltd",
-                                        color = Color.White.copy(alpha = 0.9f),
-                                        fontSize = 16.sp,
-                                        fontWeight = FontWeight.Normal,
-                                        letterSpacing = 0.25.sp
-                                    )
+                                    }
                                 }
                             }
                         }

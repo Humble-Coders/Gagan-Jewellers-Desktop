@@ -7,6 +7,8 @@ import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.runtime.*
 import org.example.project.navigation.JewelryApp
 import org.example.project.ui.SplashScreenDesktop
+import org.example.project.data.StoreInfoRepository
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.nio.file.Paths
 
@@ -39,9 +41,18 @@ fun main() {
                     state = rememberWindowState(width = 1280.dp, height = 800.dp)
                 ) {
                     var showSplash by remember { mutableStateOf(true) }
+                    var storeName by remember { mutableStateOf("Gagan Jewellers") }
+                    
+                    LaunchedEffect(Unit) {
+                        val storeInfo = StoreInfoRepository.getStoreInfo()
+                        storeName = storeInfo?.mainStore?.name ?: "Gagan Jewellers"
+                    }
 
                     if (showSplash) {
-                        SplashScreenDesktop(onFinished = { showSplash = false })
+                        SplashScreenDesktop(
+                            storeName = storeName,
+                            onFinished = { showSplash = false }
+                        )
                     } else {
                         val viewModel = JewelryAppInitializer.getViewModel()
                         JewelryApp(viewModel)

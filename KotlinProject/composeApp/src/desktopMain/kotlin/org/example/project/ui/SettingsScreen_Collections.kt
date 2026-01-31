@@ -127,12 +127,21 @@ fun CollectionsSection(
 
     if (showAddDialog) {
         AddCollectionDialog(
-            onSave = { name, description, imageUrl ->
+            onSave = { name, description, imageUrls ->
                 scope.launch {
+                    // Convert image URLs to CollectionImage objects
+                    val images = imageUrls.mapIndexed { index, url ->
+                        org.example.project.data.CollectionImage(
+                            url = url,
+                            isActive = true,
+                            order = index
+                        )
+                    }
+                    
                     val newCollection = ThemedCollection(
                         name = name,
                         description = description,
-                        imageUrl = imageUrl,
+                        images = images,
                         isActive = true,
                         createdAt = System.currentTimeMillis(),
                         updatedAt = System.currentTimeMillis(),
@@ -151,12 +160,21 @@ fun CollectionsSection(
     editingCollection?.let { collection ->
         AddCollectionDialog(
             initialCollection = collection,
-            onSave = { name, description, imageUrl ->
+            onSave = { name, description, imageUrls ->
                 scope.launch {
+                    // Convert image URLs to CollectionImage objects
+                    val images = imageUrls.mapIndexed { index, url ->
+                        org.example.project.data.CollectionImage(
+                            url = url,
+                            isActive = true,
+                            order = index
+                        )
+                    }
+                    
                     val updatedCollection = collection.copy(
                         name = name,
                         description = description,
-                        imageUrl = imageUrl,
+                        images = images,
                         updatedAt = System.currentTimeMillis()
                     )
                     collectionRepository.updateCollection(updatedCollection)
@@ -223,25 +241,18 @@ private fun CollectionItem(
     val scope = rememberCoroutineScope()
     val storageService = remember { JewelryAppInitializer.getStorageService() }
     
-    // Collect all image URLs from both imageUrl and images list
+    // Collect all image URLs from images list
     val allImageUrls = remember(collection) {
-        buildList {
-            // Add main imageUrl if not empty
-            if (collection.imageUrl.isNotEmpty()) {
-                add(collection.imageUrl)
-            }
-            // Add all active images from images list
-            collection.images.filter { it.isActive }
-                .sortedBy { it.order }
-                .forEach { add(it.url) }
-        }.distinct().also { urls ->
+        collection.images.filter { it.isActive }
+            .sortedBy { it.order }
+            .map { it.url }
+            .also { urls ->
             println("📋 Collection '${collection.name}' has ${urls.size} image URLs:")
             urls.forEachIndexed { index, url -> 
                 println("   [$index] $url")
             }
             if (urls.isEmpty()) {
                 println("⚠️ No images found for collection '${collection.name}'")
-                println("   - imageUrl: '${collection.imageUrl}'")
                 println("   - images list size: ${collection.images.size}")
                 collection.images.forEachIndexed { i, img ->
                     println("   - images[$i]: url='${img.url}', isActive=${img.isActive}, order=${img.order}")
@@ -495,55 +506,16 @@ private fun CollectionItem(
 @Composable
 private fun AddCollectionDialog(
     initialCollection: ThemedCollection? = null,
-    onSave: (String, String, String) -> Unit,
+    onSave: (String, String, List<String>) -> Unit,
     onCancel: () -> Unit
 ) {
     var name by remember { mutableStateOf(initialCollection?.name ?: "") }
     var description by remember { mutableStateOf(initialCollection?.description ?: "") }
-    var selectedImageUrl by remember { mutableStateOf(initialCollection?.imageUrl ?: "") }
-    var selectedImageBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var isUploading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var imageUrls by remember { mutableStateOf<List<String>>(initialCollection?.images?.map { it.url } ?: emptyList()) }
 
     val coroutineScope = rememberCoroutineScope()
     val storageService = JewelryAppInitializer.getStorageService()
 
-    // Load existing image if editing
-    LaunchedEffect(initialCollection?.imageUrl) {
-        if (initialCollection?.imageUrl?.isNotEmpty() == true) {
-            coroutineScope.launch(Dispatchers.IO) {
-                try {
-                    val imageBytes = when {
-                        // If it's an HTTPS URL, load directly
-                        initialCollection.imageUrl.startsWith("https://") || initialCollection.imageUrl.startsWith("http://") -> {
-                            try {
-                                URL(initialCollection.imageUrl).openStream().readBytes()
-                            } catch (e: Exception) {
-                                println("⚠️ Failed to load from URL, trying Firebase Storage path...")
-                                null
-                            }
-                        }
-                        // If it's a gs:// URL, extract path and use storage service
-                        initialCollection.imageUrl.startsWith("gs://") -> {
-                            val path = initialCollection.imageUrl.substringAfter("gs://").substringAfter("/")
-                            storageService.downloadFileBytes(path)
-                        }
-                        // Otherwise, assume it's a storage path
-                        else -> {
-                            storageService.downloadFileBytes(initialCollection.imageUrl)
-                        }
-                    }
-                    
-                    if (imageBytes != null && imageBytes.isNotEmpty()) {
-                        selectedImageBitmap = decodeAndResizeCategoryImage(imageBytes, maxSize = 200)
-                    }
-                } catch (e: Exception) {
-                    println("Error loading existing image: ${e.message}")
-                    e.printStackTrace()
-                }
-            }
-        }
-    }
 
     Dialog(onDismissRequest = onCancel) {
         Card(
@@ -598,113 +570,26 @@ private fun AddCollectionDialog(
                     )
                 )
 
-                // Image Section
+                // Multiple Images Section
                 Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        "Collection Image",
+                        "Collection Images",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color(0xFF1A1A1A)
                     )
-
-                    // Image Preview
-                    Box(
-                        modifier = Modifier
-                            .size(120.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFFF5F5F5))
-                            .border(2.dp, Color(0xFFE0E0E0), RoundedCornerShape(12.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (selectedImageBitmap != null) {
-                            Image(
-                                bitmap = selectedImageBitmap!!,
-                                contentDescription = "Selected Image",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                        } else {
-                            Icon(
-                                Icons.Default.Collections,
-                                contentDescription = "No Image",
-                                tint = Color(0xFFBBBBBB),
-                                modifier = Modifier.size(48.dp)
-                            )
-                        }
-                    }
-
-                    // Select Image Button
-                    Button(
-                        onClick = {
-                            coroutineScope.launch(Dispatchers.IO) {
-                                val fileDialog = FileDialog(Frame()).apply {
-                                    mode = FileDialog.LOAD
-                                    title = "Select Collection Image"
-                                    file = "*.jpg;*.jpeg;*.png;*.gif"
-                                    isVisible = true
-                                }
-
-                                val selectedFile = if (fileDialog.directory != null && fileDialog.file != null) {
-                                    File(fileDialog.directory, fileDialog.file).takeIf { it.exists() }
-                                } else {
-                                    null
-                                }
-
-                                if (selectedFile != null) {
-                                    withContext(Dispatchers.Main) {
-                                        isUploading = true
-                                        errorMessage = null
-                                    }
-
-                                    val directoryPath = "collections/${System.currentTimeMillis()}"
-                                    val progressFlow = MutableStateFlow(0f)
-                                    val imageUrl = storageService.uploadFile(
-                                        Paths.get(selectedFile.absolutePath),
-                                        directoryPath,
-                                        progressFlow
-                                    )
-
-                                    withContext(Dispatchers.Main) {
-                                        isUploading = false
-                                        if (imageUrl != null) {
-                                            selectedImageUrl = imageUrl
-                                            selectedImageBitmap = withContext(Dispatchers.IO) {
-                                                val imageBytes = URL(imageUrl).openStream().readBytes()
-                                                decodeAndResizeCategoryImage(imageBytes, maxSize = 200)
-                                            }
-                                        } else {
-                                            errorMessage = "Failed to upload image"
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        enabled = !isUploading,
-                        colors = ButtonDefaults.buttonColors(
-                            backgroundColor = Color(0xFFD4AF37),
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Select Image")
-                    }
-
-                    if (isUploading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = Color(0xFFD4AF37)
-                        )
-                    }
-
-                    errorMessage?.let {
-                        Text(it, color = Color.Red, fontSize = 12.sp)
-                    }
+                    
+                    // Use ProductImageManager for multiple image uploads
+                    val imageLoader = JewelryAppInitializer.getImageLoader()
+                    ProductImageManager(
+                        existingImages = imageUrls,
+                        onImagesChanged = { updatedImages -> imageUrls = updatedImages },
+                        imageLoader = imageLoader,
+                        productId = "collection_${initialCollection?.id ?: "new"}"
+                    )
                 }
 
                 // Action Buttons
@@ -727,10 +612,10 @@ private fun AddCollectionDialog(
                     Button(
                         onClick = {
                             if (name.isNotBlank()) {
-                                onSave(name, description, selectedImageUrl)
+                                onSave(name, description, imageUrls)
                             }
                         },
-                        enabled = name.isNotBlank() && !isUploading,
+                        enabled = name.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(
                             backgroundColor = Color(0xFFD4AF37),
                             contentColor = Color.White

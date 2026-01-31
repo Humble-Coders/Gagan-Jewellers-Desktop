@@ -156,7 +156,6 @@ private fun SettingsScreenContent(
         collections.forEach { collection ->
             println("   📦 Collection: ${collection.name}")
             println("      - ID: ${collection.id}")
-            println("      - imageUrl: '${collection.imageUrl}'")
             println("      - images list: ${collection.images.size} items")
             collection.images.forEachIndexed { i, img ->
                 println("         [$i] url='${img.url}', isActive=${img.isActive}, order=${img.order}")
@@ -746,10 +745,10 @@ private fun ExpandableSection(
                             .size(48.dp)
                             .background(iconColor.copy(alpha = 0.15f), RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
+    ) {
+        Icon(
                             icon,
-                            contentDescription = null,
+            contentDescription = null,
                             tint = iconColor,
                             modifier = Modifier.size(24.dp)
                         )

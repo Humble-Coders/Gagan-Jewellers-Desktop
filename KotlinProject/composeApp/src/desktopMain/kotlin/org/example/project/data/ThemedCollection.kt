@@ -33,7 +33,7 @@ data class ThemedCollection(
     val id: String = "",
     val name: String = "",
     val description: String = "",
-    val imageUrl: String = "",
+    val images: List<CollectionImage> = emptyList(), // List of all collection images
     val isActive: Boolean = true,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
@@ -41,7 +41,6 @@ data class ThemedCollection(
     val createdBy: String = "system",
     // New fields for customization
     val order: Int = 0,
-    val images: List<CollectionImage> = emptyList(),
     val metadata: CollectionMetadata = CollectionMetadata()
 )
 
@@ -113,12 +112,7 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
                     }
                 }
                 
-                // Get first imageUrl (for backward compatibility)
-                val mainImageUrl = when {
-                    data.containsKey("imageUrl") -> data["imageUrl"] as? String ?: ""
-                    imagesList.isNotEmpty() -> imagesList.first().url
-                    else -> ""
-                }
+                println("   📦 Collection '${data["name"]}': images=${imagesList.size} items")
                 
                 // Parse metadata
                 val metadataMap = data["metadata"] as? Map<*, *>
@@ -136,7 +130,6 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
                     id = doc.id,
                     name = data["name"] as? String ?: "",
                     description = data["description"] as? String ?: "",
-                    imageUrl = mainImageUrl,
                     isActive = when (val value = data["isActive"]) {
                         is Boolean -> value
                         is String -> value.toBoolean()
@@ -193,13 +186,6 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
                     else -> emptyList()
                 }
                 
-                // Get first imageUrl (for backward compatibility)
-                val mainImageUrl = when {
-                    data.containsKey("imageUrl") -> data["imageUrl"] as? String ?: ""
-                    imagesList.isNotEmpty() -> imagesList.first().url
-                    else -> ""
-                }
-                
                 // Parse metadata
                 val metadataMap = data["metadata"] as? Map<*, *>
                 val metadata = if (metadataMap != null) {
@@ -216,7 +202,6 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
                     id = doc.id,
                     name = data["name"] as? String ?: "",
                     description = data["description"] as? String ?: "",
-                    imageUrl = mainImageUrl,
                     isActive = when (val value = data["isActive"]) {
                         is Boolean -> value
                         is String -> value.toBoolean()
@@ -243,14 +228,8 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
         try {
             val currentTime = System.currentTimeMillis()
             
-            // Convert images to map format for Firestore
-            val imagesData = collection.images.map { image ->
-                mapOf(
-                    "url" to image.url,
-                    "isActive" to image.isActive,
-                    "order" to image.order
-                )
-            }
+            // Convert images to simple URL array (imageUrls)
+            val imageUrls = collection.images.map { it.url }
             
             // Convert metadata to map format
             val metadataData = mapOf(
@@ -262,16 +241,17 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
             val collectionData = mapOf(
                 "name" to collection.name,
                 "description" to collection.description,
-                "imageUrl" to collection.imageUrl,
+                "imageUrls" to imageUrls, // Always store as array
                 "isActive" to collection.isActive,
                 "createdAt" to currentTime,
                 "updatedAt" to currentTime,
                 "productIds" to collection.productIds,
                 "createdBy" to collection.createdBy,
                 "order" to collection.order,
-                "images" to imagesData,
                 "metadata" to metadataData
             )
+            
+            println("💾 Saving collection with ${imageUrls.size} image URL(s) in 'imageUrls' array")
             
             val docRef = firestore.collection("themed_collections").add(collectionData).get()
             docRef.id
@@ -285,14 +265,8 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
         try {
             val currentTime = System.currentTimeMillis()
             
-            // Convert images to map format for Firestore
-            val imagesData = collection.images.map { image ->
-                mapOf(
-                    "url" to image.url,
-                    "isActive" to image.isActive,
-                    "order" to image.order
-                )
-            }
+            // Convert images to simple URL array (imageUrls)
+            val imageUrls = collection.images.map { it.url }
             
             // Convert metadata to map format
             val metadataData = mapOf(
@@ -304,15 +278,16 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
             val collectionData = mapOf(
                 "name" to collection.name,
                 "description" to collection.description,
-                "imageUrl" to collection.imageUrl,
+                "imageUrls" to imageUrls, // Always store as array
                 "isActive" to collection.isActive,
                 "updatedAt" to currentTime,
                 "productIds" to collection.productIds,
                 "createdBy" to collection.createdBy,
                 "order" to collection.order,
-                "images" to imagesData,
                 "metadata" to metadataData
             )
+            
+            println("💾 Updating collection with ${imageUrls.size} image URL(s) in 'imageUrls' array")
             
             firestore.collection("themed_collections").document(collection.id).set(collectionData).get()
             true
@@ -407,11 +382,20 @@ class FirestoreThemedCollectionRepository(private val firestore: Firestore) : Th
             snapshot.documents.mapNotNull { doc ->
                 val data = doc.data ?: return@mapNotNull null
                 
+                // Parse images from imageUrls
+                val imageUrls = (data["imageUrls"] as? List<*>)?.mapIndexedNotNull { index, url ->
+                    CollectionImage(
+                        url = url as? String ?: "",
+                        isActive = true,
+                        order = index
+                    )
+                } ?: emptyList()
+                
                 ThemedCollection(
                     id = doc.id,
                     name = data["name"] as? String ?: "",
                     description = data["description"] as? String ?: "",
-                    imageUrl = data["imageUrl"] as? String ?: "",
+                    images = imageUrls,
                     isActive = when (val value = data["isActive"]) {
                         is Boolean -> value
                         is String -> value.toBoolean()
